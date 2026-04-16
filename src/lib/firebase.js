@@ -15,6 +15,16 @@ const HARDCODED_CONFIG = {
 
 let db = null
 
+function getCloudStoreIds(businessInfo = {}, licenseKey = '') {
+  return Array.from(
+    new Set(
+      [businessInfo?.storeId, businessInfo?.taxId, licenseKey]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )
+  )
+}
+
 function getEffectiveFirebaseConfig() {
   const { cloudSettings } = useAppStore.getState()
   if (cloudSettings?.provider === 'firebase' && cloudSettings?.firebaseConfig) {
@@ -102,10 +112,10 @@ export async function syncToCloud() {
       return false
     }
 
-    // Each business is isolated by their storeId (random UUID)
-    // storeId is used for QR links and menu subscriptions
-    // Keep licenseKey as a fallback for older setups.
-    const storeId = businessInfo.storeId || businessInfo.taxId || licenseKey || 'default-store'
+    // Each business is isolated by one or more store IDs.
+    // Write to the new storeId plus any legacy taxId/licenseKey path so mobile can read either.
+    const storeIds = getCloudStoreIds(businessInfo, licenseKey)
+    const storeId = storeIds[0] || 'default-store'
     const batch   = writeBatch(db)
 
     // 1. Business info
@@ -116,8 +126,10 @@ export async function syncToCloud() {
     )
 
     // 2. Products
-    const productsRef = collection(db, 'stores', storeId, 'products')
-    products.forEach(p => batch.set(doc(productsRef, p.id), p))
+    storeIds.forEach((id) => {
+      const productsRef = collection(db, 'stores', id, 'products')
+      products.forEach((p) => batch.set(doc(productsRef, p.id), p))
+    })
 
     // 3. Last 100 sales (stays within Firestore's 500-write batch limit)
     const salesRef = collection(db, 'stores', storeId, 'sales')
@@ -256,13 +268,13 @@ export async function publishStoreProductUpsert(product) {
     if (!rdb) return { success: false, error: 'Realtime database unavailable' }
 
     const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeId = String(businessInfo?.storeId || businessInfo?.taxId || licenseKey || '').trim()
-    if (!storeId) return { success: false, error: 'Store ID is required' }
+    const storeIds = getCloudStoreIds(businessInfo, licenseKey)
+    if (!storeIds.length) return { success: false, error: 'Store ID is required' }
 
     const productId = String(product?.id || '').trim()
     if (!productId) return { success: false, error: 'Product ID is required' }
 
-    await setDoc(doc(rdb, 'stores', storeId, 'products', productId), {
+    await Promise.all(storeIds.map((storeId) => setDoc(doc(rdb, 'stores', storeId, 'products', productId), {
       ...product,
       id: productId,
       module: String(product?.module || '').trim(),
@@ -271,7 +283,7 @@ export async function publishStoreProductUpsert(product) {
       barcode: String(product?.barcode || '').trim(),
       updatedAt: serverTimestamp(),
       updatedAtMs: Date.now(),
-    }, { merge: true })
+    }, { merge: true })))
 
     return { success: true, id: productId }
   } catch (error) {
@@ -286,10 +298,10 @@ export async function publishStoreProductDelete(productId) {
     if (!rdb) return { success: false, error: 'Realtime database unavailable' }
 
     const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeId = String(businessInfo?.storeId || businessInfo?.taxId || licenseKey || '').trim()
-    if (!storeId || !productId) return { success: false, error: 'Store ID and product ID are required' }
+    const storeIds = getCloudStoreIds(businessInfo, licenseKey)
+    if (!storeIds.length || !productId) return { success: false, error: 'Store ID and product ID are required' }
 
-    await deleteDoc(doc(rdb, 'stores', storeId, 'products', String(productId)))
+    await Promise.all(storeIds.map((storeId) => deleteDoc(doc(rdb, 'stores', storeId, 'products', String(productId)))))
     return { success: true }
   } catch (error) {
     console.error('[Firebase] publishStoreProductDelete failed:', error)
