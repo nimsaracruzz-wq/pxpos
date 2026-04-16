@@ -256,7 +256,7 @@ export async function publishStoreProductUpsert(product) {
     if (!rdb) return { success: false, error: 'Realtime database unavailable' }
 
     const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeId = String(businessInfo?.taxId || licenseKey || '').trim()
+    const storeId = String(businessInfo?.storeId || businessInfo?.taxId || licenseKey || '').trim()
     if (!storeId) return { success: false, error: 'Store ID is required' }
 
     const productId = String(product?.id || '').trim()
@@ -286,7 +286,7 @@ export async function publishStoreProductDelete(productId) {
     if (!rdb) return { success: false, error: 'Realtime database unavailable' }
 
     const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeId = String(businessInfo?.taxId || licenseKey || '').trim()
+    const storeId = String(businessInfo?.storeId || businessInfo?.taxId || licenseKey || '').trim()
     if (!storeId || !productId) return { success: false, error: 'Store ID and product ID are required' }
 
     await deleteDoc(doc(rdb, 'stores', storeId, 'products', String(productId)))
