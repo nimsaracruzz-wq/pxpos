@@ -316,8 +316,9 @@ function QRModal({ table, onClose }) {
   const sessionQuery = encodeURIComponent(String(table.sessionId || `table-${table.number || 'na'}`))
   const guestsQuery = encodeURIComponent(String(table.guests || ''))
   const tokenQuery = encodeURIComponent(String(table.qrToken || ''))
+  const legacyStoreQuery = encodeURIComponent(String(businessInfo.taxId || '').trim())
   // Use hash route to avoid hosting rewrite issues on static deployments (Vercel/Netlify).
-  const menuUrl = `${baseOrigin}/#/menu/${storeId}?table=${tableQuery}&session=${sessionQuery}&guests=${guestsQuery}&token=${tokenQuery}`
+  const menuUrl = `${baseOrigin}/#/menu/${storeId}?table=${tableQuery}&session=${sessionQuery}&guests=${guestsQuery}&token=${tokenQuery}${legacyStoreQuery ? `&legacy=${legacyStoreQuery}` : ''}`
   const needsLanHint = !configuredBase && /localhost|127\.0\.0\.1/i.test(browserOrigin)
   const missingStoreId = !storeKey
 

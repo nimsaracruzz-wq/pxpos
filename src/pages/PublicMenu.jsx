@@ -152,6 +152,10 @@ export default function PublicMenu() {
   }, [])
   const resolvedStoreId = String(storeId || fallbackStoreId || '').trim()
   const decodedStoreId = useMemo(() => decodeURIComponent(resolvedStoreId).trim(), [resolvedStoreId])
+  const decodedLegacyStoreId = useMemo(
+    () => decodeURIComponent(String(searchParams.get('legacy') || '')).trim(),
+    [searchParams]
+  )
   const tableNo = String(searchParams.get('table') || '').trim()
   const guests = Number(searchParams.get('guests') || 0) || 0
   const rawSession = String(searchParams.get('session') || '').trim()
@@ -196,19 +200,53 @@ export default function PublicMenu() {
   )
 
   useEffect(() => {
-    if (!decodedStoreId) {
+    if (!decodedStoreId && !decodedLegacyStoreId) {
       setCloudProducts([])
       setCloudProductsLoaded(false)
       return () => {}
     }
 
-    const unsubscribe = subscribeToStoreProducts(decodedStoreId, (items) => {
-      setCloudProducts(Array.isArray(items) ? items : [])
-      setCloudProductsLoaded(true)
-    })
+    let primaryItems = []
+    let legacyItems = []
 
-    return () => unsubscribe()
-  }, [decodedStoreId])
+    const mergeAndSet = () => {
+      const merged = new Map()
+
+      ;[...primaryItems, ...legacyItems].forEach((item) => {
+        if (!item?.id) return
+        merged.set(String(item.id), item)
+      })
+
+      setCloudProducts(Array.from(merged.values()))
+      setCloudProductsLoaded(true)
+    }
+
+    const unsubs = []
+
+    if (decodedStoreId) {
+      unsubs.push(
+        subscribeToStoreProducts(decodedStoreId, (items) => {
+          primaryItems = Array.isArray(items) ? items : []
+          mergeAndSet()
+        })
+      )
+    }
+
+    if (decodedLegacyStoreId && decodedLegacyStoreId !== decodedStoreId) {
+      unsubs.push(
+        subscribeToStoreProducts(decodedLegacyStoreId, (items) => {
+          legacyItems = Array.isArray(items) ? items : []
+          mergeAndSet()
+        })
+      )
+    }
+
+    return () => {
+      unsubs.forEach((fn) => {
+        if (typeof fn === 'function') fn()
+      })
+    }
+  }, [decodedStoreId, decodedLegacyStoreId])
 
   const productSource = cloudProductsLoaded ? cloudProducts : products
   const menuItems = useMemo(() => {
