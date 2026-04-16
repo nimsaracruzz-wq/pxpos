@@ -33,11 +33,15 @@ export default function App() {
   const [checking, setChecking]              = useState(true)
 
   const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
-  const Router = isFileProtocol ? HashRouter : BrowserRouter
+  const hashPath = typeof window !== 'undefined' ? window.location.hash.replace(/^#/, '') : ''
+  const isHashPublicMenuRoute = hashPath.startsWith('/menu/')
+  const Router = isFileProtocol || isHashPublicMenuRoute ? HashRouter : BrowserRouter
   const currentPath = (() => {
     if (typeof window === 'undefined') return '/'
     if (isFileProtocol) {
-      const hashPath = window.location.hash.replace(/^#/, '')
+      return hashPath || '/'
+    }
+    if (isHashPublicMenuRoute) {
       return hashPath || '/'
     }
     return window.location.pathname || '/'

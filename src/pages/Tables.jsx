@@ -306,7 +306,7 @@ function QRModal({ table, onClose }) {
   const { businessInfo } = useAppStore()
   const toast = useToast()
 
-  const configuredBase = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
+  const configuredBase = (businessInfo.publicMenuBaseUrl || import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
   const fallbackOrigin = browserOrigin && !browserOrigin.startsWith('file://') ? browserOrigin : 'http://localhost:5173'
   const baseOrigin = (configuredBase || fallbackOrigin).replace(/\/$/, '')
@@ -316,8 +316,9 @@ function QRModal({ table, onClose }) {
   const sessionQuery = encodeURIComponent(String(table.sessionId || `table-${table.number || 'na'}`))
   const guestsQuery = encodeURIComponent(String(table.guests || ''))
   const tokenQuery = encodeURIComponent(String(table.qrToken || ''))
-  const menuUrl = `${baseOrigin}/menu/${storeId}?table=${tableQuery}&session=${sessionQuery}&guests=${guestsQuery}&token=${tokenQuery}`
-  const needsLanHint = /localhost|127\.0\.0\.1/i.test(baseOrigin)
+  // Use hash route to avoid hosting rewrite issues on static deployments (Vercel/Netlify).
+  const menuUrl = `${baseOrigin}/#/menu/${storeId}?table=${tableQuery}&session=${sessionQuery}&guests=${guestsQuery}&token=${tokenQuery}`
+  const needsLanHint = !configuredBase && /localhost|127\.0\.0\.1/i.test(browserOrigin)
   const missingStoreId = !storeKey
 
   const downloadQr = async () => {
