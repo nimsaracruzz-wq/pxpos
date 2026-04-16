@@ -746,9 +746,10 @@ function OrderModal({ table, onClose, onSettle }) {
       : (order?.qrOrderId ? [String(order.qrOrderId)] : [])
 
     let nextQrIds = existingQrIds
-    if (businessInfo?.taxId && table?.number && table?.sessionId && table?.qrToken) {
+    const syncStoreId = String(businessInfo?.storeId || businessInfo?.taxId || '').trim()
+    if (syncStoreId && table?.number && table?.sessionId && table?.qrToken) {
       const publishResult = await publishPOSOrderToQRCodeHistory({
-        storeId: businessInfo.taxId,
+        storeId: syncStoreId,
         tableNumber: table.number,
         session: table.sessionId,
         token: table.qrToken,
@@ -785,7 +786,7 @@ function OrderModal({ table, onClose, onSettle }) {
       notes: normalizedNotes,
       qrOrderIds: nextQrIds,
       qrOrderId: nextQrIds.length ? nextQrIds[nextQrIds.length - 1] : order?.qrOrderId,
-      storeId: order?.storeId || (businessInfo?.taxId || ''),
+      storeId: order?.storeId || String(businessInfo?.storeId || businessInfo?.taxId || ''),
       source: order?.source || 'pos',
     }
     addKOT({ tableId: table.id, tableNumber: table.number, items: mergedItems, notes: normalizedNotes, waiter })

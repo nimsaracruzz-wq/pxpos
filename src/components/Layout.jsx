@@ -79,7 +79,7 @@ export function Layout({ children }) {
   }
 
   useEffect(() => {
-    const storeId = String(businessInfo?.taxId || '').trim()
+    const storeId = String(businessInfo?.storeId || businessInfo?.taxId || '').trim()
     if (!storeId) return () => {}
 
     const unsubscribe = subscribeToQRCodeOrders(storeId, async (incoming) => {
@@ -257,7 +257,7 @@ export function Layout({ children }) {
     })
 
     return () => unsubscribe()
-  }, [businessInfo?.taxId])
+  }, [businessInfo?.storeId, businessInfo?.taxId])
 
   // Role badge colours
   const ROLE_COLORS = {
