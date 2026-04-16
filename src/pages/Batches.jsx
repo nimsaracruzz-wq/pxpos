@@ -35,7 +35,7 @@ export default function Batches() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-5">
+    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
       <SectionHeader 
         title="Batch & Expiry Tracker" 
         subtitle="Monitor pharmaceutical stock validity and critical expirations"
@@ -115,3 +115,4 @@ export default function Batches() {
     </div>
   )
 }
+

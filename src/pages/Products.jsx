@@ -1,16 +1,35 @@
 import React, { useState, useMemo, useRef } from 'react'
 import { Plus, Edit2, Trash2, Package, Upload, Download, Barcode, ToggleLeft, ToggleRight } from 'lucide-react'
-import { useProductStore, useAppStore } from '@/store'
+import { useProductStore, useAppStore, useActivityStore, useAuthStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { Button, Badge, Modal, Input, Select, SectionHeader, SearchInput, EmptyState } from '@/components/ui'
 import { formatCurrency } from '@/lib/utils'
 import { cn } from '@/lib/utils'
+import { publishStoreProductDelete, publishStoreProductUpsert, syncToCloud } from '@/lib/firebase'
 import Papa from 'papaparse'
 
 const PRODUCT_FORM_DEFAULT = {
   name: '', barcode: '', price: '', cost: '', category: '',
   stock: '', unit: 'pcs', expiry: '', active: true,
   supplier: '', brand: '', sizes: '', colors: ''
+}
+
+const RESTAURANT_KEYWORDS = [
+  'kottu', 'rice', 'pizza', 'burger', 'roti', 'naan', 'curry', 'dosa', 'noodle',
+  'pasta', 'sandwich', 'salad', 'mains', 'starters', 'drinks', 'desserts', 'soup', 'shawarma',
+]
+
+const inferProductModule = (activeModule, form) => {
+  const active = String(activeModule || '').trim().toLowerCase()
+  const name = String(form?.name || '').trim().toLowerCase()
+  const category = String(form?.category || '').trim().toLowerCase()
+
+  if (active === 'restaurant') return 'restaurant'
+
+  const matchesRestaurant = RESTAURANT_KEYWORDS.some((keyword) => name.includes(keyword) || category.includes(keyword))
+  if (matchesRestaurant) return 'restaurant'
+
+  return activeModule || 'grocery'
 }
 
 // ─── Barcode display (visual) ──────────────────────────────────────────────────
@@ -159,7 +178,7 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
 }
 
 // ─── CSV Import Modal ──────────────────────────────────────────────────────────
-function ImportModal({ open, onClose, categories }) {
+function ImportModal({ open, onClose, categories, activeModule }) {
   const { addProduct, addCategory } = useProductStore()
   const toast = useToast()
   const [preview, setPreview] = useState([])
@@ -176,14 +195,17 @@ function ImportModal({ open, onClose, categories }) {
     })
   }
 
-  const handleImport = () => {
+  const handleImport = async () => {
     if (!preview.length) { toast.error('No valid data to import'); return }
     setImporting(true)
     let count = 0
-    preview.forEach((row) => {
-      if (!row.name) return
-      if (row.category && !categories.includes(row.category)) addCategory(row.category)
-      addProduct({
+    for (const row of preview) {
+      if (!row.name) continue
+      if (row.category && !categories.includes(row.category)) addCategory(activeModule, row.category)
+      const resolvedModule = inferProductModule(activeModule, row)
+      const now = new Date().toISOString()
+      const product = {
+        module: resolvedModule,
         name: row.name || '',
         barcode: row.barcode || '',
         price: parseFloat(row.price) || 0,
@@ -195,9 +217,14 @@ function ImportModal({ open, onClose, categories }) {
         active: row.active !== 'false',
         variants: [],
         image: null,
-      })
+        createdAt: now,
+        updatedAt: now,
+      }
+      addProduct(product)
+      await publishStoreProductUpsert(product)
       count++
-    })
+    }
+    await syncToCloud()
     toast.success(`Imported ${count} products successfully!`)
     setImporting(false)
     setPreview([])
@@ -267,6 +294,67 @@ function ImportModal({ open, onClose, categories }) {
   )
 }
 
+function CategoryManagerModal({ open, onClose, moduleName }) {
+  const { getCategoriesForModule, addCategory, removeCategory } = useProductStore()
+  const { addLog } = useActivityStore()
+  const { currentUser } = useAuthStore()
+  const toast = useToast()
+  const [categoryName, setCategoryName] = useState('')
+
+  const categories = getCategoriesForModule(moduleName)
+
+  const handleAdd = () => {
+    const value = String(categoryName || '').trim()
+    if (!value) return
+    addCategory(moduleName, value)
+    addLog('Added Category', `${moduleName}: ${value}`, currentUser?.name)
+    toast.success(`Category "${value}" added`)
+    setCategoryName('')
+  }
+
+  const handleRemove = (value) => {
+    removeCategory(moduleName, value)
+    addLog('Removed Category', `${moduleName}: ${value}`, currentUser?.name)
+    toast.success(`Category "${value}" removed`)
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Manage ${String(moduleName || '').toUpperCase()} Categories`} maxWidth="max-w-xl">
+      <div className="space-y-4">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <div className="flex gap-2">
+            <Input
+              value={categoryName}
+              onChange={(e) => setCategoryName(e.target.value)}
+              placeholder="New category name"
+            />
+            <button type="button" className="btn-primary" onClick={handleAdd} disabled={!String(categoryName || '').trim()}>
+              <Plus size={14} /> Add
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {categories.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-500 sm:col-span-2">
+              No categories defined for this module yet.
+            </div>
+          ) : (
+            categories.map((category) => (
+              <div key={category} className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2">
+                <span className="text-sm font-semibold text-gray-800">{category}</span>
+                <button type="button" className="text-xs font-semibold text-red-500 hover:text-red-700" onClick={() => handleRemove(category)}>
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ─── Export to CSV ─────────────────────────────────────────────────────────────
 const exportCSV = (products) => {
   const rows = [
@@ -282,16 +370,21 @@ const exportCSV = (products) => {
 }
 
 export default function Products() {
-  const { products, categories, addProduct, updateProduct, deleteProduct } = useProductStore()
+  const { products, categories, getCategoriesForModule, addProduct, updateProduct, deleteProduct } = useProductStore()
   const { activeModule } = useAppStore()
+  const { addLog } = useActivityStore()
+  const { currentUser } = useAuthStore()
   const toast = useToast()
   
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState('All')
   const [showModal, setShowModal] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showCategories, setShowCategories] = useState(false)
   const [editProduct, setEditProduct] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+
+  const moduleCategories = useMemo(() => getCategoriesForModule(activeModule), [getCategoriesForModule, activeModule])
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
@@ -303,38 +396,57 @@ export default function Products() {
     })
   }, [products, search, catFilter, activeModule])
 
-  const handleSave = (form) => {
+  const handleSave = async (form) => {
     if (editProduct) {
-      updateProduct(editProduct.id, {
+      const resolvedModule = inferProductModule(activeModule, form)
+      const now = new Date().toISOString()
+      const updatedProduct = {
+        ...editProduct,
         ...form,
+        module: resolvedModule,
         price: parseFloat(form.price) || 0,
         cost: parseFloat(form.cost) || 0,
         stock: parseInt(form.stock) || 0,
-      })
+        updatedAt: now,
+      }
+      updateProduct(editProduct.id, updatedProduct)
+      await publishStoreProductUpsert(updatedProduct)
+      addLog('Edited Product', form.name, currentUser?.name)
       toast.success('Product updated successfully')
     } else {
-      addProduct({
+      const resolvedModule = inferProductModule(activeModule, form)
+      const now = new Date().toISOString()
+      const product = {
         ...form,
-        module: activeModule, // Strictly bind to the current active environment module
+        module: resolvedModule,
         price: parseFloat(form.price) || 0,
         cost: parseFloat(form.cost) || 0,
         stock: parseInt(form.stock) || 0,
         image: null,
         variants: [],
-      })
-      toast.success(`"${form.name}" added to ${activeModule?.toUpperCase() || ''} products`)
+        createdAt: now,
+        updatedAt: now,
+      }
+      addProduct(product)
+      await publishStoreProductUpsert(product)
+      addLog('Added Product', form.name, currentUser?.name)
+      toast.success(`"${form.name}" added to ${String(resolvedModule || '').toUpperCase()} products`)
     }
+    await syncToCloud()
     setShowModal(false)
     setEditProduct(null)
   }
 
   return (
-    <div className="h-full overflow-y-auto p-5">
+    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }} style={{ background: '#f4f7f5' }}>
       <SectionHeader
         title="Products"
-        subtitle={`${products.length} products · ${categories.length} categories`}
+        subtitle={`${products.length} products · ${moduleCategories.length} ${activeModule || ''} categories`}
         action={
           <div className="flex gap-2">
+            <button className="btn-ghost" onClick={() => setShowCategories(true)}>
+              <Package size={15} /> Manage Categories
+            </button>
             <button className="btn-ghost" onClick={() => setShowImport(true)}>
               <Upload size={15} /> Import CSV
             </button>
@@ -355,16 +467,16 @@ export default function Products() {
           onChange={(e) => setSearch(e.target.value)}
           placeholder={`Search ${activeModule || ''} inventory by name or barcode...`}
         />
-        <div className="flex gap-1.5 flex-wrap">
-          {['All', ...categories].map((c) => (
+        <div className="flex gap-2 flex-wrap">
+          {['All', ...moduleCategories].map((c) => (
             <button
               key={c}
               onClick={() => setCatFilter(c)}
               className={cn(
-                'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border',
+                'px-4 py-2 rounded-full text-xs font-bold transition-all active:scale-95 min-h-[36px]',
                 catFilter === c
-                  ? 'bg-green-600 text-white border-green-600 shadow-sm'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-green-300'
+                  ? 'bg-green-500 text-white shadow-md shadow-green-200'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:border-green-300 hover:text-green-700'
               )}
             >
               {c}
@@ -374,7 +486,7 @@ export default function Products() {
       </div>
 
       {/* Table */}
-      <div className="card overflow-hidden">
+      <div className="card overflow-hidden" style={{ boxShadow: '0 2px 16px rgba(0,0,0,0.06)' }}>
         {filtered.length === 0 ? (
           <EmptyState
             icon={<Package size={48} />}
@@ -455,18 +567,18 @@ export default function Products() {
                         </Badge>
                       </td>
                       <td>
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => { setEditProduct(p); setShowModal(true) }}
-                            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
-                            title="Edit"
+                            className="w-8 h-8 rounded-xl hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-all flex items-center justify-center active:scale-90"
+                            title="Edit product"
                           >
                             <Edit2 size={14} />
                           </button>
                           <button
                             onClick={() => setConfirmDelete(p)}
-                            className="p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
-                            title="Delete"
+                            className="w-8 h-8 rounded-xl hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all flex items-center justify-center active:scale-90"
+                            title="Delete product"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -492,7 +604,7 @@ export default function Products() {
           initial={editProduct || PRODUCT_FORM_DEFAULT}
           onSave={handleSave}
           onCancel={() => { setShowModal(false); setEditProduct(null) }}
-          categories={categories}
+          categories={moduleCategories}
           activeModule={activeModule}
         />
       </Modal>
@@ -500,7 +612,14 @@ export default function Products() {
       <ImportModal
         open={showImport}
         onClose={() => setShowImport(false)}
-        categories={categories}
+        categories={moduleCategories}
+        activeModule={activeModule}
+      />
+
+      <CategoryManagerModal
+        open={showCategories}
+        onClose={() => setShowCategories(false)}
+        moduleName={activeModule}
       />
 
       <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} title="Delete Product" maxWidth="max-w-sm">
@@ -513,8 +632,11 @@ export default function Products() {
           <div className="flex gap-3">
             <button
               className="btn-danger flex-1 justify-center"
-              onClick={() => {
+              onClick={async () => {
                 deleteProduct(confirmDelete.id)
+                await publishStoreProductDelete(confirmDelete.id)
+                addLog('Deleted Product', confirmDelete.name, currentUser?.name)
+                await syncToCloud()
                 toast.success(`"${confirmDelete.name}" deleted`)
                 setConfirmDelete(null)
               }}
@@ -528,3 +650,4 @@ export default function Products() {
     </div>
   )
 }
+

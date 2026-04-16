@@ -1,16 +1,19 @@
 import React, { useState, useMemo } from 'react'
-import { Package, AlertTriangle, TrendingDown, RefreshCw, Download, Filter } from 'lucide-react'
-import { useProductStore, useAppStore } from '@/store'
+import { Package, AlertTriangle, TrendingDown, RefreshCw, Download, Filter, Barcode } from 'lucide-react'
+import { useProductStore, useAppStore, useActivityStore, useAuthStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { StatCard, Badge, Modal, Input, SectionHeader, SearchInput } from '@/components/ui'
 import { formatCurrency } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 export default function Inventory() {
-  const { products, adjustStock } = useProductStore()
+  const { products, adjustStock, getByBarcode } = useProductStore()
   const { activeModule } = useAppStore()
+  const { addLog } = useActivityStore()
+  const { currentUser } = useAuthStore()
   const toast = useToast()
   const [search, setSearch] = useState('')
+  const [barcodeInput, setBarcodeInput] = useState('')
   const [adjustModal, setAdjustModal] = useState(null)
   const [adjQty, setAdjQty] = useState('')
   const [adjType, setAdjType] = useState('add')
@@ -44,6 +47,7 @@ export default function Inventory() {
     else adjustStock(adjustModal.id, qty - adjustModal.stock)
     const newQty = adjType === 'set' ? qty : adjType === 'add' ? prev + qty : Math.max(0, prev - qty)
     toast.success(`${adjustModal.name}: stock updated to ${newQty} ${adjustModal.unit}`)
+    addLog('Adjusted Inventory', `${adjustModal.name}: Changed to ${newQty} ${adjustModal.unit}`, currentUser?.name)
     setAdjustModal(null)
     setAdjQty('')
     setAdjType('add')
@@ -58,11 +62,27 @@ export default function Inventory() {
       download: 'inventory-report.csv',
     })
     a.click()
+    addLog('Exported Inventory', 'Exported inventory levels to CSV', currentUser?.name)
     toast.success('Inventory exported to CSV')
   }
 
+  const handleBarcodeSubmit = (e) => {
+    e.preventDefault()
+    if (!barcodeInput.trim()) return
+    const prod = getByBarcode(barcodeInput.trim())
+    if (prod && (prod.module === activeModule || (!prod.module && activeModule === 'grocery'))) {
+      setAdjustModal(prod)
+      setAdjType('add')
+      setAdjQty('1')
+      setBarcodeInput('')
+      toast.success(`Found ${prod.name}! Enter quantity.`, { icon: '📦' })
+    } else {
+      toast.error('No matching product found in current module for this barcode')
+    }
+  }
+
   return (
-    <div className="h-full overflow-y-auto p-5">
+    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
       <SectionHeader
         title={`${activeModule ? activeModule.charAt(0).toUpperCase() + activeModule.slice(1) : ''} Inventory`}
         subtitle="Track stock levels and manage adjustments"
@@ -80,9 +100,22 @@ export default function Inventory() {
         <StatCard title="Inventory Value" value={formatCurrency(totalValue)} subtitle="At cost price" icon={<Package size={18} />} color="#2563eb" />
       </div>
 
-      <div className="flex gap-3 mb-5">
-        <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search products..." className="flex-1" />
-        <div className="flex gap-2">
+      <div className="flex flex-col md:flex-row gap-3 mb-5">
+        <form onSubmit={handleBarcodeSubmit} className="flex-1 md:max-w-md relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Barcode size={16} className="text-green-500" />
+          </div>
+          <input
+            autoFocus
+            type="text"
+            className="w-full pl-9 pr-4 py-2 bg-white border border-green-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-green-100 focus:border-green-400 font-mono transition-shadow placeholder-gray-400"
+            placeholder="Scan barcode here to adjust stock..."
+            value={barcodeInput}
+            onChange={(e) => setBarcodeInput(e.target.value)}
+          />
+        </form>
+        <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find product by name..." className="flex-1" />
+        <div className="flex gap-2 shrink-0 overflow-x-auto">
           {[
             { id: 'all', label: 'All', count: scopedProducts.length },
             { id: 'low', label: '⚡ Low Stock', count: lowStock.length },
@@ -248,3 +281,4 @@ export default function Inventory() {
     </div>
   )
 }
+

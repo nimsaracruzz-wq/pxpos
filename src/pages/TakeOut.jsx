@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { ShoppingBag, Banknote, CreditCard, Split, X, Clock, CheckCircle2 } from 'lucide-react'
-import { useSalesStore, useAppStore, useProductStore } from '@/store'
+import { useSalesStore, useAppStore, useProductStore, useTableStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { cn, formatCurrency, generateReceiptNumber } from '@/lib/utils'
 import ReceiptModal from '@/components/Receipt'
@@ -122,6 +122,7 @@ function PayModal({ items, notes, customerName, customerPhone, taxSettings, onCl
 // ─── Main TakeOut Page ─────────────────────────────────────────────────────────
 export default function TakeOut() {
   const { addSale, sales } = useSalesStore()
+  const { addKOT } = useTableStore()
   const { businessInfo, taxSettings } = useAppStore()
   const { products } = useProductStore()
   const toast = useToast()
@@ -154,6 +155,7 @@ export default function TakeOut() {
 
   const handlePaid = ({ method, cashNum, change, subtotal, tax, total }) => {
     const receiptNo = generateReceiptNumber()
+    const normalizedNotes = (notes || '').trim()
     const saleData = {
       receiptNo, date: new Date(),
       cartItems: items.map((i) => ({ ...i, salePrice: i.price })),
@@ -161,8 +163,19 @@ export default function TakeOut() {
       subtotal, discount: 0, tax, total,
       paymentMethod: method, change,
       customerName: customerName || 'Walk-in', customerPhone,
-      cashier: 'Counter', source: 'takeout', status: 'completed', notes,
+      cashier: 'Counter', source: 'takeout', status: 'completed', notes: normalizedNotes,
     }
+
+    addKOT({
+      tableId: `takeout-${Date.now()}`,
+      tableNumber: 'TO',
+      items: items.map((i) => ({ ...i })),
+      notes: normalizedNotes,
+      waiter: customerName || 'Take Out',
+      source: 'takeout',
+      receiptNo,
+    })
+
     addSale(saleData)
     setReceipt(saleData)
     setItems([]); setCustomerName(''); setCustomerPhone(''); setNotes('')
@@ -322,3 +335,4 @@ export default function TakeOut() {
     </div>
   )
 }
+

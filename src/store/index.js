@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { v4 as uuidv4 } from 'uuid'
 import { get, set, del } from 'idb-keyval'
+import { generateReceiptNumber } from '@/lib/utils'
 
 // ─── Real Database Implementation (IndexedDB) ──────────────────────────────────
 export const idbStorage = {
@@ -36,6 +37,7 @@ export const useAppStore = create(
         phone: '+94 11 234 5678',
         email: 'store@paxxmo.com',
         taxId: 'TAX-001',
+        storeId: uuidv4(), // Random ID for QR links (not Tax ID)
         currency: 'LKR',
         currencySymbol: 'Rs.',
       },
@@ -57,6 +59,7 @@ export const useAppStore = create(
         showTax: true,
         autoPrint: false,
         showCashier: true,
+        logoUrl: null,
       },
       hardwareSettings: {
         barcodeScanner: true,
@@ -76,6 +79,19 @@ export const useAppStore = create(
         firebaseConfig: '',
         syncInterval: 10,
       },
+      cloudSubscription: {
+        deploymentMode: 'local', // 'local' | 'cloud'
+        status: 'inactive',       // 'inactive' | 'active' | 'past_due'
+        plan: 'monthly',          // 'monthly' | 'annual'
+        monthlyFee: 0,
+        annualFee: 0,
+        lastPaidAt: null,
+        nextDueAt: null,
+        customerName: '',
+        billingEmail: '',
+        notes: '',
+        payments: [],
+      },
 
       setActiveModule: (mod) => set({ activeModule: mod }),
       toggleModule: (mod) =>
@@ -91,12 +107,145 @@ export const useAppStore = create(
       updateHardwareSettings: (h) =>
         set((s) => ({ hardwareSettings: { ...s.hardwareSettings, ...h } })),
       activateLicense: (key) => set({ licenseKey: key, licenseActive: true }),
+      setLanguage: (lang) => set({ language: lang }),
+      setTheme: (theme) => set({ theme: theme === 'dark' ? 'dark' : 'light' }),
+      toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+      setDeploymentMode: (deploymentMode) =>
+        set((s) => ({
+          cloudSubscription: {
+            ...s.cloudSubscription,
+            deploymentMode: deploymentMode === 'cloud' ? 'cloud' : 'local',
+            status: deploymentMode === 'cloud' ? (s.cloudSubscription.status === 'inactive' ? 'active' : s.cloudSubscription.status) : 'inactive',
+          },
+          cloudSettings: {
+            ...s.cloudSettings,
+            enabled: deploymentMode === 'cloud' ? s.cloudSettings.enabled : false,
+          },
+        })),
+      updateCloudSubscription: (updates) =>
+        set((s) => ({
+          cloudSubscription: { ...s.cloudSubscription, ...updates },
+        })),
+      recordCloudPayment: (payment) =>
+        set((s) => ({
+          cloudSubscription: {
+            ...s.cloudSubscription,
+            status: 'active',
+            lastPaidAt: payment.paidAt || new Date().toISOString(),
+            nextDueAt: payment.nextDueAt || null,
+            payments: [
+              { id: uuidv4(), paidAt: new Date().toISOString(), ...payment },
+              ...(s.cloudSubscription.payments || []),
+            ],
+          },
+        })),
       updateCloudSettings: (c) =>
         set((s) => ({ cloudSettings: { ...s.cloudSettings, ...c } })),
     }),
     { 
       name: 'paxxmo-app',
       storage: createJSONStorage(() => idbStorage) 
+    }
+  )
+)
+
+// ─── Tables & KOT Store ────────────────────────────────────────────────────
+const SAMPLE_TABLES = Array.from({ length: 12 }, (_, i) => ({
+  id: `table-${i + 1}`,
+  number: i + 1,
+  seats: [2, 2, 4, 4, 4, 6, 6, 2, 4, 4, 8, 6][i],
+  status: ['available', 'available', 'occupied', 'available', 'reserved', 'occupied', 'available', 'occupied', 'available', 'available', 'reserved', 'available'][i],
+  order: null,
+  waiter: null,
+  qrToken: null,
+}))
+
+export const useTableStore = create(
+  persist(
+    (set, get) => ({
+      tables: SAMPLE_TABLES,
+      kots: [],
+      addTable: ({ number, seats = 4, status = 'available' }) =>
+        set((s) => ({
+          tables: [
+            ...s.tables,
+            {
+              id: uuidv4(),
+              number: Number(number || 0),
+              seats: Number(seats || 4),
+              status: String(status || 'available'),
+              order: null,
+              waiter: null,
+              qrToken: null,
+              sessionId: null,
+              guests: 0,
+            },
+          ],
+        })),
+      editTable: (id, updates) =>
+        set((s) => {
+          const current = s.tables.find((t) => t.id === id)
+          if (!current) return s
+
+          const nextNumber = updates?.number !== undefined ? Number(updates.number) : current.number
+          return {
+            tables: s.tables.map((t) =>
+              t.id === id
+                ? {
+                    ...t,
+                    ...updates,
+                    number: nextNumber,
+                    seats: updates?.seats !== undefined ? Number(updates.seats) : t.seats,
+                  }
+                : t
+            ),
+            kots: s.kots.map((k) =>
+              k.tableId === id
+                ? { ...k, tableNumber: nextNumber }
+                : k
+            ),
+          }
+        }),
+      deleteTable: (id) =>
+        set((s) => ({
+          tables: s.tables.filter((t) => t.id !== id),
+          kots: s.kots.filter((k) => k.tableId !== id),
+        })),
+      updateTable: (id, updates) =>
+        set((s) => ({ tables: s.tables.map((t) => (t.id === id ? { ...t, ...updates } : t)) })),
+      addKOT: (kot) =>
+        set((s) => ({ kots: [{ ...kot, id: uuidv4(), time: new Date(), status: 'pending' }, ...s.kots] })),
+      updateKOTStatus: (id, status) =>
+        set((s) => ({ kots: s.kots.map((k) => (k.id === id ? { ...k, status } : k)) })),
+      clearTable: (id) =>
+        set((s) => ({
+          tables: s.tables.map((t) =>
+            t.id === id ? { ...t, status: 'available', order: null, waiter: null, sessionId: null, guests: 0, qrToken: null } : t
+          ),
+          kots: s.kots.filter((k) => k.tableId !== id),
+        })),
+      transferTable: (oldId, newId) => set((s) => {
+        const oldTable = s.tables.find((t) => t.id === oldId)
+        const newTable = s.tables.find((t) => t.id === newId)
+        if (!oldTable || !newTable) return s
+
+        return {
+          tables: s.tables.map((t) => {
+            if (t.id === newId) {
+              return { ...t, status: 'occupied', order: oldTable.order, waiter: oldTable.waiter, guests: oldTable.guests, sessionId: oldTable.sessionId, qrToken: oldTable.qrToken }
+            }
+            if (t.id === oldId) {
+              return { ...t, status: 'available', order: null, waiter: null, guests: 0, sessionId: null, qrToken: null }
+            }
+            return t
+          }),
+          kots: s.kots.map((k) => k.tableId === oldId ? { ...k, tableId: newId, tableNumber: newTable.number } : k),
+        }
+      }),
+    }),
+    {
+      name: 'paxxmo-tables',
+      storage: createJSONStorage(() => idbStorage),
     }
   )
 )
@@ -118,11 +267,58 @@ const SAMPLE_PRODUCTS = [
   { id: '13', module: 'clothing', name: 'Denim Jeans Slim Fit', barcode: 'CLOT-001', price: 4500, cost: 2200, category: 'Pants', stock: 50, unit: 'piece', image: null, variants: [], expiry: null, active: true },
 ]
 
+const DEFAULT_CATEGORIES_BY_MODULE = {
+  grocery: ['Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Condiments'],
+  restaurant: ['Mains', 'Pizzas', 'Starters', 'Drinks', 'Desserts', 'Kottu'],
+  pharmacy: ['Pharmacy', 'Rx', 'OTC'],
+  clothing: ['Pants', 'Shirts', 'Shoes', 'Accessories'],
+  wholesale: ['Bulk', 'Packed Goods'],
+  online: ['Marketplace', 'Delivery'],
+}
+
+const normalizeModuleKey = (moduleName) => String(moduleName || 'grocery').trim().toLowerCase() || 'grocery'
+
 export const useProductStore = create(
   persist(
     (set, get) => ({
       products: SAMPLE_PRODUCTS,
-      categories: ['Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments'],
+      categories: [...DEFAULT_CATEGORIES_BY_MODULE.grocery],
+      categoriesByModule: DEFAULT_CATEGORIES_BY_MODULE,
+
+      getCategoriesForModule: (moduleName) => {
+        const key = normalizeModuleKey(moduleName)
+        return get().categoriesByModule?.[key] || []
+      },
+
+      addCategory: (moduleName, categoryName) => {
+        const key = normalizeModuleKey(moduleName)
+        const category = String(categoryName || '').trim()
+        if (!category) return
+
+        set((state) => {
+          const current = state.categoriesByModule?.[key] || []
+          if (current.includes(category)) return state
+          return {
+            categoriesByModule: {
+              ...state.categoriesByModule,
+              [key]: [...current, category],
+            },
+          }
+        })
+      },
+
+      removeCategory: (moduleName, categoryName) => {
+        const key = normalizeModuleKey(moduleName)
+        const category = String(categoryName || '').trim()
+        if (!category) return
+
+        set((state) => ({
+          categoriesByModule: {
+            ...state.categoriesByModule,
+            [key]: (state.categoriesByModule?.[key] || []).filter((item) => item !== category),
+          },
+        }))
+      },
 
       loadProducts: async () => {
         if (typeof window !== 'undefined' && window.require) {
@@ -141,7 +337,8 @@ export const useProductStore = create(
       },
 
       addProduct: (product) => {
-        const newProduct = { ...product, id: product.id || uuidv4() };
+        const now = new Date().toISOString();
+        const newProduct = { ...product, id: product.id || uuidv4(), createdAt: product.createdAt || now, updatedAt: now };
         if (typeof window !== 'undefined' && window.require) {
           window.require('electron').ipcRenderer.invoke('add-product', newProduct);
         }
@@ -150,11 +347,13 @@ export const useProductStore = create(
         }));
       },
       updateProduct: (id, updates) => {
+        const now = new Date().toISOString();
+        const nextUpdates = { ...updates, updatedAt: now };
         if (typeof window !== 'undefined' && window.require) {
-          window.require('electron').ipcRenderer.invoke('update-product', id, updates);
+          window.require('electron').ipcRenderer.invoke('update-product', id, nextUpdates);
         }
         set((s) => ({
-          products: s.products.map((p) => (p.id === id ? { ...p, ...updates } : p)),
+          products: s.products.map((p) => (p.id === id ? { ...p, ...nextUpdates } : p)),
         }));
       },
       deleteProduct: (id) => {
@@ -167,12 +366,13 @@ export const useProductStore = create(
         const p = get().products.find(x => x.id === id);
         if(!p) return;
         const newStock = Math.max(0, p.stock + qty);
+        const updatedAt = new Date().toISOString();
         if (typeof window !== 'undefined' && window.require) {
-          window.require('electron').ipcRenderer.invoke('update-product', id, { stock: newStock });
+          window.require('electron').ipcRenderer.invoke('update-product', id, { stock: newStock, updatedAt });
         }
         set((s) => ({
           products: s.products.map((prd) =>
-            prd.id === id ? { ...prd, stock: newStock } : prd
+            prd.id === id ? { ...prd, stock: newStock, updatedAt } : prd
           ),
         }));
       },
@@ -187,8 +387,25 @@ export const useProductStore = create(
     }),
     { 
       name: 'paxxmo-products',
+      version: 2,
       storage: createJSONStorage(() => idbStorage),
-      partialize: (state) => ({ categories: state.categories })
+      partialize: (state) => ({
+        categories: state.categories,
+        categoriesByModule: state.categoriesByModule,
+      }),
+      migrate: (persistedState) => {
+        const legacyCategories = Array.isArray(persistedState?.categories) ? persistedState.categories : []
+        const currentCategoriesByModule = persistedState?.categoriesByModule || {}
+        return {
+          ...persistedState,
+          categories: legacyCategories.length > 0 ? legacyCategories : [...DEFAULT_CATEGORIES_BY_MODULE.grocery],
+          categoriesByModule: {
+            ...DEFAULT_CATEGORIES_BY_MODULE,
+            ...currentCategoriesByModule,
+            grocery: legacyCategories.length > 0 ? legacyCategories : (currentCategoriesByModule.grocery || DEFAULT_CATEGORIES_BY_MODULE.grocery),
+          },
+        }
+      },
     }
   )
 )
@@ -198,6 +415,67 @@ if (typeof window !== 'undefined' && window.require) {
     useProductStore.getState().loadProducts();
   }, 100);
 }
+
+// ─── Recipes Store (Restaurant Mode) ────────────────────────────────────────
+export const useRecipeStore = create(
+  persist(
+    (set, get) => ({
+      recipes: {
+        // Chicken Fried Rice: 300g rice + 100g chicken + 2 eggs (simulated as milk) + 30ml oil
+        'REST-001': [
+          { ingredientId: '1', name: 'Basmati Rice', qty: 300, unit: 'g' },
+          { ingredientId: '4', name: 'Eggs (Milk)', qty: 2, unit: 'count' },
+          { ingredientId: '6', name: 'Oil', qty: 30, unit: 'ml' },
+          { ingredientId: '7', name: 'Salt', qty: 1, unit: 'pinch' },
+        ],
+        // Spicy Cheese Pizza: 200g flour + 100ml oil + 100g cheese (milk) + salt
+        'REST-002': [
+          { ingredientId: '5', name: 'Wheat Flour', qty: 200, unit: 'g' },
+          { ingredientId: '6', name: 'Oil', qty: 100, unit: 'ml' },
+          { ingredientId: '4', name: 'Cheese/Milk', qty: 100, unit: 'g' },
+          { ingredientId: '7', name: 'Salt', qty: 2, unit: 'pinch' },
+        ],
+      },
+
+      setRecipe: (dishId, ingredients) => {
+        set((s) => ({
+          recipes: { ...s.recipes, [dishId]: ingredients || [] },
+        }))
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('set-recipe', dishId, ingredients || [])
+        }
+      },
+
+      getRecipe: (dishId) => get().recipes[dishId] || [],
+
+      deductIngredients: (dishId, qty = 1) => {
+        const recipe = get().recipes[dishId]
+        if (!recipe || recipe.length === 0) return { success: true, message: 'No ingredients to deduct' }
+
+        try {
+          const products = useProductStore.getState().products
+          const adjustStock = useProductStore.getState().adjustStock
+
+          recipe.forEach((ingredient) => {
+            const product = products.find((p) => p.id === ingredient.ingredientId)
+            if (product) {
+              const totalDeduction = ingredient.qty * qty
+              adjustStock(ingredient.ingredientId, -totalDeduction)
+            }
+          })
+
+          return { success: true, message: `Deducted ingredients for ${qty}x dish` }
+        } catch (err) {
+          return { success: false, message: err.message }
+        }
+      },
+    }),
+    {
+      name: 'paxxmo-recipes',
+      storage: createJSONStorage(() => idbStorage),
+    }
+  )
+)
 
 // ─── POS (Cart) Store ───────────────────────────────────────────────────────
 export const usePOSStore = create((set, get) => ({
@@ -299,6 +577,7 @@ const generateSampleSales = () => {
       const total = Math.floor(Math.random() * 8000) + 500
       sales.push({
         id: uuidv4(),
+        receiptNo: generateReceiptNumber(),
         date: new Date(date.setHours(Math.floor(Math.random() * 12) + 8, Math.floor(Math.random() * 60))),
         items: items,
         subtotal: total,
@@ -321,7 +600,99 @@ export const useSalesStore = create(
       sales: generateSampleSales(),
 
       addSale: (sale) =>
-        set((s) => ({ sales: [{ ...sale, id: uuidv4(), date: new Date() }, ...s.sales] })),
+        set((s) => ({
+          sales: [{
+            ...sale,
+            id: uuidv4(),
+            date: new Date(),
+            receiptNo: String(sale.receiptNo || '').trim() || generateReceiptNumber(),
+            paymentMethod: sale.paymentMethod || 'cash',
+            status: sale.status || 'completed',
+            source: sale.source || 'grocery',
+            items_detail: sale.items_detail || sale.cartItems || [],
+          }, ...s.sales],
+        })),
+      findSaleByReceiptNo: (receiptNo) => {
+        if (!receiptNo) return null
+        const normalized = String(receiptNo).trim().toUpperCase()
+        return get().sales.find((s) => String(s.receiptNo || '').trim().toUpperCase() === normalized) || null
+      },
+      refundSaleByReceiptNo: ({ receiptNo, reason = 'Customer return', cashier = 'System' }) => {
+        const originalSale = get().findSaleByReceiptNo(receiptNo)
+        if (!originalSale) {
+          return { success: false, error: 'Receipt not found' }
+        }
+
+        if (!originalSale.receiptNo) {
+          return { success: false, error: 'This sale has no receipt number and cannot be refunded.' }
+        }
+
+        if (originalSale.status === 'refunded' || originalSale.isRefunded) {
+          return { success: false, error: 'This receipt is already refunded.' }
+        }
+
+        const refundReceiptNo = `RF-${originalSale.receiptNo}`
+        const existingRefund = get().sales.find((s) => s.receiptNo === refundReceiptNo)
+        if (existingRefund) {
+          return { success: false, error: 'Refund record already exists for this receipt.' }
+        }
+
+        const cartItems = originalSale.cartItems || []
+        const total = Number(originalSale.total || 0)
+        const subtotal = Number(originalSale.subtotal || total)
+        const tax = Number(originalSale.tax || 0)
+        const discount = Number(originalSale.discount || 0)
+        const serviceCharge = Number(originalSale.serviceCharge || 0)
+
+        const adjustStock = useProductStore.getState().adjustStock
+        cartItems.forEach((item) => {
+          adjustStock(item.id, Number(item.qty || 0))
+        })
+
+        // For restaurant/takeout, return ingredient stock as well when recipes are configured.
+        if (originalSale.source === 'restaurant' || originalSale.source === 'takeout') {
+          const recipes = useRecipeStore.getState().recipes || {}
+          cartItems.forEach((item) => {
+            const recipe = recipes[item.id] || []
+            recipe.forEach((ingredient) => {
+              const qtyBack = Number(ingredient.qty || 0) * Number(item.qty || 0)
+              adjustStock(ingredient.ingredientId, qtyBack)
+            })
+          })
+        }
+
+        const refundSale = {
+          receiptNo: refundReceiptNo,
+          date: new Date(),
+          cartItems,
+          items_detail: cartItems,
+          items: originalSale.items || cartItems.reduce((sum, i) => sum + Number(i.qty || 0), 0),
+          subtotal: -Math.abs(subtotal),
+          discount: -Math.abs(discount),
+          tax: -Math.abs(tax),
+          serviceCharge: -Math.abs(serviceCharge),
+          total: -Math.abs(total),
+          paymentMethod: originalSale.paymentMethod || 'cash',
+          change: 0,
+          cashier,
+          source: originalSale.source || 'grocery',
+          status: 'refund',
+          refundOf: originalSale.id,
+          refundReason: reason,
+          originalReceiptNo: originalSale.receiptNo,
+        }
+
+        set((s) => ({
+          sales: [
+            { ...refundSale, id: uuidv4() },
+            ...s.sales.map((sale) =>
+              sale.id === originalSale.id ? { ...sale, status: 'refunded', isRefunded: true } : sale
+            ),
+          ],
+        }))
+
+        return { success: true, refundSale, originalSale }
+      },
       getTodaySales: () => {
         const today = new Date()
         return get().sales.filter((s) => {
@@ -393,8 +764,8 @@ const ipc = () => typeof window !== 'undefined' && window.require
 
 // Default per-role allowed settings tabs (super_admin always sees all)
 const DEFAULT_ADMIN_SETTINGS = {
-  owner:   { business: true, tax: true, modules: true, receipt: true, hardware: true, cloud: true, users: true, license: true },
-  manager: { business: true, tax: false, modules: false, receipt: true, hardware: false, cloud: false, users: false, license: false },
+  owner:   { business: false, tax: true, modules: false, receipt: true, hardware: true, cloud: false, users: true, license: true },
+  manager: { business: false, tax: false, modules: false, receipt: true, hardware: false, cloud: false, users: false, license: false },
   staff:   { business: false, tax: false, modules: false, receipt: false, hardware: false, cloud: false, users: false, license: false },
 }
 
@@ -405,7 +776,7 @@ export const useAuthStore = create(
       users: [],   // loaded from SQLite via IPC
       roles: {
         super_admin: { name: 'Super Admin',  permissions: ['all'] },
-        owner:       { name: 'Owner',        permissions: ['manage_users', 'view_reports', 'manage_inventory', 'manage_settings', 'sales'] },
+        owner:       { name: 'Owner',        permissions: ['manage_users', 'view_reports', 'manage_inventory', 'manage_settings', 'sales', 'view_logs'] },
         manager:     { name: 'Manager',      permissions: ['view_reports', 'manage_inventory', 'sales'] },
         staff:       { name: 'Staff',        permissions: ['sales'] },
       },
@@ -441,6 +812,22 @@ export const useAuthStore = create(
           return false
         }
         return false
+      },
+
+      // POS quick-switch: allow barcode switch only for cashier/staff accounts.
+      switchCashierByBarcode: async (barcode) => {
+        const renderer = ipc()
+        if (!renderer) return { success: false, error: 'No IPC' }
+
+        const user = await renderer.invoke('auth-barcode', { barcode })
+        if (!user) return { success: false, error: 'No user found for this barcode' }
+
+        if (user.role !== 'staff') {
+          return { success: false, error: 'Only cashier accounts can be switched by barcode' }
+        }
+
+        set({ currentUser: user })
+        return { success: true, user }
       },
 
       logout: () => set({ currentUser: null }),
@@ -505,10 +892,26 @@ export const useAuthStore = create(
     }),
     {
       name: 'paxxmo-auth',
+      version: 3,
       storage: createJSONStorage(() => idbStorage),
-      // Only persist the current session — users always live in the DB
-      partialize: (s) => ({ currentUser: s.currentUser, roles: s.roles, adminSettingsPermissions: s.adminSettingsPermissions })
+      // Never persist permissions — always loaded fresh from code (prevents security bypass)
+      partialize: (s) => ({ currentUser: s.currentUser }),
+      migrate: () => ({}),
     }
+  )
+)
+
+// ─── Activity Log Store ─────────────────────────────────────────────────────
+export const useActivityStore = create(
+  persist(
+    (set, get) => ({
+      logs: [],
+      addLog: (action, details, user) => set(s => ({
+        logs: [{ id: uuidv4(), date: new Date(), action, details, user: user || 'System' }, ...s.logs].slice(0, 500)
+      })),
+      clearLogs: () => set({ logs: [] })
+    }),
+    { name: 'paxxmo-activities', storage: createJSONStorage(() => idbStorage) }
   )
 )
 

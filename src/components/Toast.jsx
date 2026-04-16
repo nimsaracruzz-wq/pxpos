@@ -51,32 +51,47 @@ function Toast({ id, type = 'info', message, title }) {
       style={{
         display: 'flex',
         alignItems: 'flex-start',
-        gap: 10,
-        padding: '12px 14px',
-        background: style.bg,
+        gap: 12,
+        padding: '13px 16px 13px 14px',
+        background: 'white',
         border: `1px solid ${style.border}`,
-        borderRadius: 12,
-        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-        minWidth: 280,
-        maxWidth: 360,
-        transition: 'all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        borderLeft: `4px solid ${style.icon_color}`,
+        borderRadius: 14,
+        boxShadow: '0 6px 24px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06)',
+        minWidth: 290,
+        maxWidth: 380,
+        transition: 'all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)',
         opacity: visible ? 1 : 0,
-        transform: visible ? 'translateX(0) scale(1)' : 'translateX(32px) scale(0.95)',
+        transform: visible ? 'translateX(0) scale(1)' : 'translateX(40px) scale(0.92)',
         marginBottom: 8,
         cursor: 'pointer',
       }}
       onClick={() => remove(id)}
     >
-      <Icon size={18} style={{ color: style.icon_color, flexShrink: 0, marginTop: 1 }} />
-      <div style={{ flex: 1 }}>
-        {title && <p style={{ fontWeight: 700, fontSize: 13, color: style.text, marginBottom: 2 }}>{title}</p>}
-        <p style={{ fontSize: 13, color: style.text, lineHeight: 1.4 }}>{message}</p>
+      <div
+        style={{
+          width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+          background: style.bg, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <Icon size={17} style={{ color: style.icon_color }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {title && <p style={{ fontWeight: 700, fontSize: 13, color: '#111827', marginBottom: 2 }}>{title}</p>}
+        <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.45, fontWeight: title ? 400 : 600 }}>{message}</p>
       </div>
       <button
         onClick={(e) => { e.stopPropagation(); remove(id) }}
-        style={{ color: style.icon_color, opacity: 0.6, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+        style={{
+          color: '#9ca3af', background: 'none', border: 'none',
+          cursor: 'pointer', padding: 2, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderRadius: 6, transition: 'background 0.1s',
+        }}
+        onMouseOver={e => e.currentTarget.style.background = '#f3f4f6'}
+        onMouseOut={e => e.currentTarget.style.background = 'none'}
       >
-        <X size={14} />
+        <X size={13} />
       </button>
     </div>
   )

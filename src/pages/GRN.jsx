@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { Truck, Plus, Search, CheckCircle, ClipboardList, Package, Calendar, ChevronDown, Save, Trash2 } from 'lucide-react'
+import { Truck, Plus, Search, CheckCircle, ClipboardList, Package, Calendar, ChevronDown, Save, Trash2, Barcode } from 'lucide-react'
 import { useProductStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { Button, Badge, Input, Select, SectionHeader, SearchInput, StatCard, Modal } from '@/components/ui'
@@ -22,9 +22,11 @@ const useGRNStore = create(
 )
 
 export default function GRN() {
-  const { products, adjustStock } = useProductStore()
+  const { products, adjustStock, getByBarcode } = useProductStore()
   const { grns, addGRN } = useGRNStore()
   const toast = useToast()
+  
+  const [barcodeInput, setBarcodeInput] = useState('')
 
   const [supplier, setSupplier] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
@@ -48,6 +50,30 @@ export default function GRN() {
     const qty = parseInt(it.qty) || 0
     return sum + cost * qty
   }, 0)
+
+  const handleBarcodeSubmit = (e) => {
+    e.preventDefault()
+    if (!barcodeInput.trim()) return
+    const prod = getByBarcode(barcodeInput.trim())
+    if (prod) {
+      const existingIdx = items.findIndex(it => it.productId === prod.id)
+      if (existingIdx !== -1) {
+        updateItem(existingIdx, 'qty', parseInt(items[existingIdx].qty || 0) + 1)
+      } else {
+        const lastItem = items[items.length - 1]
+        if (lastItem && !lastItem.productId) {
+          updateItem(items.length - 1, 'productId', prod.id)
+          updateItem(items.length - 1, 'costPrice', prod.cost || 0)
+        } else {
+          setItems(s => [...s, { productId: prod.id, qty: 1, costPrice: prod.cost || 0, expiryDate: '' }])
+        }
+      }
+      setBarcodeInput('')
+      toast.success(`Added ${prod.name} via barcode`, { icon: '📦' })
+    } else {
+      toast.error('Barcode not recognized')
+    }
+  }
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -82,7 +108,7 @@ export default function GRN() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-5">
+    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
       <SectionHeader
         title="Goods Receiving (GRN)"
         subtitle="Record incoming stock from suppliers"
@@ -166,9 +192,24 @@ export default function GRN() {
           <div className="card p-5 mb-4">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wide">Products Received</h3>
-              <button type="button" onClick={addItem} className="btn-secondary">
-                <Plus size={14} /> Add Item
-              </button>
+              <div className="flex gap-3">
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Barcode size={14} className="text-green-500" />
+                  </div>
+                  <input
+                    type="text"
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleBarcodeSubmit(e)}
+                    placeholder="Scan barcode..."
+                    className="pl-8 pr-4 py-1.5 w-64 bg-white border border-green-200 rounded-lg text-sm focus:ring-2 focus:ring-green-100 focus:border-green-400 font-mono"
+                  />
+                </div>
+                <button type="button" onClick={addItem} className="btn-secondary">
+                  <Plus size={14} /> Add Manual Line
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -288,3 +329,4 @@ export default function GRN() {
     </div>
   )
 }
+

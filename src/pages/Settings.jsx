@@ -2,21 +2,25 @@ import React, { useState } from 'react'
 import {
   Store, Receipt, Percent, Globe, Key, Shield,
   Printer, Barcode, Save, CheckCircle, ChevronRight,
-  ShoppingBag, Utensils, Shirt, Pill, Truck, Cloud, Database, Users
+  ShoppingBag, Utensils, Shirt, Pill, Truck, Cloud, Database, Users, Upload, Sun, Moon,
+  Banknote, History, CalendarDays, BadgeDollarSign, CircleDollarSign
 } from 'lucide-react'
 import { useAppStore, useAuthStore } from '@/store'
 import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
 import { useToast } from '@/components/Toast'
 import { testCloudConnection } from '@/lib/firebase'
 import { cn } from '@/lib/utils'
+import UserBarcodeGenerator, { generateUserBarcode } from '@/components/UserBarcodeGenerator'
+import { v4 as uuidv4 } from 'uuid'
 
 const TABS = [
   { id: 'business', label: 'Business Info', icon: Store },
+  { id: 'appearance', label: 'Appearance', icon: Sun },
   { id: 'tax', label: 'Tax & Charges', icon: Percent },
   { id: 'modules', label: 'Modules', icon: ShoppingBag },
   { id: 'receipt', label: 'Receipt', icon: Receipt },
   { id: 'hardware', label: 'Hardware', icon: Printer },
-  { id: 'cloud', label: 'Cloud Sync', icon: Cloud },
+  { id: 'cloud', label: 'Cloud & Billing', icon: Cloud },
   { id: 'users', label: 'Staff & Roles', icon: Users },
   { id: 'license', label: 'License', icon: Key },
 ]
@@ -82,9 +86,22 @@ const ROLE_OPTIONS = [
   { value: 'staff',       label: 'Staff / Cashier' },
 ]
 
-function UserForm({ initial, onSave, onCancel, saving }) {
+function UserForm({ initial, onSave, onCancel, saving, currentUser }) {
   const [form, setForm] = useState(initial || { name:'', username:'', password:'', barcode:'', role:'staff' })
   const isEdit = !!initial?.id
+  
+  // Auto-generate barcode for new users when role changes
+  const handleRoleChange = (newRole) => {
+    setForm(f => {
+      const updated = { ...f, role: newRole }
+      if (!isEdit && !initial?.id) {
+        // For new users, auto-generate barcode
+        updated.barcode = generateUserBarcode(uuidv4(), newRole)
+      }
+      return updated
+    })
+  }
+
   return (
     <div className="bg-green-50 border border-green-200 rounded-2xl p-5 mb-4 animate-fade-in">
       <p className="font-bold text-green-800 mb-4 text-sm">{isEdit ? '✏️ Edit Staff Member' : '➕ Add New Staff Member'}</p>
@@ -102,13 +119,26 @@ function UserForm({ initial, onSave, onCancel, saving }) {
           <input type="password" className="input-base mt-1 text-sm" value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} placeholder="Min 6 characters" />
         </div>
         <div>
-          <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">ID Badge / Barcode</label>
-          <input className="input-base mt-1 text-sm font-mono" value={form.barcode} onChange={e=>setForm(f=>({...f,barcode:e.target.value}))} placeholder="e.g. STF-0042" />
+          <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            ID Badge / Barcode {!isEdit && <span className="text-blue-600 font-normal">(auto-generated)</span>}
+          </label>
+          <input 
+            className="input-base mt-1 text-sm font-mono" 
+            value={form.barcode} 
+            onChange={e => !isEdit ? null : setForm(f=>({...f,barcode:e.target.value}))} 
+            placeholder="e.g. STF-0042"
+            readOnly={!isEdit}
+            style={{ cursor: isEdit ? 'text' : 'not-allowed', opacity: isEdit ? 1 : 0.7 }}
+          />
         </div>
         <div className="col-span-2">
           <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Role</label>
-          <select className="input-base mt-1 text-sm w-full" value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))}>
-            {ROLE_OPTIONS.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
+          <select 
+            className="input-base mt-1 text-sm w-full" 
+            value={form.role} 
+            onChange={e => isEdit ? setForm(f=>({...f,role:e.target.value})) : handleRoleChange(e.target.value)}
+          >
+            {ROLE_OPTIONS.filter(r => currentUser?.role === 'super_admin' ? true : r.value !== 'super_admin').map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
         </div>
       </div>
@@ -128,13 +158,21 @@ function StaffTab() {
   const [showAdd, setShowAdd] = useState(false)
   const [editing, setEditing] = useState(null) // user object being edited
   const [saving, setSaving] = useState(false)
+  const [barcodeUser, setBarcodeUser] = useState(null) // user for barcode generation
 
   const handleAdd = async (form) => {
     if (!form.name || !form.username || !form.password) { toast.error('Name, username and password are required'); return }
     setSaving(true)
-    const res = await addUser(form)
+    
+    // Auto-generate barcode if not already set (ensure every new user has a barcode)
+    const userForm = { ...form }
+    if (!userForm.barcode) {
+      userForm.barcode = generateUserBarcode(uuidv4(), form.role)
+    }
+    
+    const res = await addUser(userForm)
     setSaving(false)
-    if (res?.success) { setShowAdd(false); toast.success('User created successfully!') }
+    if (res?.success) { setShowAdd(false); toast.success('User created with auto-generated badge!') }
     else toast.error(res?.error || 'Failed to create user')
   }
 
@@ -174,14 +212,14 @@ function StaffTab() {
           )}
         </div>
 
-        {showAdd && <UserForm onSave={handleAdd} onCancel={()=>setShowAdd(false)} saving={saving} />}
+        {showAdd && <UserForm onSave={handleAdd} onCancel={()=>setShowAdd(false)} saving={saving} currentUser={currentUser} />}
 
         <div className="flex flex-col gap-2">
           {users.length === 0 && <p className="text-sm text-gray-400 text-center py-6">No users loaded yet...</p>}
           {users.map(u => (
             <div key={u.id}>
               {editing?.id === u.id ? (
-                <UserForm initial={editing} onSave={handleEdit} onCancel={()=>setEditing(null)} saving={saving} />
+                <UserForm initial={editing} onSave={handleEdit} onCancel={()=>setEditing(null)} saving={saving} currentUser={currentUser} />
               ) : (
                 <div className="p-4 border border-gray-100 rounded-xl flex items-center justify-between bg-white hover:border-gray-200 transition-colors">
                   <div className="flex items-center gap-3">
@@ -202,8 +240,17 @@ function StaffTab() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={()=>setEditing({...u,password:''})} className="btn-ghost text-xs py-1.5 px-3 border border-gray-200 hover:border-green-300 hover:text-green-600">Edit</button>
-                    <button onClick={()=>handleDelete(u)} className="btn-ghost text-xs py-1.5 px-3 border border-red-100 text-red-400 hover:bg-red-50 hover:border-red-300">Delete</button>
+                    {u.role === 'super_admin' && currentUser?.role !== 'super_admin' ? (
+                      <span className="text-xs text-gray-400 italic py-1.5 px-3 border border-transparent">Protected</span>
+                    ) : (
+                      <>
+                        <button onClick={()=>setBarcodeUser(u)} className="btn-ghost text-xs py-1.5 px-3 border border-blue-100 text-blue-600 hover:bg-blue-50 hover:border-blue-300 flex items-center gap-1">
+                          <Barcode size={14} /> Badge
+                        </button>
+                        <button onClick={()=>setEditing({...u,password:''})} className="btn-ghost text-xs py-1.5 px-3 border border-gray-200 hover:border-green-300 hover:text-green-600">Edit</button>
+                        <button onClick={()=>handleDelete(u)} className="btn-ghost text-xs py-1.5 px-3 border border-red-100 text-red-400 hover:bg-red-50 hover:border-red-300">Delete</button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -229,6 +276,8 @@ function StaffTab() {
           ))}
         </div>
       </div>
+
+      {barcodeUser && <UserBarcodeGenerator user={barcodeUser} onClose={() => setBarcodeUser(null)} />}
     </div>
   )
 }
@@ -248,14 +297,56 @@ export default function Settings() {
     modules, toggleModule,
     licenseActive, activateLicense,
     cloudSettings, updateCloudSettings,
+    cloudSubscription, setDeploymentMode, updateCloudSubscription, recordCloudPayment,
+    language, setLanguage,
+    theme, setTheme,
   } = useAppStore()
-  const { hasPermission, users, roles } = useAuthStore()
+  const { hasPermission, canAccessSettingsTab, users, roles, currentUser } = useAuthStore()
 
-  const allowedTabs = TABS.filter(t => t.id !== 'users' || hasPermission('manage_users'))
+  // super_admin sees everything; all other roles are filtered by canAccessSettingsTab
+  const allowedTabs = TABS.filter(t => {
+    if (currentUser?.role === 'super_admin') return true
+    return canAccessSettingsTab(t.id)
+  })
 
   const showSaved = () => {
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  const getNextDueAt = (plan) => {
+    const next = new Date()
+    if (plan === 'annual') next.setFullYear(next.getFullYear() + 1)
+    else next.setMonth(next.getMonth() + 1)
+    return next.toISOString()
+  }
+
+  const handleRecordCloudPayment = () => {
+    if (cloudSubscription.deploymentMode !== 'cloud') {
+      toast.error('Enable cloud mode first')
+      return
+    }
+
+    const amount = Number(cloudSubscription.plan === 'annual'
+      ? cloudSubscription.annualFee
+      : cloudSubscription.monthlyFee) || 0
+
+    if (amount <= 0) {
+      toast.error('Set a monthly or annual fee first')
+      return
+    }
+
+    recordCloudPayment({
+      plan: cloudSubscription.plan,
+      amount,
+      period: cloudSubscription.plan,
+      paidBy: currentUser?.name || currentUser?.username || 'System',
+      note: cloudSubscription.notes || '',
+      nextDueAt: getNextDueAt(cloudSubscription.plan),
+      status: 'paid',
+    })
+    toast.success(`Cloud subscription payment recorded (${cloudSubscription.plan})`)
+    showSaved()
   }
 
   const renderTab = () => {
@@ -282,6 +373,63 @@ export default function Settings() {
                   <option value="INR">INR - Indian Rupee</option>
                 </Select>
                 <Input label="Currency Symbol" value={businessInfo.currencySymbol} onChange={(e) => updateBusinessInfo({ currencySymbol: e.target.value })} />
+              </div>
+            </SettingsSection>
+            <SettingsSection title="System Language">
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setLanguage('en')}
+                  className={cn('flex-1 py-3 rounded-xl border-2 font-bold transition-all', language === 'en' ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50')}
+                >
+                  English
+                </button>
+                <button
+                  onClick={() => setLanguage('si')}
+                  className={cn('flex-1 py-3 rounded-xl border-2 font-bold transition-all text-lg', language === 'si' ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50')}
+                >
+                  සිංහල
+                </button>
+              </div>
+            </SettingsSection>
+          </div>
+        )
+
+      case 'appearance':
+        return (
+          <div className="flex flex-col gap-4">
+            <SettingsSection title="Theme">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setTheme('light')}
+                  className={cn(
+                    'p-4 rounded-2xl border-2 text-left transition-all',
+                    theme === 'light'
+                      ? 'border-green-500 bg-green-50'
+                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <Sun size={16} className={theme === 'light' ? 'text-green-600' : 'text-gray-500'} />
+                    <p className="font-bold text-sm text-gray-900">Light</p>
+                  </div>
+                  <p className="text-xs text-gray-500">Clean bright interface for daylight use.</p>
+                </button>
+
+                <button
+                  onClick={() => setTheme('dark')}
+                  className={cn(
+                    'p-4 rounded-2xl border-2 text-left transition-all',
+                    theme === 'dark'
+                      ? 'border-green-500 bg-green-50'
+                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <Moon size={16} className={theme === 'dark' ? 'text-green-600' : 'text-gray-500'} />
+                    <p className="font-bold text-sm text-gray-900">Dark</p>
+                  </div>
+                  <p className="text-xs text-gray-500">Reduced eye strain for low-light counters.</p>
+                </button>
               </div>
             </SettingsSection>
           </div>
@@ -368,6 +516,35 @@ export default function Settings() {
         return (
           <SettingsSection title="Receipt Customization">
             <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Receipt Logo</label>
+                <div className="flex items-center gap-4">
+                  {receiptSettings.logoUrl ? (
+                    <img src={receiptSettings.logoUrl} alt="Logo" className="h-16 max-w-[120px] object-contain bg-white rounded-lg p-1 border shadow-sm" />
+                  ) : (
+                    <div className="h-16 w-24 bg-gray-50 rounded-lg flex items-center justify-center text-xs text-gray-400 border border-dashed border-gray-200">No Logo</div>
+                  )}
+                  <label className="btn-secondary cursor-pointer">
+                    <Upload size={14} /> Upload Logo
+                    <input 
+                      type="file" 
+                      accept="image/png, image/jpeg, image/gif" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => updateReceiptSettings({ logoUrl: ev.target.result });
+                          reader.readAsDataURL(file);
+                        }
+                      }} 
+                    />
+                  </label>
+                  {receiptSettings.logoUrl && (
+                    <button className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors" onClick={() => updateReceiptSettings({ logoUrl: null })}>Remove</button>
+                  )}
+                </div>
+              </div>
               <Input label="Receipt Header Text" value={receiptSettings.header} onChange={(e) => updateReceiptSettings({ header: e.target.value })} placeholder="Custom header" />
               <Input label="Receipt Footer Text" value={receiptSettings.footer} onChange={(e) => updateReceiptSettings({ footer: e.target.value })} placeholder="Custom footer" />
               <Toggle checked={receiptSettings.showBarcode} onChange={(v) => updateReceiptSettings({ showBarcode: v })} label="Show barcode on receipt" />
@@ -399,7 +576,26 @@ export default function Settings() {
                 </Select>
                 <Input label="Printer Name / Port" value={hardwareSettings.printerPort} onChange={(e) => updateHardwareSettings({ printerPort: e.target.value })} placeholder="e.g. POS-58, COM3, USB001" />
                 <Input label="Paper Width" value={hardwareSettings.paperWidth} onChange={(e) => updateHardwareSettings({ paperWidth: e.target.value })} placeholder="e.g. 80mm or 58mm" />
-                <button className="btn-secondary w-fit">
+                <button 
+                  className="btn-secondary w-fit"
+                  onClick={async () => {
+                    const { printReceiptHTML } = await import('@/components/Receipt')
+                    printReceiptHTML(
+                      'Printer Test',
+                      `<div style="text-align: center; margin: 20px 0;">
+                        <h2 style="font-size: 20px; font-weight: bold; margin-bottom: 10px;">Printer Test</h2>
+                        <p style="font-size: 14px; color: #555;">Paxxmo POS System</p>
+                        <hr style="margin: 15px 0; border: none; border-top: 1px dashed #ccc;" />
+                        <p style="font-size: 12px; color: #777;">Test printed at: <br/>${new Date().toLocaleString()}</p>
+                        <p style="font-size: 10px; color: #aaa; margin-top: 10px;">Status: SUCCESS</p>
+                        <div style="margin-top:20px; font-size:12px; border:1px solid #000; padding:10px;">
+                           Printer Port: ${hardwareSettings.printerPort || 'System Default'}<br/>
+                           Type: ${hardwareSettings.printerType || 'Thermal (ESC/POS)'}
+                        </div>
+                      </div>`
+                    )
+                  }}
+                >
                   <Printer size={14} />
                   Test Print
                 </button>
@@ -420,30 +616,81 @@ export default function Settings() {
             <div className="card p-4 mb-2" style={{ background: 'linear-gradient(135deg,#eff6ff,#dbeafe)', border: '1px solid #bfdbfe' }}>
               <p className="text-sm text-blue-800 font-medium flex items-center gap-2">
                 <Cloud size={18} />
-                Real-Time Cloud Synchronization
+                Local-only or Cloud-connected deployment
               </p>
               <p className="text-xs text-blue-600 mt-1">
-                Sync your data to a remote database (e.g. Firebase, Supabase) for multi-device support, remote access, and secure backups.
+                Some customers stay fully local. Others subscribe to cloud sync and pay monthly or yearly for remote backup and multi-device access.
               </p>
             </div>
-            
-            <SettingsSection title="Cloud Configuration">
-              <div className="flex flex-col gap-5">
-                <Toggle
-                  checked={cloudSettings.enabled}
-                  onChange={(v) => updateCloudSettings({ enabled: v })}
-                  label="Enable Automatic Cloud Sync"
-                />
-                
-                {cloudSettings.enabled && (
-                  <div className="flex flex-col gap-4 animate-fade-in pt-2">
+
+            <SettingsSection title="Deployment Mode">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <button
+                  onClick={() => setDeploymentMode('local')}
+                  className={cn(
+                    'p-4 rounded-2xl border-2 text-left transition-all',
+                    cloudSubscription.deploymentMode === 'local'
+                      ? 'border-green-500 bg-green-50'
+                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <BadgeDollarSign size={16} className={cloudSubscription.deploymentMode === 'local' ? 'text-green-600' : 'text-gray-500'} />
+                    <p className="font-bold text-sm text-gray-900">Local Only</p>
+                  </div>
+                  <p className="text-xs text-gray-500">No cloud save. Data stays on this device only.</p>
+                </button>
+
+                <button
+                  onClick={() => setDeploymentMode('cloud')}
+                  className={cn(
+                    'p-4 rounded-2xl border-2 text-left transition-all',
+                    cloudSubscription.deploymentMode === 'cloud'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Cloud size={16} className={cloudSubscription.deploymentMode === 'cloud' ? 'text-blue-600' : 'text-gray-500'} />
+                    <p className="font-bold text-sm text-gray-900">Cloud Sync</p>
+                  </div>
+                  <p className="text-xs text-gray-500">Remote sync + backup for subscribed customers.</p>
+                </button>
+              </div>
+            </SettingsSection>
+
+            {cloudSubscription.deploymentMode === 'cloud' ? (
+              <>
+                <SettingsSection title="Cloud Sync Configuration">
+                  <div className="flex flex-col gap-5">
+                    <Toggle
+                      checked={cloudSettings.enabled}
+                      onChange={(v) => updateCloudSettings({ enabled: v })}
+                      label="Enable Automatic Cloud Sync"
+                    />
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Input
+                        label="Customer / Company Name"
+                        value={cloudSubscription.customerName || ''}
+                        onChange={(e) => updateCloudSubscription({ customerName: e.target.value })}
+                        placeholder="e.g. ABC Hotels"
+                      />
+                      <Input
+                        label="Billing Email"
+                        value={cloudSubscription.billingEmail || ''}
+                        onChange={(e) => updateCloudSubscription({ billingEmail: e.target.value })}
+                        placeholder="billing@company.com"
+                      />
+                    </div>
+
                     <Select label="Cloud Provider" value={cloudSettings.provider} onChange={(e) => updateCloudSettings({ provider: e.target.value })}>
                       <option value="firebase">Firebase Database</option>
                       <option value="supabase">Supabase</option>
                       <option value="aws">AWS RDS</option>
                       <option value="custom">Custom API Endpoint</option>
                     </Select>
-                    
+
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                         Firebase Config (JSON format)
@@ -455,43 +702,148 @@ export default function Settings() {
                         className="input-base text-xs font-mono w-full h-32 p-3 resize-y"
                       />
                     </div>
-                    
+
                     <Select label="Sync Interval" value={cloudSettings.syncInterval} onChange={(e) => updateCloudSettings({ syncInterval: parseInt(e.target.value) })}>
                       <option value="5">Every 5 minutes</option>
                       <option value="10">Every 10 minutes</option>
                       <option value="30">Every 30 minutes</option>
                       <option value="60">Hourly</option>
                     </Select>
+                  </div>
+                </SettingsSection>
 
-                    <div className="border-t border-gray-100 mt-2 pt-4">
-                      <button 
-                        className="btn-secondary w-fit" 
-                        disabled={testingConnection}
-                        onClick={async () => {
-                          if (!cloudSettings.firebaseConfig) {
-                            toast.error('Please enter a Firebase config first.')
-                            return
-                          }
-                          setTestingConnection(true)
-                          try {
-                            await testCloudConnection()
-                            toast.success('Connection successful! Firebase is ready.')
-                          } catch (err) {
-                            console.error(err)
-                            toast.error(`Connection failed: ${err.message}`)
-                          } finally {
-                            setTestingConnection(false)
-                          }
-                        }}
-                      >
-                        <Database size={14} />
-                        {testingConnection ? 'Testing...' : 'Test Connection'}
+                <SettingsSection title="Subscription Billing">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Select label="Billing Plan" value={cloudSubscription.plan} onChange={(e) => updateCloudSubscription({ plan: e.target.value })}>
+                      <option value="monthly">Monthly</option>
+                      <option value="annual">Annual</option>
+                    </Select>
+                    <Input
+                      label="Status"
+                      value={cloudSubscription.status}
+                      onChange={(e) => updateCloudSubscription({ status: e.target.value })}
+                      placeholder="active / inactive / past_due"
+                    />
+                    <Input
+                      label="Monthly Fee"
+                      type="number"
+                      value={cloudSubscription.monthlyFee}
+                      onChange={(e) => updateCloudSubscription({ monthlyFee: parseFloat(e.target.value) || 0 })}
+                      placeholder="0"
+                    />
+                    <Input
+                      label="Annual Fee"
+                      type="number"
+                      value={cloudSubscription.annualFee}
+                      onChange={(e) => updateCloudSubscription({ annualFee: parseFloat(e.target.value) || 0 })}
+                      placeholder="0"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+                    <div className="p-4 rounded-2xl border border-gray-200 bg-gray-50">
+                      <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">Last Paid</p>
+                      <p className="text-sm font-semibold text-gray-900 mt-1">
+                        {cloudSubscription.lastPaidAt ? new Date(cloudSubscription.lastPaidAt).toLocaleString() : 'No payment yet'}
+                      </p>
+                    </div>
+                    <div className="p-4 rounded-2xl border border-gray-200 bg-gray-50">
+                      <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">Next Due</p>
+                      <p className="text-sm font-semibold text-gray-900 mt-1">
+                        {cloudSubscription.nextDueAt ? new Date(cloudSubscription.nextDueAt).toLocaleDateString() : 'Not scheduled'}
+                      </p>
+                    </div>
+                    <div className="p-4 rounded-2xl border border-gray-200 bg-gray-50">
+                      <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">Plan Amount</p>
+                      <p className="text-sm font-semibold text-gray-900 mt-1">
+                        {cloudSubscription.plan === 'annual'
+                          ? `Rs. ${(cloudSubscription.annualFee || 0).toLocaleString()}`
+                          : `Rs. ${(cloudSubscription.monthlyFee || 0).toLocaleString()}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 mt-4">
+                    <Input
+                      label="Notes"
+                      value={cloudSubscription.notes || ''}
+                      onChange={(e) => updateCloudSubscription({ notes: e.target.value })}
+                      placeholder="Optional billing notes"
+                    />
+
+                    <div className="flex gap-2 flex-wrap">
+                      <button className="btn-secondary" onClick={handleRecordCloudPayment}>
+                        <Banknote size={14} />
+                        Record Payment
                       </button>
                     </div>
                   </div>
-                )}
-              </div>
-            </SettingsSection>
+
+                  <div className="mt-5 border-t border-gray-100 pt-4">
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                      <History size={14} /> Payment History
+                    </p>
+                    {cloudSubscription.payments?.length ? (
+                      <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
+                        {cloudSubscription.payments.map((payment) => (
+                          <div key={payment.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-white">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900">{payment.plan} payment</p>
+                              <p className="text-xs text-gray-500">
+                                {new Date(payment.paidAt).toLocaleString()} {payment.paidBy ? `· ${payment.paidBy}` : ''}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-green-700">Rs. {(payment.amount || 0).toLocaleString()}</p>
+                              <p className="text-xs text-gray-400">{payment.status || 'paid'}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-400">No subscription payments recorded yet.</p>
+                    )}
+                  </div>
+
+                  <div className="border-t border-gray-100 mt-4 pt-4">
+                    <button
+                      className="btn-secondary w-fit"
+                      disabled={testingConnection}
+                      onClick={async () => {
+                        if (!cloudSettings.firebaseConfig) {
+                          toast.error('Please enter a Firebase config first.')
+                          return
+                        }
+                        setTestingConnection(true)
+                        try {
+                          await testCloudConnection()
+                          toast.success('Connection successful! Firebase is ready.')
+                        } catch (err) {
+                          console.error(err)
+                          toast.error(`Connection failed: ${err.message}`)
+                        } finally {
+                          setTestingConnection(false)
+                        }
+                      }}
+                    >
+                      <Database size={14} />
+                      {testingConnection ? 'Testing...' : 'Test Connection'}
+                    </button>
+                  </div>
+                </SettingsSection>
+              </>
+            ) : (
+              <SettingsSection title="Local Mode Active">
+                <div className="p-4 rounded-2xl bg-green-50 border border-green-200">
+                  <p className="text-sm font-medium text-green-800">
+                    This customer is running local-only. No cloud sync and no monthly fee are required.
+                  </p>
+                  <p className="text-xs text-green-600 mt-1">
+                    Switch to Cloud Sync only when the customer subscribes to monthly or annual billing.
+                  </p>
+                </div>
+              </SettingsSection>
+            )}
           </div>
         )
 
@@ -573,7 +925,7 @@ export default function Settings() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6" style={{ background: '#f4f7f5' }}>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-bold text-gray-900">
             {TABS.find((t) => t.id === activeTab)?.label}
@@ -585,8 +937,11 @@ export default function Settings() {
             {saved ? <><CheckCircle size={15} /> Saved!</> : <><Save size={15} /> Save Changes</>}
           </button>
         </div>
-        {renderTab()}
+        <div className="max-w-4xl">
+          {renderTab()}
+        </div>
       </div>
     </div>
   )
 }
+

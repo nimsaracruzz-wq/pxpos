@@ -81,7 +81,7 @@ export default function Customers() {
   const typeEmoji = { retail: '🛒', wholesale: '🏭', vip: '⭐' }
 
   return (
-    <div className="h-full overflow-y-auto p-5">
+    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
       <SectionHeader
         title="Customers"
         subtitle={`${customers.length} customers registered`}
@@ -253,3 +253,4 @@ export default function Customers() {
     </div>
   )
 }
+

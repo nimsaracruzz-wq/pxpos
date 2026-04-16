@@ -8,7 +8,7 @@ export default function WebOrders() {
   const { sales } = useSalesStore()
   const [syncing, setSyncing] = useState(false)
   
-  const webOrders = sales.filter(s => s.source === 'web' || s.source === 'shopify' || s.source === 'woocommerce')
+  const webOrders = sales.filter(s => s.source === 'web' || s.source === 'qr' || s.source === 'shopify' || s.source === 'woocommerce')
     .sort((a, b) => new Date(b.date) - new Date(a.date))
 
   const handleSync = () => {
@@ -136,3 +136,4 @@ export default function WebOrders() {
     </div>
   )
 }
+

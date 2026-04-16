@@ -1,12 +1,17 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
+import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
-import { autoUpdater } from 'electron-updater';
+import os from 'os';
+
+const require = createRequire(import.meta.url);
+const { autoUpdater } = require('electron-updater');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
 
 // ─── Database Init ──────────────────────────────────────────────────────────
 const dbPath = path.join(app.getPath('userData'), 'paxxmo.db');
@@ -43,6 +48,18 @@ db.exec(`
     name TEXT NOT NULL,
     active INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS product_batches (
+    id TEXT PRIMARY KEY,
+    product_id TEXT NOT NULL,
+    batch_no TEXT,
+    expiry TEXT,
+    stock REAL DEFAULT 0,
+    cost REAL DEFAULT 0,
+    price REAL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
   );
 `);
 
@@ -134,6 +151,19 @@ ipcMain.handle('users-delete', (event, { id }) => {
   return { success: true };
 });
 
+// ─── Device Fingerprint ─────────────────────────────────────────────────────
+// Returns a stable hardware ID for this machine — used for license locking.
+// Same machine always returns the same ID.
+ipcMain.handle('get-device-id', () => {
+  const raw = [
+    os.hostname(),
+    os.platform(),
+    os.arch(),
+    os.cpus()[0]?.model || 'cpu',
+  ].join('|');
+  return crypto.createHash('sha256').update(raw).digest('hex').substring(0, 32);
+});
+
 // ─── Product IPC Handlers ───────────────────────────────────────────────────
 ipcMain.handle('get-products', () => {
   return db.prepare('SELECT * FROM products').all().map(p => ({
@@ -170,6 +200,92 @@ ipcMain.handle('delete-product', (event, id) => {
   stmt.run({ id });
 });
 
+// ─── Batch IPC Handlers ─────────────────────────────────────────────────────
+
+ipcMain.handle('get-product-batches', (event, productId) => {
+  return db.prepare('SELECT * FROM product_batches WHERE product_id = ? ORDER BY expiry ASC').all();
+});
+
+ipcMain.handle('add-product-batch', (event, batch) => {
+  const stmt = db.prepare(`
+    INSERT INTO product_batches (id, product_id, batch_no, expiry, stock, cost, price)
+    VALUES (@id, @product_id, @batch_no, @expiry, @stock, @cost, @price)
+  `);
+  stmt.run({
+    ...batch,
+    price: batch.price || null
+  });
+  return batch;
+});
+
+ipcMain.handle('update-product-batch', (event, id, updates) => {
+  const fields = Object.keys(updates).map(k => `${k} = @${k}`).join(', ');
+  if (!fields) return;
+  const stmt = db.prepare(`UPDATE product_batches SET ${fields} WHERE id = @id`);
+  stmt.run({ ...updates, id });
+});
+
+ipcMain.handle('delete-product-batch', (event, id) => {
+  db.prepare(`DELETE FROM product_batches WHERE id = @id`).run({ id });
+});
+
+// ─── Silent Receipt Printing (no pop-up windows) ───────────────────────────
+ipcMain.handle('print-html', async (event, payload = {}) => {
+  const html = String(payload?.html || '').trim();
+  if (!html) return { success: false, error: 'Missing print HTML' };
+
+  let printWindow = null;
+  try {
+    printWindow = new BrowserWindow({
+      show: false,
+      width: 420,
+      height: 760,
+      webPreferences: {
+        sandbox: true,
+      },
+    });
+
+    const resultPromise = new Promise((resolve) => {
+      const cleanup = () => {
+        if (printWindow && !printWindow.isDestroyed()) {
+          printWindow.close();
+        }
+        printWindow = null;
+      };
+
+      printWindow.webContents.once('did-fail-load', (e, code, description) => {
+        cleanup();
+        resolve({ success: false, error: `Load failed (${code}): ${description}` });
+      });
+
+      printWindow.webContents.once('did-finish-load', () => {
+        const options = {
+          silent: payload?.silent !== false,
+          printBackground: true,
+        };
+
+        const deviceName = String(payload?.deviceName || '').trim();
+        if (deviceName) options.deviceName = deviceName;
+
+        printWindow.webContents.print(options, (success, errorType) => {
+          cleanup();
+          if (success) resolve({ success: true });
+          else resolve({ success: false, error: errorType || 'Print failed' });
+        });
+      });
+    });
+
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    const result = await resultPromise;
+    return result;
+  } catch (error) {
+    if (printWindow && !printWindow.isDestroyed()) {
+      printWindow.close();
+    }
+    return { success: false, error: error?.message || 'Silent print failed' };
+  }
+});
+
 // ─── Window ─────────────────────────────────────────────────────────────────
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -181,8 +297,23 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadURL('http://localhost:5173').catch(() => {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  const loadRenderer = async (retries = 30) => {
+    if (!app.isPackaged) {
+      for (let i = 0; i < retries; i++) {
+        try {
+          await mainWindow.loadURL(DEV_SERVER_URL);
+          return;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    }
+
+    await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  };
+
+  loadRenderer().catch((err) => {
+    dialog.showErrorBox('Startup Error', `Unable to load app window. ${err.message}`);
   });
 
   if (!app.isPackaged) {

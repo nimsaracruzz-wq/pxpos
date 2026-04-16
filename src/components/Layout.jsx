@@ -1,49 +1,52 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, ShoppingCart, Package, BarChart3, Settings,
   ChevronLeft, ChevronRight, Users, Warehouse, Zap,
   Truck, Utensils, BookOpen, Bell, X, ShoppingBag, Globe,
-  Cloud, RefreshCw
+  Cloud, RefreshCw, Activity, Sun, Moon, RotateCcw
 } from 'lucide-react'
-import { useAppStore, useProductStore, useAuthStore } from '@/store'
-import { cn } from '@/lib/utils'
+import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStore } from '@/store'
+import { cn, generateReceiptNumber } from '@/lib/utils'
 import { format } from 'date-fns'
-import { syncToCloud } from '@/lib/firebase'
+import { markQRCodeOrderProcessed, subscribeToQRCodeOrders, syncToCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { useI18n } from '@/lib/i18n'
 
 const CORE_NAV = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard', permission: null }, // everyone
-  { to: '/products', icon: Package, label: 'Products', permission: 'manage_inventory' },
-  { to: '/inventory', icon: Warehouse, label: 'Inventory', permission: 'manage_inventory' },
-  { to: '/customers', icon: Users, label: 'Customers', permission: 'manage_inventory' },
-  { to: '/reports', icon: BarChart3, label: 'Reports', permission: 'view_reports' },
+  { to: '/', icon: LayoutDashboard, labelKey: 'nav_dashboard', permission: null },
+  { to: '/refunds', icon: RotateCcw, labelKey: 'Refunds', permission: 'sales' },
+  { to: '/products', icon: Package, labelKey: 'nav_products', permission: 'manage_inventory' },
+  { to: '/inventory', icon: Warehouse, labelKey: 'nav_inventory', permission: 'manage_inventory' },
+  { to: '/customers', icon: Users, labelKey: 'nav_customers', permission: 'manage_inventory' },
+  { to: '/reports', icon: BarChart3, labelKey: 'nav_reports', permission: 'view_reports' },
+  { to: '/logs', icon: Activity, labelKey: 'nav_logs', permission: 'view_logs' },
 ]
 
 const MODULE_NAV = {
   grocery: [
-    { to: '/pos', icon: ShoppingCart, label: 'POS Terminal', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
-    { to: '/grn', icon: Truck, label: 'Goods Receiving', section: 'Retail POS', permission: 'manage_inventory' },
+    { to: '/pos', icon: ShoppingCart, labelKey: 'nav_pos', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
+    { to: '/grn', icon: Truck, labelKey: 'nav_grn', section: 'Retail POS', permission: 'manage_inventory' },
   ],
   clothing: [
-    { to: '/pos', icon: ShoppingCart, label: 'POS Terminal', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
-    { to: '/variants', icon: Package, label: 'Style & Variants', section: 'Apparel', permission: 'manage_inventory' },
-    { to: '/barcodes', icon: Zap, label: 'Print Labels', section: 'Apparel', permission: 'manage_inventory' },
+    { to: '/pos', icon: ShoppingCart, labelKey: 'nav_pos', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
+    { to: '/variants', icon: Package, labelKey: 'nav_variants', section: 'Apparel', permission: 'manage_inventory' },
+    { to: '/barcodes', icon: Zap, labelKey: 'nav_labels', section: 'Apparel', permission: 'manage_inventory' },
   ],
   pharmacy: [
-    { to: '/pos', icon: ShoppingCart, label: 'POS Terminal', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
-    { to: '/prescriptions', icon: BookOpen, label: 'Rx Prescriptions', section: 'Pharmacy Operations', permission: 'sales' },
-    { to: '/batches', icon: Warehouse, label: 'Batch & Expiry', section: 'Pharmacy Operations', permission: 'manage_inventory' },
+    { to: '/pos', icon: ShoppingCart, labelKey: 'nav_pos', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
+    { to: '/prescriptions', icon: BookOpen, labelKey: 'nav_rx', section: 'Pharmacy Operations', permission: 'sales' },
+    { to: '/batches', icon: Warehouse, labelKey: 'nav_batches', section: 'Pharmacy Operations', permission: 'manage_inventory' },
   ],
   restaurant: [
-    { to: '/tables', icon: Utensils, label: 'Tables & KOT', section: 'Restaurant', permission: 'sales' },
-    { to: '/takeout', icon: ShoppingBag, label: 'Take Out', section: 'Restaurant', permission: 'sales' },
+    { to: '/tables', icon: Utensils, labelKey: 'nav_tables', section: 'Restaurant', permission: 'sales' },
+    { to: '/takeout', icon: ShoppingBag, labelKey: 'nav_takeout', section: 'Restaurant', permission: 'sales' },
   ],
   wholesale: [
-    { to: '/pos', icon: ShoppingCart, label: 'POS Terminal', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
-    { to: '/ledger', icon: BookOpen, label: 'Customer Ledger', section: 'Wholesale', permission: 'manage_inventory' },
+    { to: '/pos', icon: ShoppingCart, labelKey: 'nav_pos', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
+    { to: '/ledger', icon: BookOpen, labelKey: 'nav_ledger', section: 'Wholesale', permission: 'manage_inventory' },
   ],
   online: [
-    { to: '/web-orders', icon: Globe, label: 'Web Orders', section: 'Web Integration', permission: 'manage_inventory' },
+    { to: '/web-orders', icon: Globe, labelKey: 'nav_weborders', section: 'Web Integration', permission: 'manage_inventory' },
   ]
 }
 
@@ -54,10 +57,207 @@ export function Layout({ children }) {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [isSyncing, setIsSyncing] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState(new Date())
-  
-  const { businessInfo, modules, activeModule, setActiveModule } = useAppStore()
+  const ingestedQrOrderIdsRef = useRef(new Set())
+
+  const { businessInfo, modules, activeModule, setActiveModule, theme, toggleTheme, cloudSubscription } = useAppStore()
+  const isDark = theme === 'dark'
   const { products, getLowStock, getOutOfStock } = useProductStore()
   const { currentUser, logout, hasPermission } = useAuthStore()
+  const { t } = useI18n()
+
+  const notificationTtlMs = {
+    low: 12 * 60 * 60 * 1000,
+    out: 24 * 60 * 60 * 1000,
+    expiring: 7 * 24 * 60 * 60 * 1000,
+    expired: 30 * 24 * 60 * 60 * 1000,
+  }
+
+  const toTime = (value) => {
+    if (!value) return null
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime()
+  }
+
+  useEffect(() => {
+    const storeId = String(businessInfo?.taxId || '').trim()
+    if (!storeId) return () => {}
+
+    const unsubscribe = subscribeToQRCodeOrders(storeId, async (incoming) => {
+      if (!incoming?.id || ingestedQrOrderIdsRef.current.has(incoming.id)) return
+
+      const items = (Array.isArray(incoming.items) ? incoming.items : [])
+        .map((item) => ({
+          ...item,
+          qty: Number(item.qty || 0),
+          price: Number(item.price || item.salePrice || 0),
+          salePrice: Number(item.salePrice || item.price || 0),
+        }))
+        .filter((item) => item.qty > 0)
+
+      ingestedQrOrderIdsRef.current.add(incoming.id)
+
+      if (!items.length) {
+        await markQRCodeOrderProcessed(storeId, incoming.id)
+        return
+      }
+
+      const tableNo = String(incoming.tableNumber || '').trim()
+      const sessionId = String(incoming.session || `qr-${incoming.id}`)
+      const qrToken = String(incoming.token || '').trim()
+      const customerName = incoming.customerName || 'Web Customer'
+      const notes = incoming.notes || ''
+      const receiptNo = generateReceiptNumber()
+
+      const tableStore = useTableStore.getState()
+      const matchingTable = tableStore.tables.find((t) => String(t.number) === tableNo)
+
+      // Security/validity gate: only accept orders for the currently active table session.
+      // After settlement, session is cleared/rotated so old QR links are automatically invalid.
+      if (!matchingTable || matchingTable.status !== 'occupied' || String(matchingTable.sessionId || '') !== sessionId || String(matchingTable.qrToken || '') !== qrToken) {
+        await updateQRCodeOrderStatus(storeId, incoming.id, 'expired', {
+          rejectReason: 'session_mismatch_or_table_not_active',
+        })
+        return
+      }
+
+      const localProducts = useProductStore.getState().products || []
+      const existingOrderItems = Array.isArray(matchingTable.order?.items) ? matchingTable.order.items : []
+      const isInsufficient = items.find((item) => {
+        const product = localProducts.find((p) => String(p.id) === String(item.id))
+        if (!product || !product.active) return true
+
+        const existingQty = existingOrderItems
+          .filter((oi) => String(oi.id) === String(item.id))
+          .reduce((sum, oi) => sum + Number(oi.qty || 0), 0)
+
+        return Number(product.stock || 0) < Number(existingQty || 0) + Number(item.qty || 0)
+      })
+
+      if (isInsufficient) {
+        await updateQRCodeOrderStatus(storeId, incoming.id, 'expired', {
+          rejectReason: 'out_of_stock',
+          rejectItemId: String(isInsufficient.id || ''),
+          rejectItemName: String(isInsufficient.name || ''),
+        })
+        return
+      }
+
+      tableStore.addKOT({
+        tableId: matchingTable?.id || `web-${tableNo || 'na'}-${sessionId}`,
+        tableNumber: matchingTable?.number || tableNo || 'WEB',
+        items,
+        notes,
+        waiter: customerName,
+        source: 'web',
+        receiptNo,
+        session: sessionId,
+        token: qrToken,
+        storeId,
+        qrOrderId: incoming.id,
+      })
+
+      if (matchingTable) {
+        const existingOrder = matchingTable.order || {}
+        const existingItems = Array.isArray(existingOrder.items) ? existingOrder.items : []
+        const appState = useAppStore.getState()
+        const taxCfg = appState.taxSettings || {}
+        const serviceCfg = appState.serviceChargeSettings || {}
+        const taxRate = taxCfg.enabled ? Number(taxCfg.rate || 0) : 0
+        const serviceRate = serviceCfg.enabled ? Number(serviceCfg.rate || 0) : 0
+        const mergeKey = (item) => `${String(item.id || item.name || 'x')}::${JSON.stringify(item.customization || {})}`
+        const mergedMap = new Map()
+
+        existingItems.forEach((item) => {
+          const key = mergeKey(item)
+          const normalized = {
+            ...item,
+            qty: Number(item.qty || 0),
+            price: Number(item.price || item.salePrice || 0),
+            salePrice: Number(item.salePrice || item.price || 0),
+          }
+          mergedMap.set(key, normalized)
+        })
+
+        items.forEach((item) => {
+          const key = mergeKey(item)
+          const current = mergedMap.get(key)
+          if (current) {
+            mergedMap.set(key, { ...current, qty: Number(current.qty || 0) + Number(item.qty || 0) })
+          } else {
+            mergedMap.set(key, {
+              ...item,
+              qty: Number(item.qty || 0),
+              price: Number(item.price || item.salePrice || 0),
+              salePrice: Number(item.salePrice || item.price || 0),
+            })
+          }
+        })
+
+        const mergedItems = Array.from(mergedMap.values()).filter((item) => Number(item.qty || 0) > 0)
+        const mergedSubtotal = mergedItems.reduce(
+          (sum, item) => sum + Number(item.salePrice || item.price || 0) * Number(item.qty || 0),
+          0
+        )
+        const mergedTax = (mergedSubtotal * taxRate) / 100
+        const mergedServiceCharge = (mergedSubtotal * serviceRate) / 100
+        const mergedTotal = mergedSubtotal + mergedTax + mergedServiceCharge
+        const existingQrIds = Array.isArray(existingOrder.qrOrderIds)
+          ? existingOrder.qrOrderIds.map((id) => String(id)).filter(Boolean)
+          : (existingOrder.qrOrderId ? [String(existingOrder.qrOrderId)] : [])
+        const mergedQrOrderIds = Array.from(new Set([...existingQrIds, String(incoming.id)]))
+
+        tableStore.updateTable(matchingTable.id, {
+          status: 'occupied',
+          sessionId,
+          qrToken,
+          waiter: customerName,
+          order: {
+            items: mergedItems,
+            waiter: customerName,
+            notes: '',
+            kitchenNotes: notes,
+            source: 'web',
+            qrOrderId: incoming.id,
+            qrOrderIds: mergedQrOrderIds,
+            storeId,
+            token: qrToken,
+            subtotal: mergedSubtotal,
+            tax: mergedTax,
+            serviceCharge: mergedServiceCharge,
+            total: mergedTotal,
+          },
+        })
+      }
+
+      useSalesStore.getState().addSale({
+        receiptNo,
+        date: new Date(),
+        cartItems: items,
+        items: items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
+        subtotal: Number(incoming.subtotal || incoming.total || 0),
+        discount: 0,
+        tax: Number(incoming.tax || 0),
+        serviceCharge: Number(incoming.serviceCharge || 0),
+        total: Number(incoming.total || 0),
+        paymentMethod: 'pending',
+        change: 0,
+        cashier: 'Web QR',
+        source: 'qr',
+        status: 'pending',
+        customerName: incoming.customerName || 'Guest',
+        tableNumber: tableNo,
+        notes: '',
+        kitchenNotes: notes,
+        qrOrderId: incoming.id,
+        storeId,
+        token: qrToken,
+      })
+
+      await markQRCodeOrderProcessed(storeId, incoming.id)
+    })
+
+    return () => unsubscribe()
+  }, [businessInfo?.taxId])
 
   // Role badge colours
   const ROLE_COLORS = {
@@ -107,7 +307,8 @@ export function Layout({ children }) {
     const syncInterval = setInterval(async () => {
       // Only execute sync if online and cloud sync is explicitly enabled
       const settings = useAppStore.getState().cloudSettings
-      if (navigator.onLine && settings && settings.enabled) {
+      const subscription = useAppStore.getState().cloudSubscription
+      if (navigator.onLine && settings && settings.enabled && subscription?.deploymentMode === 'cloud' && subscription?.status !== 'inactive') {
         setIsSyncing(true)
         console.log('[Sync Engine] Initializing automated background cloud sync to', settings.provider)
         
@@ -126,13 +327,72 @@ export function Layout({ children }) {
     return () => clearInterval(syncInterval)
   }, [])
 
-  // Build notifications from low stock
-  const lowStock = getLowStock()
-  const outOfStock = getOutOfStock()
-  const notifications = [
-    ...outOfStock.map((p) => ({ id: p.id, type: 'error', msg: `${p.name} is OUT OF STOCK` })),
-    ...lowStock.filter((p) => p.stock > 0).map((p) => ({ id: `l${p.id}`, type: 'warning', msg: `${p.name} — only ${p.stock} left` })),
-  ]
+  const notifications = useMemo(() => {
+    const now = Date.now()
+    const alerts = []
+    const seen = new Set()
+
+    const pushAlert = (alert) => {
+      if (!alert || seen.has(alert.id) || alert.expiresAt <= now) return
+      seen.add(alert.id)
+      alerts.push(alert)
+    }
+
+    getOutOfStock().forEach((product) => {
+      const baseTime = toTime(product.updatedAt) || toTime(product.createdAt) || now
+      pushAlert({
+        id: `out:${product.id}`,
+        type: 'error',
+        msg: `${product.name} is OUT OF STOCK`,
+        details: 'Auto-clears after the next inventory update.',
+        expiresAt: baseTime + notificationTtlMs.out,
+        priority: 4,
+      })
+    })
+
+    getLowStock().filter((product) => product.stock > 0).forEach((product) => {
+      const baseTime = toTime(product.updatedAt) || toTime(product.createdAt) || now
+      pushAlert({
+        id: `low:${product.id}`,
+        type: 'warning',
+        msg: `${product.name} — only ${product.stock} left`,
+        details: 'Auto-clears after the next inventory update.',
+        expiresAt: baseTime + notificationTtlMs.low,
+        priority: 3,
+      })
+    })
+
+    products.forEach((product) => {
+      if (!product.active || !product.expiry) return
+      const expiryAt = toTime(product.expiry)
+      if (!expiryAt) return
+
+      const daysRemaining = (expiryAt - now) / (1000 * 60 * 60 * 24)
+      if (daysRemaining > 30) return
+
+      if (daysRemaining < 0) {
+        pushAlert({
+          id: `expired:${product.id}`,
+          type: 'error',
+          msg: `${product.name} expired on ${product.expiry}`,
+          details: 'Remove or restock this item to clear the alert.',
+          expiresAt: expiryAt + notificationTtlMs.expired,
+          priority: 5,
+        })
+      } else {
+        pushAlert({
+          id: `expiring:${product.id}`,
+          type: 'warning',
+          msg: `${product.name} expires in ${Math.max(1, Math.ceil(daysRemaining))} day${Math.ceil(daysRemaining) === 1 ? '' : 's'}`,
+          details: `Expiry date: ${product.expiry}`,
+          expiresAt: expiryAt + notificationTtlMs.expiring,
+          priority: 2,
+        })
+      }
+    })
+
+    return alerts.sort((a, b) => b.priority - a.priority || a.expiresAt - b.expiresAt)
+  }, [getLowStock, getOutOfStock, products, time])
 
   // Build nav: base + ONLY the currently ACTIVE module — filtered by permission
   const rawModuleNavs = []
@@ -173,46 +433,46 @@ export function Layout({ children }) {
   })
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden" style={{ background: '#f4f7f5' }}>
+    <div className="flex h-screen w-screen overflow-hidden bg-[#f4f7f5] dark:bg-zinc-950">
       {/* Sidebar */}
       <aside
-        className="flex flex-col h-full shrink-0 transition-all duration-300 ease-in-out"
+        className="flex flex-col h-full shrink-0 transition-all duration-300 ease-in-out bg-white dark:bg-zinc-900 border-r border-gray-100 dark:border-zinc-800 shadow-[3px_0_16px_rgba(0,0,0,0.05)] dark:shadow-none"
         style={{
-          width: collapsed ? 68 : 220,
-          background: 'white',
-          borderRight: '1px solid #f0f0f0',
-          boxShadow: '2px 0 12px rgba(0,0,0,0.04)',
+          width: collapsed ? 68 : 224,
         }}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 px-4 py-5" style={{ borderBottom: '1px solid #f5f5f5' }}>
+        <div
+          className="flex items-center gap-3 px-4 border-b border-gray-100 dark:border-zinc-800"
+          style={{ height: 64 }}
+        >
           <div
-            className="flex items-center justify-center shrink-0 rounded-xl"
+            className="flex items-center justify-center shrink-0 rounded-xl transition-transform hover:scale-105"
             style={{
-              width: 38,
-              height: 38,
+              width: 40,
+              height: 40,
               background: 'linear-gradient(135deg, #16a34a, #22c55e)',
-              boxShadow: '0 4px 12px rgba(22,163,74,0.3)',
+              boxShadow: '0 4px 14px rgba(22,163,74,0.32)',
             }}
           >
             <Zap size={18} color="white" fill="white" />
           </div>
           {!collapsed && (
             <div className="overflow-hidden">
-              <p className="font-bold text-gray-900 text-sm leading-tight">Paxxmo</p>
-              <p className="text-xs text-green-600 font-semibold">POS System</p>
+              <p className="font-black text-gray-900 text-base leading-tight tracking-tight">Paxxmo</p>
+              <p className="text-[11px] text-green-600 font-bold uppercase tracking-widest">POS System</p>
             </div>
           )}
         </div>
 
         {/* Optional Global Context Switcher */}
         {enabledModules.length > 1 && !collapsed && (
-          <div className="px-3 pb-2 pt-2 border-b border-gray-100 bg-gray-50/50">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 ml-1">Working Mode</p>
-            <select 
-              value={activeModule || ''} 
+          <div className="px-3 py-2.5 border-b border-gray-100 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800/50">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Working Mode</p>
+            <select
+              value={activeModule || ''}
               onChange={e => setActiveModule(e.target.value)}
-              className="w-full bg-white border border-gray-200 text-sm font-semibold rounded-lg px-2 py-1.5 outline-none focus:border-green-500 transition-colors"
+              className="w-full bg-white dark:bg-zinc-800 border-2 border-gray-200 dark:border-zinc-700 text-sm font-bold rounded-xl px-3 py-2 outline-none focus:border-green-400 transition-all cursor-pointer text-gray-700 dark:text-zinc-200"
             >
               {enabledModules.map(m => (
                 <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)} Mode</option>
@@ -222,19 +482,22 @@ export function Layout({ children }) {
         )}
 
         {/* Nav */}
-        <nav className="flex-1 p-3 flex flex-col gap-1 overflow-y-auto">
-          {currentCoreNav.map(({ to, icon: Icon, label, badge }) => (
+        <nav className="flex-1 p-2.5 flex flex-col gap-0.5 overflow-y-auto">
+          {currentCoreNav.map(({ to, icon: Icon, labelKey, badge }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
               className={({ isActive }) => cn('sidebar-item', isActive && 'active')}
-              title={collapsed ? label : undefined}
+              title={collapsed ? t(labelKey) : undefined}
             >
-              <Icon size={18} className="shrink-0" />
-              {!collapsed && <span className="flex-1 text-sm">{label}</span>}
+              <Icon size={17} className="shrink-0" />
+              {!collapsed && <span className="flex-1 text-sm font-medium">{t(labelKey)}</span>}
               {!collapsed && badge && (
-                <span className="text-xs font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#fef9c3', color: '#ca8a04', fontSize: 9 }}>
+                <span
+                  className="text-xs font-black px-1.5 py-0.5 rounded-lg"
+                  style={{ background: '#fef9c3', color: '#b45309', fontSize: 9, letterSpacing: '0.05em' }}
+                >
                   {badge}
                 </span>
               )}
@@ -245,20 +508,23 @@ export function Layout({ children }) {
           {Object.entries(sections).map(([section, items]) => (
             <div key={section}>
               {!collapsed && (
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-2 mt-4 mb-1">
+                <p
+                  className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-2 mt-4 mb-1.5"
+                  style={{ letterSpacing: '0.08em' }}
+                >
                   {section}
                 </p>
               )}
-              {collapsed && <div className="border-t border-gray-100 my-2" />}
-              {items.map(({ to, icon: Icon, label }) => (
+              {collapsed && <div className="border-t border-gray-100 my-2 mx-2" />}
+              {items.map(({ to, icon: Icon, labelKey }) => (
                 <NavLink
                   key={to}
                   to={to}
                   className={({ isActive }) => cn('sidebar-item', isActive && 'active')}
-                  title={collapsed ? label : undefined}
+                  title={collapsed ? t(labelKey) : undefined}
                 >
-                  <Icon size={18} className="shrink-0" />
-                  {!collapsed && <span className="flex-1 text-sm">{label}</span>}
+                  <Icon size={17} className="shrink-0" />
+                  {!collapsed && <span className="flex-1 text-sm font-medium">{t(labelKey)}</span>}
                 </NavLink>
               ))}
             </div>
@@ -271,24 +537,25 @@ export function Layout({ children }) {
               <NavLink
                 to="/settings"
                 className={({ isActive }) => cn('sidebar-item', isActive && 'active')}
-                title={collapsed ? 'Settings' : undefined}
+                title={collapsed ? t('nav_settings') : undefined}
               >
                 <Settings size={18} className="shrink-0" />
-                {!collapsed && <span className="flex-1 text-sm">Settings</span>}
+                {!collapsed && <span className="flex-1 text-sm">{t('nav_settings')}</span>}
               </NavLink>
             </>
           )}
         </nav>
 
         {/* Collapse toggle */}
-        <div className="p-3" style={{ borderTop: '1px solid #f5f5f5' }}>
+        <div className="p-2.5 border-t border-gray-100 dark:border-zinc-800">
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="sidebar-item w-full justify-center"
+            className="sidebar-item w-full justify-center text-gray-400 hover:text-gray-600"
           >
-            {collapsed ? <ChevronRight size={18} /> : (
-              <><ChevronLeft size={18} /><span className="text-sm">Collapse</span></>
-            )}
+            {collapsed
+              ? <ChevronRight size={16} />
+              : <><ChevronLeft size={16} /><span className="text-sm">{t('nav_collapse')}</span></>
+            }
           </button>
         </div>
       </aside>
@@ -297,10 +564,10 @@ export function Layout({ children }) {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar */}
         <header
-          className="flex items-center justify-between px-5 shrink-0"
-          style={{ height: 60, background: 'white', borderBottom: '1px solid #f0f0f0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}
+          className="flex items-center justify-between px-5 shrink-0 bg-white dark:bg-zinc-900 border-b border-gray-100 dark:border-zinc-800 shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-none"
+          style={{ height: 64 }}
         >
-        <p className="font-semibold text-gray-800 text-sm">{businessInfo.name}</p>
+        <p className="font-bold text-gray-800 dark:text-zinc-100 text-sm">{businessInfo.name}</p>
           {currentUser && (() => {
             const rc = ROLE_COLORS[currentUser.role] || ROLE_COLORS.staff
             return (
@@ -316,8 +583,8 @@ export function Layout({ children }) {
           <div className="flex items-center gap-4">
             {/* Date/Time */}
             <div className="text-right hidden sm:block">
-              <p className="text-xs font-semibold text-gray-800">{format(time, 'hh:mm:ss aa')}</p>
-              <p className="text-xs text-gray-400">{format(time, 'EEE, MMM d yyyy')}</p>
+              <p className="text-xs font-semibold text-gray-800 dark:text-zinc-200">{format(time, 'hh:mm:ss aa')}</p>
+              <p className="text-xs text-gray-400 dark:text-zinc-500">{format(time, 'EEE, MMM d yyyy')}</p>
             </div>
 
             {/* Network Sync Engine Status */}
@@ -325,7 +592,9 @@ export function Layout({ children }) {
               <div className="flex items-center gap-1.5 cursor-pointer">
                 <span className={cn("status-dot", isOnline ? "online" : "bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.2)]")} />
                 <span className="text-xs text-gray-700 font-bold">
-                  {isOnline ? 'Online Mode' : 'Offline Mode'}
+                  {cloudSubscription?.deploymentMode === 'local'
+                    ? 'Local Only'
+                    : isOnline ? 'Cloud Online' : 'Offline Mode'}
                 </span>
               </div>
               <div className="flex items-center gap-1 mt-0.5">
@@ -335,22 +604,32 @@ export function Layout({ children }) {
                   <Cloud size={10} className="text-gray-400" />
                 )}
                 <span className={cn("text-[10px] uppercase font-bold tracking-wider", isSyncing ? "text-blue-500" : "text-gray-400")}>
-                  {isSyncing ? 'Syncing...' : `Saved • ${format(lastSyncTime, 'HH:mm')}`}
+                  {cloudSubscription?.deploymentMode === 'local'
+                    ? 'Local Saves Only'
+                    : isSyncing ? 'Syncing...' : `Saved • ${format(lastSyncTime, 'HH:mm')}`}
                 </span>
               </div>
             </div>
 
-            {/* Notifications Bell */}
-            <div className="relative">
+            {/* Notifications Bell & Theme Toggle */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleTheme}
+                className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-all active:scale-90"
+              >
+                {isDark ? <Sun size={18} className="text-yellow-400" /> : <Moon size={18} className="text-gray-500" />}
+              </button>
+
+              <div className="relative">
               <button
                 onClick={() => setShowNotif(!showNotif)}
-                className="relative w-9 h-9 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
+                className="relative w-10 h-10 flex items-center justify-center rounded-xl hover:bg-gray-100 transition-all active:scale-90"
               >
                 <Bell size={18} className="text-gray-500" />
                 {notifications.length > 0 && (
                   <span
-                    className="absolute top-1 right-1 w-4 h-4 rounded-full flex items-center justify-center text-white font-bold"
-                    style={{ background: '#ef4444', fontSize: 9 }}
+                    className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center text-white font-black"
+                    style={{ background: '#ef4444', fontSize: 9, boxShadow: '0 0 0 2px white' }}
                   >
                     {notifications.length > 9 ? '9+' : notifications.length}
                   </span>
@@ -359,35 +638,49 @@ export function Layout({ children }) {
 
               {showNotif && (
                 <div
-                  className="absolute right-0 top-full mt-2 animate-fade-in"
+                  className="absolute right-0 top-full mt-2 animate-scale-in bg-white dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800"
                   style={{
-                    background: 'white',
-                    border: '1px solid #f0f0f0',
-                    borderRadius: 16,
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-                    width: 320,
+                    borderRadius: 18,
+                    boxShadow: '0 12px 40px rgba(0,0,0,0.14)',
+                    width: 328,
                     zIndex: 50,
-                    maxHeight: 400,
+                    maxHeight: 420,
                     overflow: 'hidden',
                   }}
                 >
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                    <p className="font-bold text-gray-900 text-sm">Alerts</p>
-                    <button onClick={() => setShowNotif(false)} className="text-gray-400 hover:text-gray-600">
-                      <X size={14} />
+                  <div className="flex items-center justify-between px-4 py-3.5 border-b border-gray-100 dark:border-zinc-800">
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-gray-900 dark:text-zinc-100 text-sm">Alerts</p>
+                      {notifications.length > 0 && (
+                        <span className="badge badge-red text-xs">{notifications.length}</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setShowNotif(false)}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      <X size={13} />
                     </button>
                   </div>
-                  <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
+                  <div className="overflow-y-auto" style={{ maxHeight: 360 }}>
                     {notifications.length === 0 ? (
-                      <p className="text-sm text-gray-400 text-center py-8">All clear! No alerts.</p>
+                      <div className="flex flex-col items-center justify-center py-10 text-center">
+                        <span className="text-3xl mb-2">✅</span>
+                        <p className="text-sm font-medium text-gray-400">All clear! No alerts.</p>
+                      </div>
                     ) : (
                       notifications.map((n) => (
                         <div
                           key={n.id}
-                          className="flex items-start gap-3 px-4 py-3 border-b border-gray-50 last:border-0"
+                          className="flex items-start gap-3 px-4 py-3.5 border-b border-gray-50 dark:border-zinc-800/50 last:border-0 hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
                         >
-                          <span>{n.type === 'error' ? '🔴' : '🟡'}</span>
-                          <p className="text-xs text-gray-700">{n.msg}</p>
+                          <span className="text-base mt-0.5">{n.type === 'error' ? '🔴' : '🟡'}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-gray-700 font-medium leading-relaxed">{n.msg}</p>
+                            <p className="text-[10px] text-gray-400 mt-0.5">
+                              {n.details} Auto-clears by {format(new Date(n.expiresAt), 'dd MMM, hh:mm aa')}
+                            </p>
+                          </div>
                         </div>
                       ))
                     )}
@@ -395,27 +688,37 @@ export function Layout({ children }) {
                 </div>
               )}
             </div>
+            </div>
 
             {/* Avatar & Quick Logout */}
-            <div className="flex items-center gap-2 group relative">
-              <div className="flex flex-col items-end mr-1">
-                 <p className="text-xs font-bold text-gray-800 leading-tight">{currentUser?.username}</p>
-                 <p className="text-[10px] text-green-600 font-semibold uppercase">{currentUser?.role.replace('_', ' ')}</p>
+            <div className="flex items-center gap-2.5 group relative">
+              <div className="flex flex-col items-end">
+                <p className="text-xs font-bold text-gray-800 dark:text-zinc-100 leading-tight">{currentUser?.username}</p>
+                <p className="text-[10px] text-green-600 font-bold uppercase tracking-wider">{currentUser?.role.replace('_', ' ')}</p>
               </div>
               <div
-                className="flex items-center justify-center rounded-full text-white text-xs font-bold cursor-pointer transition-transform group-hover:scale-105"
-                style={{ width: 34, height: 34, background: 'linear-gradient(135deg,#16a34a,#22c55e)', boxShadow: '0 4px 10px rgba(22,163,74,0.3)' }}
+                className="flex items-center justify-center rounded-xl text-white text-sm font-black cursor-pointer transition-all group-hover:scale-105 group-hover:shadow-lg"
+                style={{
+                  width: 38,
+                  height: 38,
+                  background: 'linear-gradient(135deg,#16a34a,#22c55e)',
+                  boxShadow: '0 4px 12px rgba(22,163,74,0.3)',
+                }}
               >
                 {currentUser?.username?.charAt(0).toUpperCase() || 'U'}
               </div>
-              
-              <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden">
-                <div className="p-3 border-b border-gray-50 bg-gray-50/50">
-                  <p className="text-xs font-bold text-gray-600">ID Badge / Token</p>
-                  <p className="text-[10px] text-gray-400 font-mono mt-0.5 tracking-wider">{currentUser?.barcode}</p>
+
+              <div className="absolute right-0 top-full mt-2 w-52 bg-white dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.14)] dark:shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden">
+                <div className="p-4 border-b border-gray-50 dark:border-zinc-800/50 bg-gray-50 dark:bg-zinc-800/50">
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">ID Badge</p>
+                  <p className="text-sm font-bold text-gray-800 dark:text-zinc-100">{currentUser?.username}</p>
+                  <p className="text-[10px] text-gray-400 font-mono mt-1 tracking-wider">{currentUser?.barcode}</p>
                 </div>
-                <button onClick={logout} className="w-full text-left px-4 py-3 text-sm text-red-600 font-bold hover:bg-red-50 transition-colors">
-                  Secure Logout
+                <button
+                  onClick={logout}
+                  className="w-full text-left px-4 py-3 text-sm text-red-600 font-bold hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors flex items-center gap-2"
+                >
+                  <span>🚪</span> {t('nav_logout')}
                 </button>
               </div>
             </div>

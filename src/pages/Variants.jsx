@@ -20,7 +20,7 @@ export default function Variants() {
   }, [products])
 
   return (
-    <div className="h-full overflow-y-auto p-5">
+    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
       <SectionHeader 
         title="Style & Variants Matrix" 
         subtitle="Manage sizes, colors, and SKUs for apparel"
@@ -95,3 +95,4 @@ export default function Variants() {
     </div>
   )
 }
+

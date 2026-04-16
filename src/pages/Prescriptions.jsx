@@ -82,3 +82,4 @@ export default function Prescriptions() {
     </div>
   )
 }
+
