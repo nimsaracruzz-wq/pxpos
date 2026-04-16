@@ -34,6 +34,15 @@ export default function App() {
 
   const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
   const hashPathRaw = typeof window !== 'undefined' ? window.location.hash.replace(/^#/, '') : ''
+  const decodedHref = typeof window !== 'undefined'
+    ? (() => {
+        try {
+          return decodeURIComponent(window.location.href || '')
+        } catch (_) {
+          return window.location.href || ''
+        }
+      })()
+    : ''
   const hashPath = (() => {
     try {
       return decodeURIComponent(hashPathRaw).replace(/^!/, '')
@@ -53,7 +62,7 @@ export default function App() {
     }
     return window.location.pathname || '/'
   })()
-  const isPublicMenuRoute = currentPath.startsWith('/menu/')
+  const isPublicMenuRoute = currentPath.startsWith('/menu/') || /\/menu\/[^/?#]+/i.test(decodedHref)
 
   useEffect(() => {
     const isDark = theme === 'dark'
@@ -104,6 +113,7 @@ export default function App() {
       <Router>
         <Routes>
           <Route path="/menu/:storeId" element={<PublicMenu />} />
+          <Route path="*" element={<PublicMenu />} />
         </Routes>
         <ToastContainer />
       </Router>

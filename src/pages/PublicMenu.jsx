@@ -140,7 +140,18 @@ export default function PublicMenu() {
   const [searchParams] = useSearchParams()
   const toast = useToast()
 
-  const decodedStoreId = useMemo(() => decodeURIComponent(String(storeId || '')).trim(), [storeId])
+  const fallbackStoreId = useMemo(() => {
+    if (typeof window === 'undefined') return ''
+    try {
+      const decodedHref = decodeURIComponent(window.location.href || '')
+      const match = decodedHref.match(/\/menu\/([^/?#&]+)/i)
+      return String(match?.[1] || '').trim()
+    } catch (_) {
+      return ''
+    }
+  }, [])
+  const resolvedStoreId = String(storeId || fallbackStoreId || '').trim()
+  const decodedStoreId = useMemo(() => decodeURIComponent(resolvedStoreId).trim(), [resolvedStoreId])
   const tableNo = String(searchParams.get('table') || '').trim()
   const guests = Number(searchParams.get('guests') || 0) || 0
   const rawSession = String(searchParams.get('session') || '').trim()
