@@ -51,7 +51,10 @@ export default function App() {
     }
   })()
   const isHashPublicMenuRoute = hashPath.startsWith('/menu/') || hashPath.includes('/menu/')
-  const Router = isFileProtocol || isHashPublicMenuRoute ? HashRouter : BrowserRouter
+  const hasQrQueryMarkers = /(?:\?|&)(table|session|token|guests)=/i.test(decodedHref)
+  const hasMenuMarker = /(?:\/|#|%2f)menu(?:\/|%2f)/i.test(decodedHref)
+  const forcePublicMenuFromHref = hasMenuMarker || (hasQrQueryMarkers && /menu/i.test(decodedHref))
+  const Router = isFileProtocol || isHashPublicMenuRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
   const currentPath = (() => {
     if (typeof window === 'undefined') return '/'
     if (isFileProtocol) {
@@ -62,7 +65,10 @@ export default function App() {
     }
     return window.location.pathname || '/'
   })()
-  const isPublicMenuRoute = currentPath.startsWith('/menu/') || /\/menu\/[^/?#]+/i.test(decodedHref)
+  const isPublicMenuRoute =
+    currentPath.startsWith('/menu/') ||
+    /\/menu\/[^/?#]+/i.test(decodedHref) ||
+    forcePublicMenuFromHref
 
   useEffect(() => {
     const isDark = theme === 'dark'
