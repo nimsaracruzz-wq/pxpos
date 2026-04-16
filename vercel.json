@@ -1,0 +1,24 @@
+{
+  "rewrites": [
+    {
+      "source": "/menu/assets/:path*",
+      "destination": "/assets/:path*"
+    },
+    {
+      "source": "/assets/:path*",
+      "destination": "/assets/:path*"
+    },
+    {
+      "source": "/menu/:storeId",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/menu/:storeId/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/index.html"
+    }
+  ]
+}
