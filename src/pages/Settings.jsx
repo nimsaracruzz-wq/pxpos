@@ -297,6 +297,7 @@ export default function Settings() {
     modules, toggleModule,
     licenseActive, activateLicense,
     cloudSettings, updateCloudSettings,
+    helaQRSettings, updateHelaQRSettings,
     cloudSubscription, setDeploymentMode, updateCloudSubscription, recordCloudPayment,
     language, setLanguage,
     theme, setTheme,
@@ -360,6 +361,12 @@ export default function Settings() {
                 <Input label="Phone" value={businessInfo.phone} onChange={(e) => updateBusinessInfo({ phone: e.target.value })} />
                 <Input label="Email" value={businessInfo.email} onChange={(e) => updateBusinessInfo({ email: e.target.value })} />
                 <Input label="Tax ID / Business Reg." value={businessInfo.taxId} onChange={(e) => updateBusinessInfo({ taxId: e.target.value })} />
+                <Input
+                  label="Public Menu URL"
+                  value={businessInfo.publicMenuBaseUrl || ''}
+                  onChange={(e) => updateBusinessInfo({ publicMenuBaseUrl: e.target.value.trim() })}
+                  hint="Example: https://your-vercel-app.vercel.app"
+                />
                 <Input label="Address" value={businessInfo.address} onChange={(e) => updateBusinessInfo({ address: e.target.value })} className="col-span-2" />
               </div>
             </SettingsSection>
@@ -389,6 +396,57 @@ export default function Settings() {
                 >
                   සිංහල
                 </button>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection title="HelaQR Payments">
+              <div className="flex flex-col gap-5">
+                <Toggle
+                  checked={Boolean(helaQRSettings?.enabled)}
+                  onChange={(v) => updateHelaQRSettings({ enabled: v })}
+                  label="Enable HelaQR"
+                />
+
+                {Boolean(helaQRSettings?.enabled) && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input
+                      label="Base URL"
+                      value={helaQRSettings?.baseUrl || ''}
+                      onChange={(e) => updateHelaQRSettings({ baseUrl: e.target.value.trim() })}
+                      placeholder="https://api.example.com"
+                    />
+                    <Input
+                      label="Business ID (b)"
+                      value={helaQRSettings?.businessId || ''}
+                      onChange={(e) => updateHelaQRSettings({ businessId: e.target.value.trim() })}
+                      placeholder="223"
+                    />
+                    <Input
+                      label="App ID"
+                      value={helaQRSettings?.appId || ''}
+                      onChange={(e) => updateHelaQRSettings({ appId: e.target.value.trim() })}
+                    />
+                    <Input
+                      label="App Secret"
+                      value={helaQRSettings?.appSecret || ''}
+                      onChange={(e) => updateHelaQRSettings({ appSecret: e.target.value.trim() })}
+                    />
+                    <Input
+                      label="Notify URL (optional)"
+                      value={helaQRSettings?.notifyUrl || ''}
+                      onChange={(e) => updateHelaQRSettings({ notifyUrl: e.target.value.trim() })}
+                      className="col-span-2"
+                      placeholder="https://your-server.com/helaqr/callback"
+                    />
+                    <div className="col-span-2">
+                      <Toggle
+                        checked={Boolean(helaQRSettings?.testMode)}
+                        onChange={(v) => updateHelaQRSettings({ testMode: v })}
+                        label="Test Mode"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </SettingsSection>
           </div>

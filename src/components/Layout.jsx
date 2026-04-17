@@ -11,6 +11,7 @@ import { cn, generateReceiptNumber } from '@/lib/utils'
 import { format } from 'date-fns'
 import { markQRCodeOrderProcessed, subscribeToQRCodeOrders, syncToCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
 import { useI18n } from '@/lib/i18n'
+import { checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
 
 const CORE_NAV = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav_dashboard', permission: null },
@@ -258,6 +259,38 @@ export function Layout({ children }) {
 
     return () => unsubscribe()
   }, [businessInfo?.storeId, businessInfo?.taxId])
+
+  useEffect(() => {
+    const checker = async () => {
+      const cfg = getHelaQRConfigStatus()
+      if (!cfg.enabled || !cfg.configured) return
+
+      const salesStore = useSalesStore.getState()
+      const pendingSales = (salesStore.sales || [])
+        .filter((sale) => String(sale.paymentMethod || '').toLowerCase() === 'helaqr' && String(sale.status || '').toLowerCase() === 'pending')
+        .slice(0, 20)
+
+      for (const sale of pendingSales) {
+        const status = await checkHelaQRPaymentStatus({
+          reference: sale.paymentRef || sale.receiptNo,
+          qrReference: sale.qrReference || '',
+        })
+
+        if (!status?.success) continue
+
+        if (status.isPaid) {
+          salesStore.finalizePendingSale({
+            receiptNo: sale.receiptNo,
+            paymentRef: sale.paymentRef,
+          })
+        }
+      }
+    }
+
+    const timer = setInterval(checker, 8000)
+    checker()
+    return () => clearInterval(timer)
+  }, [])
 
   // Role badge colours
   const ROLE_COLORS = {

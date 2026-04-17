@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { QRCodeSVG } from 'qrcode.react'
 import { ArrowRightLeft } from 'lucide-react'
 import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
 
 const STATUS_CONFIG = {
   available: { label: 'Available', variant: 'green', bg: '#f0fdf4', border: '#86efac' },
@@ -1202,8 +1203,29 @@ export default function Tables() {
 
     const { method, cashGiven, change, subtotal, tax, serviceCharge, total } = paymentInfo
     const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
-    const paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
     const receiptNo = generateReceiptNumber()
+    let paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
+    let qrReference = ''
+    let qrData = ''
+
+    if (isHelaQR) {
+      const cfg = getHelaQRConfigStatus()
+      if (!cfg.enabled || !cfg.configured) {
+        toast.error('Configure HelaQR in Settings before using this method')
+        return
+      }
+
+      const qrResult = await generateHelaQRPayment({ amount: total, reference: receiptNo })
+      if (!qrResult?.success) {
+        toast.error(qrResult?.error || 'Failed to generate HelaQR')
+        return
+      }
+
+      paymentRef = String(qrResult.reference || receiptNo)
+      qrReference = String(qrResult.qrReference || '')
+      qrData = String(qrResult.qrData || '')
+    }
+
     const receiptNotes = order?.source === 'web' || order?.source === 'qr' || order?.qrOrderId ? '' : (order.notes || '')
 
     const saleData = {
@@ -1219,6 +1241,8 @@ export default function Tables() {
       paymentMethod: method,
       paymentProvider: isHelaQR ? 'helaqr' : method,
       paymentRef,
+      qrReference,
+      qrData,
       paymentStatus: isHelaQR ? 'pending' : 'paid',
       change,
       cashier: order.waiter || 'Waiter',

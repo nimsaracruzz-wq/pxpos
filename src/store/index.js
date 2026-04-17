@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { get, set, del } from 'idb-keyval'
 import { generateReceiptNumber } from '@/lib/utils'
 
-const APP_STORE_VERSION = 2
+const APP_STORE_VERSION = 3
 const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
 
 function ensureBusinessStoreId(businessInfo = {}) {
@@ -91,6 +91,15 @@ export const useAppStore = create(
         firebaseConfig: '',
         syncInterval: 10,
       },
+      helaQRSettings: {
+        enabled: false,
+        testMode: true,
+        baseUrl: '',
+        appId: '',
+        appSecret: '',
+        businessId: '',
+        notifyUrl: '',
+      },
       cloudSubscription: {
         deploymentMode: 'local', // 'local' | 'cloud'
         status: 'inactive',       // 'inactive' | 'active' | 'past_due'
@@ -153,6 +162,8 @@ export const useAppStore = create(
         })),
       updateCloudSettings: (c) =>
         set((s) => ({ cloudSettings: { ...s.cloudSettings, ...c } })),
+      updateHelaQRSettings: (settings) =>
+        set((s) => ({ helaQRSettings: { ...s.helaQRSettings, ...settings } })),
     }),
     {
       name: 'paxxmo-app',
@@ -161,6 +172,16 @@ export const useAppStore = create(
       migrate: (persistedState) => ({
         ...persistedState,
         businessInfo: ensureBusinessStoreId(persistedState?.businessInfo || {}),
+        helaQRSettings: {
+          enabled: false,
+          testMode: true,
+          baseUrl: '',
+          appId: '',
+          appSecret: '',
+          businessId: '',
+          notifyUrl: '',
+          ...(persistedState?.helaQRSettings || {}),
+        },
       }),
       onRehydrateStorage: () => (state) => {
         if (state?.businessInfo) {

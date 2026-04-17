@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import ReceiptModal from '@/components/Receipt'
 import { useI18n } from '@/lib/i18n'
 import { v4 as uuidv4 } from 'uuid'
+import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
 
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
 
@@ -163,7 +164,7 @@ const PaymentModal = ({ open, onClose, total, onComplete }) => {
       >
         {processing
           ? <><span className="animate-spin inline-block mr-2">⏳</span> Processing...</>
-          : <><CheckCircle2 size={20} /> Confirm {method === 'cash' ? 'Cash ' : method === 'card' ? 'Card ' : 'Split '}Payment</>
+          : <><CheckCircle2 size={20} /> Confirm {method === 'cash' ? 'Cash ' : method === 'card' ? 'Card ' : method === 'helaqr' ? 'HelaQR ' : 'Split '}Payment</>
         }
       </button>
     </Modal>
@@ -292,10 +293,31 @@ export default function POS() {
   const taxAmt = getTax(taxSettings.rate, taxSettings.inclusive)
   const total = getTotal(taxSettings.rate, taxSettings.inclusive)
 
-  const handleCompleteSale = (method, cashGiven = 0, change = 0) => {
+  const handleCompleteSale = async (method, cashGiven = 0, change = 0) => {
     const receiptNo = generateReceiptNumber()
     const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
-    const paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
+    let paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
+    let qrReference = ''
+    let qrData = ''
+
+    if (isHelaQR) {
+      const cfg = getHelaQRConfigStatus()
+      if (!cfg.enabled || !cfg.configured) {
+        toast.error('Configure HelaQR in Settings before using this method')
+        return
+      }
+
+      const qrResult = await generateHelaQRPayment({ amount: total, reference: receiptNo })
+      if (!qrResult?.success) {
+        toast.error(qrResult?.error || 'Failed to generate HelaQR')
+        return
+      }
+
+      paymentRef = String(qrResult.reference || receiptNo)
+      qrReference = String(qrResult.qrReference || '')
+      qrData = String(qrResult.qrData || '')
+    }
+
     const saleData = {
       receiptNo,
       date: new Date(),
@@ -308,6 +330,8 @@ export default function POS() {
       paymentMethod: method,
       paymentProvider: isHelaQR ? 'helaqr' : method,
       paymentRef,
+      qrReference,
+      qrData,
       paymentStatus: isHelaQR ? 'pending' : 'paid',
       change,
       cashier: currentUser?.name || 'Unknown',
@@ -338,7 +362,7 @@ export default function POS() {
     clearCart()
     setSelectedCartItem(null)
     setShowReceipt(true)
-    toast.success(isHelaQR ? `HelaQR pending: ${paymentRef}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
+    toast.success(isHelaQR ? `HelaQR created: ${paymentRef}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
   }
 
   const moduleProducts = products.filter((p) => p.active && (!p.module || p.module === activeModule))
@@ -674,11 +698,12 @@ export default function POS() {
           </div>
 
           {/* Quick payment buttons */}
-          <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="grid grid-cols-4 gap-2 mb-3">
             {[
               { id: 'cash',  label: t('pos_cash'),  icon: Banknote,  style: cart.length ? { borderColor: '#4ade80', background: '#f0fdf4', color: '#16a34a' } : {} },
               { id: 'card',  label: t('pos_card'),  icon: CreditCard, style: cart.length ? { borderColor: '#60a5fa', background: '#eff6ff', color: '#2563eb' } : {} },
               { id: 'split', label: t('pos_split'), icon: Split,       style: cart.length ? { borderColor: '#c084fc', background: '#faf5ff', color: '#7c3aed' } : {} },
+              { id: 'helaqr', label: 'HelaQR', icon: Zap,             style: cart.length ? { borderColor: '#f59e0b', background: '#fffbeb', color: '#b45309' } : {} },
             ].map(({ id, label, icon: Icon, style }) => (
               <button
                 key={id}
