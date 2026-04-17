@@ -4,6 +4,17 @@ import { v4 as uuidv4 } from 'uuid'
 import { get, set, del } from 'idb-keyval'
 import { generateReceiptNumber } from '@/lib/utils'
 
+const APP_STORE_VERSION = 2
+const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
+
+function ensureBusinessStoreId(businessInfo = {}) {
+  return {
+    ...businessInfo,
+    storeId: businessInfo.storeId || uuidv4(),
+    publicMenuBaseUrl: businessInfo.publicMenuBaseUrl || DEFAULT_PUBLIC_MENU_BASE_URL,
+  }
+}
+
 // ─── Real Database Implementation (IndexedDB) ──────────────────────────────────
 export const idbStorage = {
   getItem: async (name) => {
@@ -38,6 +49,7 @@ export const useAppStore = create(
         email: 'store@paxxmo.com',
         taxId: 'TAX-001',
         storeId: uuidv4(), // Random ID for QR links (not Tax ID)
+        publicMenuBaseUrl: DEFAULT_PUBLIC_MENU_BASE_URL,
         currency: 'LKR',
         currencySymbol: 'Rs.',
       },
@@ -97,7 +109,7 @@ export const useAppStore = create(
       toggleModule: (mod) =>
         set((s) => ({ modules: { ...s.modules, [mod]: !s.modules[mod] } })),
       updateBusinessInfo: (info) =>
-        set((s) => ({ businessInfo: { ...s.businessInfo, ...info } })),
+        set((s) => ({ businessInfo: ensureBusinessStoreId({ ...s.businessInfo, ...info }) })),
       updateTaxSettings: (t) =>
         set((s) => ({ taxSettings: { ...s.taxSettings, ...t } })),
       updateServiceChargeSettings: (sc) =>
@@ -142,9 +154,19 @@ export const useAppStore = create(
       updateCloudSettings: (c) =>
         set((s) => ({ cloudSettings: { ...s.cloudSettings, ...c } })),
     }),
-    { 
+    {
       name: 'paxxmo-app',
-      storage: createJSONStorage(() => idbStorage) 
+      version: APP_STORE_VERSION,
+      storage: createJSONStorage(() => idbStorage),
+      migrate: (persistedState) => ({
+        ...persistedState,
+        businessInfo: ensureBusinessStoreId(persistedState?.businessInfo || {}),
+      }),
+      onRehydrateStorage: () => (state) => {
+        if (state?.businessInfo) {
+          state.businessInfo = ensureBusinessStoreId(state.businessInfo)
+        }
+      },
     }
   )
 )
@@ -612,6 +634,48 @@ export const useSalesStore = create(
             items_detail: sale.items_detail || sale.cartItems || [],
           }, ...s.sales],
         })),
+      finalizePendingSale: ({ receiptNo, paymentRef } = {}) => {
+        const normalizedReceipt = String(receiptNo || '').trim().toUpperCase()
+        const normalizedRef = String(paymentRef || '').trim()
+        const targetSale = get().sales.find((sale) => {
+          const saleReceipt = String(sale.receiptNo || '').trim().toUpperCase()
+          return sale.status === 'pending' && (
+            (normalizedReceipt && saleReceipt === normalizedReceipt) ||
+            (normalizedRef && String(sale.paymentRef || '') === normalizedRef)
+          )
+        })
+
+        if (!targetSale) {
+          return { success: false, error: 'Pending sale not found' }
+        }
+
+        const adjustStock = useProductStore.getState().adjustStock
+        const cartItems = Array.isArray(targetSale.cartItems) ? targetSale.cartItems : []
+        cartItems.forEach((item) => {
+          adjustStock(item.id, -Number(item.qty || 0))
+        })
+
+        if (targetSale.source === 'restaurant' || targetSale.source === 'takeout') {
+          const recipes = useRecipeStore.getState().recipes || {}
+          cartItems.forEach((item) => {
+            const recipe = recipes[item.id] || []
+            recipe.forEach((ingredient) => {
+              const qtyDown = Number(ingredient.qty || 0) * Number(item.qty || 0)
+              adjustStock(ingredient.ingredientId, -qtyDown)
+            })
+          })
+        }
+
+        set((s) => ({
+          sales: s.sales.map((sale) => (
+            sale.id === targetSale.id
+              ? { ...sale, status: 'completed', paymentStatus: 'paid', paidAt: new Date() }
+              : sale
+          )),
+        }))
+
+        return { success: true, sale: targetSale }
+      },
       findSaleByReceiptNo: (receiptNo) => {
         if (!receiptNo) return null
         const normalized = String(receiptNo).trim().toUpperCase()

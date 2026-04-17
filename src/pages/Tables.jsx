@@ -125,6 +125,7 @@ function SettleModal({ table, order, onPaid, onClose }) {
             { id: 'cash', label: 'Cash', icon: Banknote },
             { id: 'card', label: 'Card', icon: CreditCard },
             { id: 'split', label: 'Split', icon: Split },
+            { id: 'helaqr', label: 'HelaQR', icon: QrCode },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -186,6 +187,14 @@ function SettleModal({ table, order, onPaid, onClose }) {
           <div className="mb-4 p-5 rounded-xl bg-purple-50 text-center border border-purple-100">
             <Split size={36} className="mx-auto text-purple-400 mb-2" />
             <p className="text-sm font-medium text-purple-700">Split payment between cash and card</p>
+          </div>
+        )}
+
+        {method === 'helaqr' && (
+          <div className="mb-4 p-5 rounded-xl bg-amber-50 text-center border border-amber-100">
+            <QrCode size={36} className="mx-auto text-amber-500 mb-2" />
+            <p className="text-sm font-medium text-amber-700">HelaQR payment pending</p>
+            <p className="text-xs text-amber-600 mt-1">Will be confirmed by server callback.</p>
           </div>
         )}
 
@@ -1192,6 +1201,8 @@ export default function Tables() {
     }
 
     const { method, cashGiven, change, subtotal, tax, serviceCharge, total } = paymentInfo
+    const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
+    const paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
     const receiptNo = generateReceiptNumber()
     const receiptNotes = order?.source === 'web' || order?.source === 'qr' || order?.qrOrderId ? '' : (order.notes || '')
 
@@ -1206,29 +1217,34 @@ export default function Tables() {
       serviceCharge: serviceCharge || 0,
       total,
       paymentMethod: method,
+      paymentProvider: isHelaQR ? 'helaqr' : method,
+      paymentRef,
+      paymentStatus: isHelaQR ? 'pending' : 'paid',
       change,
       cashier: order.waiter || 'Waiter',
       tableNumber: selectedTable?.number,
       source: 'restaurant',
-      status: 'completed',
+      status: isHelaQR ? 'pending' : 'completed',
       notes: receiptNotes,
     }
 
     // Record in central sales store
     addSale(saleData)
 
-    // Always deduct menu item stock for restaurant table sales.
-    order.items.forEach((item) => {
-      adjustStock(item.id, -Number(item.qty || 0))
-    })
+    if (!isHelaQR) {
+      // Always deduct menu item stock for restaurant table sales.
+      order.items.forEach((item) => {
+        adjustStock(item.id, -Number(item.qty || 0))
+      })
 
-    // Also deduct ingredient stock when recipes are configured.
-    order.items.forEach((item) => {
-      const result = deductIngredients(item.id, Number(item.qty || 0))
-      if (!result?.success) {
-        console.warn(`Failed to deduct ingredients for ${item.name}:`, result?.message)
-      }
-    })
+      // Also deduct ingredient stock when recipes are configured.
+      order.items.forEach((item) => {
+        const result = deductIngredients(item.id, Number(item.qty || 0))
+        if (!result?.success) {
+          console.warn(`Failed to deduct ingredients for ${item.name}:`, result?.message)
+        }
+      })
+    }
 
     const qrOrderIds = Array.isArray(order?.qrOrderIds)
       ? order.qrOrderIds.map((id) => String(id)).filter(Boolean)
@@ -1262,8 +1278,10 @@ export default function Tables() {
     )
 
     toast.success(
-      `Table ${selectedTable?.number} settled! ${formatCurrency(total)} via ${method}`,
-      { duration: 4000, title: '🎉 Sale Recorded' }
+      isHelaQR
+        ? `HelaQR pending: ${paymentRef}`
+        : `Table ${selectedTable?.number} settled! ${formatCurrency(total)} via ${method}`,
+      { duration: 4000, title: isHelaQR ? '⏳ QR Payment Pending' : '🎉 Sale Recorded' }
     )
   }
 

@@ -95,7 +95,9 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, compact = 
     ? 'Card paid'
     : String(paymentMethod || 'cash').toLowerCase() === 'split'
       ? 'Split paid'
-      : 'Cash paid'
+      : String(paymentMethod || 'cash').toLowerCase() === 'helaqr'
+        ? 'HelaQR pending'
+        : 'Cash paid'
 
   return (
     <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: 12, lineHeight: 1.5 }}>

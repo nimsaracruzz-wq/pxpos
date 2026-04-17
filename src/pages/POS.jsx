@@ -11,6 +11,7 @@ import { Badge, Modal, Input } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import ReceiptModal from '@/components/Receipt'
 import { useI18n } from '@/lib/i18n'
+import { v4 as uuidv4 } from 'uuid'
 
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
 
@@ -53,6 +54,7 @@ const PaymentModal = ({ open, onClose, total, onComplete }) => {
     { id: 'cash',  label: 'Cash',  icon: Banknote,  color: { active: '#16a34a', bg: '#f0fdf4', border: '#86efac', light: '#dcfce7' } },
     { id: 'card',  label: 'Card',  icon: CreditCard, color: { active: '#2563eb', bg: '#eff6ff', border: '#93c5fd', light: '#dbeafe' } },
     { id: 'split', label: 'Split', icon: Split,       color: { active: '#7c3aed', bg: '#faf5ff', border: '#c4b5fd', light: '#ede9fe' } },
+    { id: 'helaqr', label: 'HelaQR', icon: Zap,       color: { active: '#f59e0b', bg: '#fffbeb', border: '#fcd34d', light: '#fef3c7' } },
   ]
 
   return (
@@ -134,6 +136,16 @@ const PaymentModal = ({ open, onClose, total, onComplete }) => {
           </div>
           <p className="text-sm font-semibold text-purple-700">Split payment between cash and card</p>
           <p className="text-xs text-purple-500 mt-1">Ask customer for split amounts</p>
+        </div>
+      )}
+
+      {method === 'helaqr' && (
+        <div className="mb-5 p-6 rounded-2xl bg-amber-50 text-center border border-amber-100 animate-slide-up">
+          <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center mx-auto mb-3">
+            <Zap size={28} className="text-amber-500" />
+          </div>
+          <p className="text-sm font-semibold text-amber-700">HelaQR payment pending</p>
+          <p className="text-xs text-amber-600 mt-1">Payment will be confirmed by server callback.</p>
         </div>
       )}
 
@@ -282,6 +294,8 @@ export default function POS() {
 
   const handleCompleteSale = (method, cashGiven = 0, change = 0) => {
     const receiptNo = generateReceiptNumber()
+    const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
+    const paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
     const saleData = {
       receiptNo,
       date: new Date(),
@@ -292,26 +306,31 @@ export default function POS() {
       tax: taxAmt,
       total,
       paymentMethod: method,
+      paymentProvider: isHelaQR ? 'helaqr' : method,
+      paymentRef,
+      paymentStatus: isHelaQR ? 'pending' : 'paid',
       change,
       cashier: currentUser?.name || 'Unknown',
       source: activeModule === 'restaurant' ? 'takeout' : activeModule || 'grocery',
-      status: 'completed',
+      status: isHelaQR ? 'pending' : 'completed',
     }
     addSale({ ...saleData, items: cart.length })
     useActivityStore.getState().addLog('Completed Sale', `Sale Total: ${formatCurrency(total)} (${cart.length} items)`, currentUser?.name || 'Unknown')
-    
-    // Reduce dish stock
-    cart.forEach((item) => adjustStock(item.id, -item.qty))
 
-    // If restaurant mode, also deduct ingredients from recipe
-    if (activeModule === 'restaurant') {
-      const deductIngredients = useRecipeStore.getState().deductIngredients
-      cart.forEach((item) => {
-        const result = deductIngredients(item.id, item.qty)
-        if (!result.success) {
-          console.warn(`Failed to deduct ingredients for ${item.name}:`, result.message)
-        }
-      })
+    if (!isHelaQR) {
+      // Reduce dish stock
+      cart.forEach((item) => adjustStock(item.id, -item.qty))
+
+      // If restaurant mode, also deduct ingredients from recipe
+      if (activeModule === 'restaurant') {
+        const deductIngredients = useRecipeStore.getState().deductIngredients
+        cart.forEach((item) => {
+          const result = deductIngredients(item.id, item.qty)
+          if (!result.success) {
+            console.warn(`Failed to deduct ingredients for ${item.name}:`, result.message)
+          }
+        })
+      }
     }
 
     setLastSale(saleData)
@@ -319,7 +338,7 @@ export default function POS() {
     clearCart()
     setSelectedCartItem(null)
     setShowReceipt(true)
-    toast.success(`Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
+    toast.success(isHelaQR ? `HelaQR pending: ${paymentRef}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
   }
 
   const moduleProducts = products.filter((p) => p.active && (!p.module || p.module === activeModule))
