@@ -1191,6 +1191,15 @@ export default function Tables() {
     pendingKOTs: kots.filter((k) => k.status === 'pending').length,
   }
 
+  useEffect(() => {
+    if (!customerDisplay) return
+    const method = String(customerDisplay.paymentMethod || '').toLowerCase()
+    if (method === 'helaqr') return
+
+    const timer = setTimeout(() => setCustomerDisplay(null), 6000)
+    return () => clearTimeout(timer)
+  }, [customerDisplay])
+
   // Called from OrderModal after the payment is confirmed
   const handleSettle = async (order, paymentInfo) => {
     const insufficient = (order?.items || []).find((item) => {

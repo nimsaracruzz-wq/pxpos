@@ -209,6 +209,15 @@ export default function POS() {
   const { currentUser, switchCashierByBarcode } = useAuthStore()
   const { t } = useI18n()
 
+  useEffect(() => {
+    if (!customerDisplay) return
+    const method = String(customerDisplay.paymentMethod || '').toLowerCase()
+    if (method === 'helaqr') return
+
+    const timer = setTimeout(() => setCustomerDisplay(null), 6000)
+    return () => clearTimeout(timer)
+  }, [customerDisplay])
+
   const getCartQty = (id) => Number(cart.find((i) => i.id === id)?.qty || 0)
 
   useEffect(() => {
