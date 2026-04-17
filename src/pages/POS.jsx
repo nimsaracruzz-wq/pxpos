@@ -10,6 +10,7 @@ import { formatCurrency, generateReceiptNumber } from '@/lib/utils'
 import { Badge, Modal, Input } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import ReceiptModal from '@/components/Receipt'
+import CustomerDisplay from '@/components/CustomerDisplay'
 import { useI18n } from '@/lib/i18n'
 import { v4 as uuidv4 } from 'uuid'
 import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
@@ -189,6 +190,7 @@ export default function POS() {
   const [showPayment, setShowPayment] = useState(false)
   const [lastSale, setLastSale] = useState(null)
   const [showReceipt, setShowReceipt] = useState(false)
+  const [customerDisplay, setCustomerDisplay] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [selectedCartItem, setSelectedCartItem] = useState(null)
   const searchRef = useRef(null)
@@ -221,7 +223,7 @@ export default function POS() {
     const handleKey = (e) => {
       if (e.key === 'F2') { searchRef.current?.focus(); e.preventDefault() }
       if (e.key === 'F5') { if (cart.length > 0) setShowPayment(true); e.preventDefault() }
-      if (e.key === 'Escape') { setSearch(''); setShowPayment(false); setShowReceipt(false) }
+      if (e.key === 'Escape') { setSearch(''); setShowPayment(false); setShowReceipt(false); setCustomerDisplay(null) }
       if (e.key === 'Delete' && e.ctrlKey) { clearCart(); toast.warning('Cart cleared'); e.preventDefault() }
     }
     window.addEventListener('keydown', handleKey)
@@ -361,7 +363,16 @@ export default function POS() {
     setShowPayment(false)
     clearCart()
     setSelectedCartItem(null)
-    setShowReceipt(true)
+    setShowReceipt(!isHelaQR)
+    if (isHelaQR) {
+      setCustomerDisplay({
+        amount: total,
+        qrData,
+        reference: paymentRef,
+        title: 'HelaQR Payment',
+        subtitle: 'Please scan this code and complete payment from your banking app.',
+      })
+    }
     toast.success(isHelaQR ? `HelaQR created: ${paymentRef}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
   }
 
@@ -748,6 +759,15 @@ export default function POS() {
           onClose={() => setShowReceipt(false)}
         />
       )}
+      <CustomerDisplay
+        open={Boolean(customerDisplay)}
+        amount={customerDisplay?.amount}
+        qrData={customerDisplay?.qrData}
+        reference={customerDisplay?.reference}
+        title={customerDisplay?.title}
+        subtitle={customerDisplay?.subtitle}
+        onClose={() => setCustomerDisplay(null)}
+      />
     </div>
   )
 }

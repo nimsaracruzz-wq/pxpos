@@ -5,6 +5,7 @@ import { useSalesStore, useAppStore, useProductStore, useTableStore, useActivity
 import { Badge, SectionHeader } from '@/components/ui'
 import { cn, formatCurrency, generateReceiptNumber } from '@/lib/utils'
 import ReceiptModal from '@/components/Receipt'
+import CustomerDisplay from '@/components/CustomerDisplay'
 import { v4 as uuidv4 } from 'uuid'
 import { QRCodeSVG } from 'qrcode.react'
 import { ArrowRightLeft } from 'lucide-react'
@@ -1180,6 +1181,7 @@ export default function Tables() {
   const [actionTable, setActionTable] = useState(null)
   const [view, setView] = useState('tables')
   const [completedSale, setCompletedSale] = useState(null)  // for showing receipt
+  const [customerDisplay, setCustomerDisplay] = useState(null)
   const [showManageTables, setShowManageTables] = useState(false)
 
   const stats = {
@@ -1292,8 +1294,17 @@ export default function Tables() {
     // Close the order modal
     setSelectedTable(null)
 
-    // Show receipt
-    setCompletedSale({ ...saleData, waiter: order.waiter, tableNumber: selectedTable?.number })
+    // Show receipt for immediate-settled methods only.
+    setCompletedSale(isHelaQR ? null : { ...saleData, waiter: order.waiter, tableNumber: selectedTable?.number })
+    if (isHelaQR) {
+      setCustomerDisplay({
+        amount: total,
+        qrData,
+        reference: paymentRef,
+        title: `Table ${selectedTable?.number || ''} - HelaQR Payment`,
+        subtitle: 'Please scan this code and complete payment from your banking app.',
+      })
+    }
 
     addLog(
       'Settled Table Bill',
@@ -1489,6 +1500,16 @@ export default function Tables() {
           onClose={() => setCompletedSale(null)}
         />
       )}
+
+      <CustomerDisplay
+        open={Boolean(customerDisplay)}
+        amount={customerDisplay?.amount}
+        qrData={customerDisplay?.qrData}
+        reference={customerDisplay?.reference}
+        title={customerDisplay?.title}
+        subtitle={customerDisplay?.subtitle}
+        onClose={() => setCustomerDisplay(null)}
+      />
 
       {showManageTables && (
         <TableManagerModal
