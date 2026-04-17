@@ -1,5 +1,5 @@
 import React from 'react'
-import { X, QrCode, Smartphone, CircleDollarSign, Clock3 } from 'lucide-react'
+import { X, QrCode, Smartphone, CircleDollarSign, Clock3, CreditCard, Banknote, Split } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { formatCurrency } from '@/lib/utils'
 
@@ -8,11 +8,23 @@ export default function CustomerDisplay({
   onClose,
   amount = 0,
   qrData = '',
+  paymentMethod = 'helaqr',
   reference = '',
   subtitle = 'Please scan this QR with your banking app to complete payment.',
   title = 'Scan & Pay',
 }) {
   if (!open) return null
+
+  const method = String(paymentMethod || '').toLowerCase()
+  const isHelaQR = method === 'helaqr'
+  const methodMeta = method === 'cash'
+    ? { label: 'Cash Payment', icon: Banknote, tone: 'text-green-700 bg-green-50 border-green-200' }
+    : method === 'card'
+      ? { label: 'Card Payment', icon: CreditCard, tone: 'text-blue-700 bg-blue-50 border-blue-200' }
+      : method === 'split'
+        ? { label: 'Split Payment', icon: Split, tone: 'text-purple-700 bg-purple-50 border-purple-200' }
+        : { label: 'HelaQR', icon: QrCode, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' }
+  const MethodIcon = methodMeta.icon
 
   return (
     <div
@@ -60,9 +72,13 @@ export default function CustomerDisplay({
             <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
               <Clock3 size={18} className="text-amber-600 mt-0.5" />
               <div>
-                <p className="text-sm font-bold text-amber-800">Waiting for bank confirmation</p>
+                <p className="text-sm font-bold text-amber-800">
+                  {isHelaQR ? 'Waiting for bank confirmation' : 'Waiting for cashier confirmation'}
+                </p>
                 <p className="text-xs text-amber-700 mt-1">
-                  Payment status will update automatically once the transaction is successful.
+                  {isHelaQR
+                    ? 'Payment status will update automatically once the transaction is successful.'
+                    : 'Please complete the selected payment method with cashier assistance.'}
                 </p>
               </div>
             </div>
@@ -77,25 +93,30 @@ export default function CustomerDisplay({
 
           <div className="rounded-2xl bg-white border border-white p-5 flex flex-col items-center">
             <div className="w-full flex items-center justify-between mb-3">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">HelaQR</p>
-              <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
-                <Smartphone size={12} /> Scan Now
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{methodMeta.label}</p>
+              <div className={`inline-flex items-center gap-1 text-[11px] font-semibold border px-2 py-1 rounded-full ${methodMeta.tone}`}>
+                <MethodIcon size={12} /> {isHelaQR ? 'Scan Now' : 'Ready'}
               </div>
             </div>
 
             <div className="p-4 rounded-2xl border border-slate-100 shadow-sm bg-white">
-              {qrData ? (
+              {isHelaQR && qrData ? (
                 <QRCodeSVG value={qrData} size={260} level="H" includeMargin />
               ) : (
-                <div className="w-[260px] h-[260px] rounded-xl border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400">
-                  <QrCode size={40} />
-                  <p className="text-xs mt-2">QR data unavailable</p>
+                <div className="w-[260px] h-[260px] rounded-xl border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-500">
+                  <MethodIcon size={42} />
+                  <p className="text-sm mt-3 font-semibold">{methodMeta.label}</p>
+                  <p className="text-xs mt-1 text-slate-400">
+                    {isHelaQR ? 'QR data unavailable' : 'Please complete payment at the counter'}
+                  </p>
                 </div>
               )}
             </div>
 
             <p className="text-[11px] text-slate-500 mt-3 text-center">
-              Ask the customer to open their mobile banking app and scan this code.
+              {isHelaQR
+                ? 'Ask the customer to open their mobile banking app and scan this code.'
+                : 'Customer can verify the full amount on this screen before completing payment.'}
             </p>
           </div>
         </div>

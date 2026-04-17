@@ -1296,15 +1296,18 @@ export default function Tables() {
 
     // Show receipt for immediate-settled methods only.
     setCompletedSale(isHelaQR ? null : { ...saleData, waiter: order.waiter, tableNumber: selectedTable?.number })
-    if (isHelaQR) {
-      setCustomerDisplay({
-        amount: total,
-        qrData,
-        reference: paymentRef,
-        title: `Table ${selectedTable?.number || ''} - HelaQR Payment`,
-        subtitle: 'Please scan this code and complete payment from your banking app.',
-      })
-    }
+    setCustomerDisplay({
+      amount: total,
+      qrData,
+      paymentMethod: method,
+      reference: paymentRef,
+      title: isHelaQR
+        ? `Table ${selectedTable?.number || ''} - HelaQR Payment`
+        : `Table ${selectedTable?.number || ''} - Customer Payment View`,
+      subtitle: isHelaQR
+        ? 'Please scan this code and complete payment from your banking app.'
+        : `Please confirm this amount for ${String(method || '').toUpperCase()} payment.`,
+    })
 
     addLog(
       'Settled Table Bill',
@@ -1505,6 +1508,7 @@ export default function Tables() {
         open={Boolean(customerDisplay)}
         amount={customerDisplay?.amount}
         qrData={customerDisplay?.qrData}
+        paymentMethod={customerDisplay?.paymentMethod}
         reference={customerDisplay?.reference}
         title={customerDisplay?.title}
         subtitle={customerDisplay?.subtitle}
