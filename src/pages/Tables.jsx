@@ -10,6 +10,8 @@ import { v4 as uuidv4 } from 'uuid'
 import { QRCodeSVG } from 'qrcode.react'
 import { ArrowRightLeft } from 'lucide-react'
 import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, resolveCloudTenantId, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { BRAND } from '@/lib/brand'
+import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
 import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
@@ -334,10 +336,10 @@ function QRModal({ table, onClose }) {
   const { businessInfo, licenseKey } = useAppStore()
   const toast = useToast()
 
-  const configuredBase = (businessInfo.publicMenuBaseUrl || import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
+  const configuredBase = (businessInfo.publicMenuBaseUrl || import.meta.env.VITE_PUBLIC_MENU_BASE_URL || SYSTEM_PUBLIC_MENU_URL).trim()
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
-  const fallbackOrigin = browserOrigin && !browserOrigin.startsWith('file://') ? browserOrigin : 'http://localhost:5173'
-  const baseOrigin = (configuredBase || fallbackOrigin).replace(/\/$/, '')
+  const fallbackOrigin = SYSTEM_PUBLIC_MENU_URL
+  const baseOrigin = (configuredBase || fallbackOrigin || browserOrigin).replace(/\/$/, '')
   const storeKey = resolveCloudTenantId(businessInfo, licenseKey)
   const storeId = encodeURIComponent(storeKey)
   const tableQuery = encodeURIComponent(String(table.number || ''))

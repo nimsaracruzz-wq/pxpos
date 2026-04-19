@@ -1,0 +1,1 @@
+export const SYSTEM_PUBLIC_MENU_URL = 'https://ceypos.paxxmo.com'

@@ -207,6 +207,18 @@ ipcMain.handle('add-product', (event, product) => {
   const stmt = db.prepare(`
     INSERT INTO products (id, module, name, barcode, price, cost, category, stock, unit, image, expiry, active)
     VALUES (@id, @module, @name, @barcode, @price, @cost, @category, @stock, @unit, @image, @expiry, @active)
+    ON CONFLICT(id) DO UPDATE SET
+      module = excluded.module,
+      name = excluded.name,
+      barcode = excluded.barcode,
+      price = excluded.price,
+      cost = excluded.cost,
+      category = excluded.category,
+      stock = excluded.stock,
+      unit = excluded.unit,
+      image = excluded.image,
+      expiry = excluded.expiry,
+      active = excluded.active
   `);
   stmt.run({
     ...product,

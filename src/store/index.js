@@ -6,10 +6,19 @@ import { generateReceiptNumber } from '@/lib/utils'
 import { publishCustomerDisplaySettings } from '@/lib/customerDisplayChannel'
 import { BRAND } from '@/lib/brand'
 import { defaultFirebaseConfigJson } from '@/lib/defaultFirebaseConfig'
+import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
 
 const APP_STORE_VERSION = 4
-const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || 'https://ceypos.paxxmo.com').trim()
+const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || SYSTEM_PUBLIC_MENU_URL).trim()
 const LICENSED_MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online']
+
+function normalizePublicMenuBaseUrl(value = '') {
+  const candidate = String(value || '').trim()
+  if (!candidate) return DEFAULT_PUBLIC_MENU_BASE_URL
+  if (/^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?/i.test(candidate)) return DEFAULT_PUBLIC_MENU_BASE_URL
+  if (/\.vercel\.app(\/|$)/i.test(candidate)) return DEFAULT_PUBLIC_MENU_BASE_URL
+  return candidate
+}
 
 function createCustomerDisplayDefaults() {
   return {
@@ -73,7 +82,7 @@ function ensureBusinessStoreId(businessInfo = {}) {
   return {
     ...businessInfo,
     storeId: businessInfo.storeId || uuidv4(),
-    publicMenuBaseUrl: businessInfo.publicMenuBaseUrl || DEFAULT_PUBLIC_MENU_BASE_URL,
+    publicMenuBaseUrl: normalizePublicMenuBaseUrl(businessInfo.publicMenuBaseUrl),
   }
 }
 
@@ -97,14 +106,40 @@ function normalizeLicensedDeploymentMode(value, fallback = 'local') {
 // ─── Real Database Implementation (IndexedDB) ──────────────────────────────────
 export const idbStorage = {
   getItem: async (name) => {
-    const value = await get(name)
-    return value || null
+    try {
+      const value = await get(name)
+      return value || null
+    } catch (error) {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          return window.localStorage.getItem(`paxxmo-fallback:${name}`)
+        }
+      } catch (_) {}
+      return null
+    }
   },
   setItem: async (name, value) => {
-    await set(name, value)
+    try {
+      await set(name, value)
+      return
+    } catch (_) {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(`paxxmo-fallback:${name}`, value)
+        }
+      } catch (_) {}
+    }
   },
   removeItem: async (name) => {
-    await del(name)
+    try {
+      await del(name)
+    } catch (_) {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.removeItem(`paxxmo-fallback:${name}`)
+        }
+      } catch (_) {}
+    }
   },
 }
 
@@ -198,7 +233,7 @@ export const useAppStore = create(
       toggleModule: (mod) =>
         set((s) => ({ modules: { ...s.modules, [mod]: !s.modules[mod] } })),
       updateBusinessInfo: (info) =>
-        set((s) => ({ businessInfo: ensureBusinessStoreId({ ...s.businessInfo, ...info }) })),
+        set((s) => ({ businessInfo: ensureBusinessStoreId({ ...s.businessInfo, ...info, publicMenuBaseUrl: normalizePublicMenuBaseUrl(info?.publicMenuBaseUrl ?? s.businessInfo.publicMenuBaseUrl) }) })),
       updateTaxSettings: (t) =>
         set((s) => ({ taxSettings: { ...s.taxSettings, ...t } })),
       updateServiceChargeSettings: (sc) =>

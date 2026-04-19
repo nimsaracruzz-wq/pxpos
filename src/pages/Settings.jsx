@@ -12,6 +12,8 @@ import { useToast } from '@/components/Toast'
 import { testCloudConnection } from '@/lib/firebase'
 import { validateLicense } from '@/lib/license'
 import { defaultFirebaseConfigJson } from '@/lib/defaultFirebaseConfig'
+import { BRAND } from '@/lib/brand'
+import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
 import { cn } from '@/lib/utils'
 import UserBarcodeGenerator, { generateUserBarcode } from '@/components/UserBarcodeGenerator'
 import MediaCarousel from '@/components/display/MediaCarousel'
@@ -656,9 +658,9 @@ export default function Settings() {
                 <Input label="Tax ID / Business Reg." value={businessInfo.taxId} onChange={(e) => updateBusinessInfo({ taxId: e.target.value })} />
                 <Input
                   label="Public Menu URL"
-                  value={businessInfo.publicMenuBaseUrl || ''}
+                  value={businessInfo.publicMenuBaseUrl || SYSTEM_PUBLIC_MENU_URL}
                   onChange={(e) => updateBusinessInfo({ publicMenuBaseUrl: e.target.value.trim() })}
-                  hint="Example: https://your-vercel-app.vercel.app"
+                  hint={`Default: ${SYSTEM_PUBLIC_MENU_URL}`}
                 />
                 <Input label="Address" value={businessInfo.address} onChange={(e) => updateBusinessInfo({ address: e.target.value })} className="col-span-2" />
               </div>
