@@ -22,6 +22,7 @@ import Prescriptions from '@/pages/Prescriptions'
 import WebOrders from '@/pages/WebOrders'
 import Refunds from '@/pages/Refunds'
 import PublicMenu from '@/pages/PublicMenu'
+import CustomerScreen from '@/pages/CustomerScreen'
 import Login from '@/pages/Login'
 import Activation from '@/pages/Activation'
 import { useAuthStore, useAppStore } from '@/store'
@@ -51,10 +52,11 @@ export default function App() {
     }
   })()
   const isHashPublicMenuRoute = hashPath.startsWith('/menu/') || hashPath.includes('/menu/')
+  const isHashCustomerRoute = hashPath.startsWith('/customer-screen')
   const hasQrQueryMarkers = /(?:\?|&)(table|session|token|guests)=/i.test(decodedHref)
   const hasMenuMarker = /(?:\/|#|%2f)menu(?:\/|%2f)/i.test(decodedHref)
   const forcePublicMenuFromHref = hasMenuMarker || (hasQrQueryMarkers && /menu/i.test(decodedHref))
-  const Router = isFileProtocol || isHashPublicMenuRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
+  const Router = isFileProtocol || isHashPublicMenuRoute || isHashCustomerRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
   const currentPath = (() => {
     if (typeof window === 'undefined') return '/'
     if (isFileProtocol) {
@@ -63,12 +65,19 @@ export default function App() {
     if (isHashPublicMenuRoute) {
       return hashPath || '/'
     }
+    if (isHashCustomerRoute) {
+      return hashPath || '/'
+    }
     return window.location.pathname || '/'
   })()
   const isPublicMenuRoute =
     currentPath.startsWith('/menu/') ||
     /\/menu\/[^/?#]+/i.test(decodedHref) ||
     forcePublicMenuFromHref
+  const isCustomerDisplayRoute =
+    currentPath.startsWith('/customer-screen') ||
+    /customer-screen/i.test(decodedHref) ||
+    isHashCustomerRoute
 
   useEffect(() => {
     const isDark = theme === 'dark'
@@ -122,6 +131,18 @@ export default function App() {
           <Route path="*" element={<PublicMenu />} />
         </Routes>
         <ToastContainer />
+      </Router>
+    )
+  }
+
+  // Dedicated customer display route (separate Electron window)
+  if (isCustomerDisplayRoute) {
+    return (
+      <Router>
+        <Routes>
+          <Route path="/customer-screen" element={<CustomerScreen />} />
+          <Route path="*" element={<CustomerScreen />} />
+        </Routes>
       </Router>
     )
   }

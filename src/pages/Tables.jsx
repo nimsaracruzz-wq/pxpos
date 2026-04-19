@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import { Utensils, ChefHat, X, Banknote, CreditCard, Split, Receipt as ReceiptIcon, ShoppingBag, Clock, CheckCircle2, QrCode, Settings2, Plus, Minus, Pencil, Trash2 } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { useSalesStore, useAppStore, useProductStore, useTableStore, useActivityStore, useAuthStore, useRecipeStore } from '@/store'
@@ -11,6 +11,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { ArrowRightLeft } from 'lucide-react'
 import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, updateQRCodeOrderStatus } from '@/lib/firebase'
 import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
+import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
 const STATUS_CONFIG = {
   available: { label: 'Available', variant: 'green', bg: '#f0fdf4', border: '#86efac' },
@@ -21,7 +22,7 @@ const STATUS_CONFIG = {
 
 
 // ─── Settle Payment Modal ──────────────────────────────────────────────────────
-function SettleModal({ table, order, onPaid, onClose }) {
+function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
   const { taxSettings, serviceChargeSettings } = useAppStore()
   const [method, setMethod] = useState('cash')
   const [cashGiven, setCashGiven] = useState('')
@@ -54,6 +55,22 @@ function SettleModal({ table, order, onPaid, onClose }) {
 
   const handlePay = () => {
     if (!canPay) return
+    if (typeof onCheckout === 'function') {
+      onCheckout({
+        method,
+        subtotal,
+        tax,
+        serviceCharge: serviceChargeAmount,
+        total,
+        items: (order.items || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          qty: Number(item.qty || 0),
+          price: Number(item.price || 0),
+          lineTotal: Number(item.price || 0) * Number(item.qty || 0),
+        })),
+      })
+    }
     setProcessing(true)
     setTimeout(() => {
       onPaid({ method, cashGiven: cashNum, change, subtotal, tax, serviceCharge: serviceChargeAmount, total })
@@ -640,7 +657,7 @@ function TableManagerModal({ tables, onAdd, onEdit, onDelete, onClose }) {
 }
 
 // ─── Order Modal ───────────────────────────────────────────────────────────────
-function OrderModal({ table, onClose, onSettle }) {
+function OrderModal({ table, onClose, onSettle, onCheckout }) {
   const { tables, updateTable, addKOT, transferTable, clearTable } = useTableStore()
   const { taxSettings, serviceChargeSettings, businessInfo } = useAppStore()
   const { products } = useProductStore()
@@ -1089,6 +1106,7 @@ function OrderModal({ table, onClose, onSettle }) {
           table={table}
           order={currentOrder.items.length ? currentOrder : (table.order || { items: [], waiter: '' })}
           onClose={() => setShowSettle(false)}
+          onCheckout={onCheckout}
           onPaid={(paymentInfo) => {
             setShowSettle(false)
             onSettle(currentOrder.items.length ? currentOrder : (table.order || { items: [], waiter: '' }), paymentInfo)
@@ -1184,21 +1202,22 @@ export default function Tables() {
   const [customerDisplay, setCustomerDisplay] = useState(null)
   const [showManageTables, setShowManageTables] = useState(false)
 
+  const closeCustomerScreen = useCallback(() => {
+    setCustomerDisplay(null)
+    clearCustomerDisplay()
+  }, [])
+
+  const openCustomerScreen = useCallback((payload) => {
+    setCustomerDisplay(payload)
+    publishCustomerDisplay(payload)
+  }, [])
+
   const stats = {
     available: tables.filter((t) => t.status === 'available').length,
     occupied: tables.filter((t) => t.status === 'occupied').length,
     reserved: tables.filter((t) => t.status === 'reserved').length,
     pendingKOTs: kots.filter((k) => k.status === 'pending').length,
   }
-
-  useEffect(() => {
-    if (!customerDisplay) return
-    const method = String(customerDisplay.paymentMethod || '').toLowerCase()
-    if (method === 'helaqr') return
-
-    const timer = setTimeout(() => setCustomerDisplay(null), 6000)
-    return () => clearTimeout(timer)
-  }, [customerDisplay])
 
   // Called from OrderModal after the payment is confirmed
   const handleSettle = async (order, paymentInfo) => {
@@ -1305,10 +1324,20 @@ export default function Tables() {
 
     // Show receipt for immediate-settled methods only.
     setCompletedSale(isHelaQR ? null : { ...saleData, waiter: order.waiter, tableNumber: selectedTable?.number })
-    setCustomerDisplay({
+    openCustomerScreen({
       amount: total,
       qrData,
       paymentMethod: method,
+      status: isHelaQR ? 'paying' : 'paid',
+      cashGiven,
+      change,
+      items: (order.items || []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        qty: Number(item.qty || 0),
+        price: Number(item.price || 0),
+        lineTotal: Number(item.price || 0) * Number(item.qty || 0),
+      })),
       reference: paymentRef,
       title: isHelaQR
         ? `Table ${selectedTable?.number || ''} - HelaQR Payment`
@@ -1500,6 +1529,16 @@ export default function Tables() {
         <OrderModal
           table={selectedTable}
           onClose={() => setSelectedTable(null)}
+          onCheckout={(preview) => {
+            openCustomerScreen({
+              status: 'checkout',
+              amount: Number(preview?.total || 0),
+              paymentMethod: String(preview?.method || 'cash'),
+              items: Array.isArray(preview?.items) ? preview.items : [],
+              title: `Table ${selectedTable?.number || ''} - Order Summary`,
+              subtitle: 'Please choose payment',
+            })
+          }}
           onSettle={handleSettle}
         />
       )}
@@ -1518,10 +1557,15 @@ export default function Tables() {
         amount={customerDisplay?.amount}
         qrData={customerDisplay?.qrData}
         paymentMethod={customerDisplay?.paymentMethod}
+        status={customerDisplay?.status}
+        items={customerDisplay?.items}
+        cashGiven={customerDisplay?.cashGiven}
+        change={customerDisplay?.change}
         reference={customerDisplay?.reference}
         title={customerDisplay?.title}
         subtitle={customerDisplay?.subtitle}
-        onClose={() => setCustomerDisplay(null)}
+        onAutoReset={closeCustomerScreen}
+        onClose={closeCustomerScreen}
       />
 
       {showManageTables && (

@@ -3,9 +3,68 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { v4 as uuidv4 } from 'uuid'
 import { get, set, del } from 'idb-keyval'
 import { generateReceiptNumber } from '@/lib/utils'
+import { publishCustomerDisplaySettings } from '@/lib/customerDisplayChannel'
 
-const APP_STORE_VERSION = 3
+const APP_STORE_VERSION = 4
 const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
+
+function createCustomerDisplayDefaults() {
+  return {
+    enabled: true,
+    bannerTitle: 'Customer Display',
+    headline: 'Welcome to Paxxmo POS',
+    subtitle: 'Ready to order',
+    message: 'Your order will be prepared with care',
+    autoplayInterval: 5000,
+    slides: [
+      {
+        id: uuidv4(),
+        type: 'text',
+        title: 'Today\'s Special Offer',
+        description: 'Add a custom promotion, announcement, or pricing message here.',
+        tag: 'Hot Deal',
+        accent: '#f97316',
+      },
+      {
+        id: uuidv4(),
+        type: 'image',
+        title: 'Image Promotion',
+        description: 'Upload an image from this device for offline display.',
+        src: '',
+        mimeType: '',
+        accent: '#0ea5e9',
+        gradient: 'linear-gradient(135deg, #0f172a 0%, #155e75 55%, #0ea5e9 100%)',
+      },
+      {
+        id: uuidv4(),
+        type: 'video',
+        title: 'Video Promotion',
+        description: 'Upload a local video file and play it on the customer display.',
+        src: '',
+        mimeType: '',
+        accent: '#22c55e',
+        gradient: 'linear-gradient(135deg, #111827 0%, #14532d 50%, #22c55e 100%)',
+      },
+    ],
+  }
+}
+
+function normalizeCustomerDisplaySettings(settings = {}) {
+  const defaults = createCustomerDisplayDefaults()
+  const slides = Array.isArray(settings.slides) && settings.slides.length > 0
+    ? settings.slides.map((slide) => ({
+        ...slide,
+        id: slide.id || uuidv4(),
+        type: String(slide.type || 'text').toLowerCase(),
+      }))
+    : defaults.slides
+
+  return {
+    ...defaults,
+    ...settings,
+    slides,
+  }
+}
 
 function ensureBusinessStoreId(businessInfo = {}) {
   return {
@@ -113,6 +172,7 @@ export const useAppStore = create(
         notes: '',
         payments: [],
       },
+      customerDisplaySettings: createCustomerDisplayDefaults(),
 
       setActiveModule: (mod) => set({ activeModule: mod }),
       toggleModule: (mod) =>
@@ -164,6 +224,67 @@ export const useAppStore = create(
         set((s) => ({ cloudSettings: { ...s.cloudSettings, ...c } })),
       updateHelaQRSettings: (settings) =>
         set((s) => ({ helaQRSettings: { ...s.helaQRSettings, ...settings } })),
+      updateCustomerDisplaySettings: (updates) =>
+        set((state) => {
+          const nextSettings = normalizeCustomerDisplaySettings({
+            ...state.customerDisplaySettings,
+            ...updates,
+          })
+          publishCustomerDisplaySettings(nextSettings)
+          return { customerDisplaySettings: nextSettings }
+        }),
+      addCustomerDisplaySlide: (slide) =>
+        set((state) => {
+          const nextSlide = {
+            id: slide?.id || uuidv4(),
+            type: String(slide?.type || 'text').toLowerCase(),
+            title: slide?.title || 'New Slide',
+            description: slide?.description || '',
+            tag: slide?.tag || '',
+            accent: slide?.accent || '#16a34a',
+            src: slide?.src || '',
+            mimeType: slide?.mimeType || '',
+            gradient: slide?.gradient || 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f766e 100%)',
+          }
+          const nextSettings = normalizeCustomerDisplaySettings({
+            ...state.customerDisplaySettings,
+            slides: [...(state.customerDisplaySettings.slides || []), nextSlide],
+          })
+          publishCustomerDisplaySettings(nextSettings)
+          return { customerDisplaySettings: nextSettings }
+        }),
+      updateCustomerDisplaySlide: (id, updates) =>
+        set((state) => {
+          const nextSettings = normalizeCustomerDisplaySettings({
+            ...state.customerDisplaySettings,
+            slides: (state.customerDisplaySettings.slides || []).map((slide) => (
+              slide.id === id
+                ? {
+                    ...slide,
+                    ...updates,
+                    id: slide.id,
+                    type: String(updates?.type || slide.type || 'text').toLowerCase(),
+                  }
+                : slide
+            )),
+          })
+          publishCustomerDisplaySettings(nextSettings)
+          return { customerDisplaySettings: nextSettings }
+        }),
+      removeCustomerDisplaySlide: (id) =>
+        set((state) => {
+          const nextSettings = normalizeCustomerDisplaySettings({
+            ...state.customerDisplaySettings,
+            slides: (state.customerDisplaySettings.slides || []).filter((slide) => slide.id !== id),
+          })
+          publishCustomerDisplaySettings(nextSettings)
+          return { customerDisplaySettings: nextSettings }
+        }),
+      resetCustomerDisplaySettings: () => {
+        const nextSettings = createCustomerDisplayDefaults()
+        publishCustomerDisplaySettings(nextSettings)
+        set({ customerDisplaySettings: nextSettings })
+      },
     }),
     {
       name: 'paxxmo-app',
@@ -182,10 +303,14 @@ export const useAppStore = create(
           notifyUrl: '',
           ...(persistedState?.helaQRSettings || {}),
         },
+        customerDisplaySettings: normalizeCustomerDisplaySettings(persistedState?.customerDisplaySettings || {}),
       }),
       onRehydrateStorage: () => (state) => {
         if (state?.businessInfo) {
           state.businessInfo = ensureBusinessStoreId(state.businessInfo)
+        }
+        if (state?.customerDisplaySettings) {
+          state.customerDisplaySettings = normalizeCustomerDisplaySettings(state.customerDisplaySettings)
         }
       },
     }
@@ -849,7 +974,7 @@ const ipc = () => typeof window !== 'undefined' && window.require
 
 // Default per-role allowed settings tabs (super_admin always sees all)
 const DEFAULT_ADMIN_SETTINGS = {
-  owner:   { business: false, tax: true, modules: false, receipt: true, hardware: true, cloud: false, users: true, license: true },
+  owner:   { business: false, tax: true, modules: false, receipt: true, 'customer-display': true, hardware: true, cloud: false, users: true, license: true },
   manager: { business: false, tax: false, modules: false, receipt: true, hardware: false, cloud: false, users: false, license: false },
   staff:   { business: false, tax: false, modules: false, receipt: false, hardware: false, cloud: false, users: false, license: false },
 }

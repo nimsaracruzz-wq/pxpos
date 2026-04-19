@@ -3,7 +3,8 @@ import {
   Store, Receipt, Percent, Globe, Key, Shield,
   Printer, Barcode, Save, CheckCircle, ChevronRight,
   ShoppingBag, Utensils, Shirt, Pill, Truck, Cloud, Database, Users, Upload, Sun, Moon,
-  Banknote, History, CalendarDays, BadgeDollarSign, CircleDollarSign
+  Banknote, History, CalendarDays, BadgeDollarSign, CircleDollarSign,
+  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw
 } from 'lucide-react'
 import { useAppStore, useAuthStore } from '@/store'
 import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
@@ -11,6 +12,7 @@ import { useToast } from '@/components/Toast'
 import { testCloudConnection } from '@/lib/firebase'
 import { cn } from '@/lib/utils'
 import UserBarcodeGenerator, { generateUserBarcode } from '@/components/UserBarcodeGenerator'
+import MediaCarousel from '@/components/display/MediaCarousel'
 import { v4 as uuidv4 } from 'uuid'
 
 const TABS = [
@@ -19,6 +21,7 @@ const TABS = [
   { id: 'tax', label: 'Tax & Charges', icon: Percent },
   { id: 'modules', label: 'Modules', icon: ShoppingBag },
   { id: 'receipt', label: 'Receipt', icon: Receipt },
+  { id: 'customer-display', label: 'Customer Display', icon: Monitor },
   { id: 'hardware', label: 'Hardware', icon: Printer },
   { id: 'cloud', label: 'Cloud & Billing', icon: Cloud },
   { id: 'users', label: 'Staff & Roles', icon: Users },
@@ -278,6 +281,279 @@ function StaffTab() {
       </div>
 
       {barcodeUser && <UserBarcodeGenerator user={barcodeUser} onClose={() => setBarcodeUser(null)} />}
+    </div>
+  )
+}
+
+function CustomerDisplayTab() {
+  const toast = useToast()
+  const {
+    customerDisplaySettings,
+    updateCustomerDisplaySettings,
+    addCustomerDisplaySlide,
+    updateCustomerDisplaySlide,
+    removeCustomerDisplaySlide,
+    resetCustomerDisplaySettings,
+  } = useAppStore()
+
+  const slides = Array.isArray(customerDisplaySettings?.slides) ? customerDisplaySettings.slides : []
+  const previewSlides = customerDisplaySettings?.enabled === false ? [] : slides
+
+  const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (event) => resolve(String(event.target?.result || ''))
+    reader.onerror = () => reject(new Error('Unable to read file'))
+    reader.readAsDataURL(file)
+  })
+
+  const addSlide = (type = 'text') => {
+    addCustomerDisplaySlide({
+      type,
+      title: type === 'video' ? 'Video Promo' : type === 'image' ? 'Image Promo' : 'New Offer',
+      description: type === 'text' ? 'Add your message here.' : '',
+      tag: type === 'text' ? 'Offer' : '',
+      accent: type === 'video' ? '#22c55e' : type === 'image' ? '#0ea5e9' : '#f97316',
+      src: '',
+      mimeType: '',
+    })
+  }
+
+  const handleUpload = async (slideId, file) => {
+    if (!file) return
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      toast.error('Please upload an image or video file')
+      return
+    }
+
+    try {
+      const src = await readFileAsDataUrl(file)
+      updateCustomerDisplaySlide(slideId, {
+        src,
+        mimeType: file.type,
+        type: file.type.startsWith('video/') ? 'video' : 'image',
+      })
+      toast.success('Media uploaded to this device')
+    } catch (error) {
+      toast.error(error.message || 'Failed to upload media')
+    }
+  }
+
+  const resolveMediaLabel = (slide) => {
+    if (slide.type === 'video') return 'Video'
+    if (slide.type === 'image') return 'Image'
+    return 'Text offer'
+  }
+
+  return (
+    <div className="flex flex-col gap-4 animate-fade-in">
+      <div className="card p-4 border border-cyan-100 bg-gradient-to-r from-cyan-50 to-emerald-50">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-sm font-semibold text-cyan-800 flex items-center gap-2">
+              <Monitor size={16} />
+              Offline customer display editor
+            </p>
+            <p className="text-xs text-cyan-700 mt-1 max-w-2xl">
+              Owners can customize the on-screen offers, text, images, and videos. Media is stored on this device, not online.
+            </p>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button className="btn-secondary text-sm" onClick={() => addSlide('text')}>
+              <Plus size={14} /> Add Text Offer
+            </button>
+            <button className="btn-secondary text-sm" onClick={() => addSlide('image')}>
+              <Image size={14} /> Add Image
+            </button>
+            <button className="btn-secondary text-sm" onClick={() => addSlide('video')}>
+              <Video size={14} /> Add Video
+            </button>
+            <button className="btn-ghost border border-red-100 text-red-500 hover:bg-red-50 text-sm" onClick={resetCustomerDisplaySettings}>
+              <RefreshCw size={14} /> Reset Defaults
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <SettingsSection title="Display Branding">
+        <div className="flex flex-col gap-4">
+          <Toggle
+            checked={customerDisplaySettings?.enabled !== false}
+            onChange={(v) => updateCustomerDisplaySettings({ enabled: v })}
+            label="Use custom customer display content"
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input
+              label="Header Label"
+              value={customerDisplaySettings?.bannerTitle || ''}
+              onChange={(e) => updateCustomerDisplaySettings({ bannerTitle: e.target.value })}
+              placeholder="Customer Display"
+            />
+            <Input
+              label="Welcome Title"
+              value={customerDisplaySettings?.headline || ''}
+              onChange={(e) => updateCustomerDisplaySettings({ headline: e.target.value })}
+              placeholder="Welcome to Paxxmo POS"
+            />
+            <Input
+              label="Welcome Subtitle"
+              value={customerDisplaySettings?.subtitle || ''}
+              onChange={(e) => updateCustomerDisplaySettings({ subtitle: e.target.value })}
+              placeholder="Ready to order"
+            />
+            <Input
+              label="Autoplay Interval (ms)"
+              type="number"
+              value={customerDisplaySettings?.autoplayInterval || 5000}
+              onChange={(e) => updateCustomerDisplaySettings({ autoplayInterval: Math.max(2000, parseInt(e.target.value, 10) || 5000) })}
+              placeholder="5000"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Welcome Message</label>
+            <textarea
+              value={customerDisplaySettings?.message || ''}
+              onChange={(e) => updateCustomerDisplaySettings({ message: e.target.value })}
+              placeholder="Your order will be prepared with care"
+              className="input-base w-full min-h-[110px] p-3 resize-y"
+            />
+          </div>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Text Offers, Images & Videos">
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-gray-500">
+            Upload images or videos from this device, then edit the title and message shown on the customer screen.
+          </p>
+
+          <div className="flex flex-col gap-3">
+            {slides.map((slide, index) => (
+              <div key={slide.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div>
+                    <p className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                      {resolveMediaLabel(slide)} {index + 1}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">{slide.src ? 'Media stored locally on this device' : 'No media uploaded yet'}</p>
+                  </div>
+                  <button
+                    className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                    onClick={() => removeCustomerDisplaySlide(slide.id)}
+                  >
+                    <Trash2 size={13} /> Remove
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Select
+                    label="Content Type"
+                    value={slide.type || 'text'}
+                    onChange={(e) => updateCustomerDisplaySlide(slide.id, { type: e.target.value })}
+                  >
+                    <option value="text">Text Offer</option>
+                    <option value="image">Image</option>
+                    <option value="video">Video</option>
+                  </Select>
+                  <Input
+                    label="Title"
+                    value={slide.title || ''}
+                    onChange={(e) => updateCustomerDisplaySlide(slide.id, { title: e.target.value })}
+                    placeholder="Main title"
+                  />
+                  <Input
+                    label="Description"
+                    value={slide.description || ''}
+                    onChange={(e) => updateCustomerDisplaySlide(slide.id, { description: e.target.value })}
+                    placeholder="Supporting message"
+                  />
+                  <Input
+                    label="Accent Color"
+                    value={slide.accent || '#16a34a'}
+                    onChange={(e) => updateCustomerDisplaySlide(slide.id, { accent: e.target.value })}
+                    placeholder="#16a34a"
+                  />
+                </div>
+
+                {slide.type === 'text' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <Input
+                      label="Offer Tag"
+                      value={slide.tag || ''}
+                      onChange={(e) => updateCustomerDisplaySlide(slide.id, { tag: e.target.value })}
+                      placeholder="Hot Deal"
+                    />
+                    <div className="flex items-end">
+                      <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 w-full">
+                        This slide will appear as a rotating promotion card on the customer display.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {slide.type !== 'text' && (
+                  <div className="mt-4 flex flex-col gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="btn-secondary cursor-pointer">
+                        <Upload size={14} /> {slide.type === 'video' ? 'Upload Video' : 'Upload Image'}
+                        <input
+                          type="file"
+                          accept={slide.type === 'video' ? 'video/*' : 'image/*,video/*'}
+                          className="hidden"
+                          onChange={(e) => handleUpload(slide.id, e.target.files?.[0])}
+                        />
+                      </label>
+                      {slide.src && (
+                        <button
+                          className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                          onClick={() => updateCustomerDisplaySlide(slide.id, { src: '', mimeType: '' })}
+                        >
+                          Clear Media
+                        </button>
+                      )}
+                    </div>
+
+                    {slide.src ? (
+                      slide.type === 'video' ? (
+                        <video
+                          src={slide.src}
+                          className="w-full max-h-64 rounded-2xl object-cover bg-black"
+                          muted
+                          loop
+                          playsInline
+                          controls
+                        />
+                      ) : (
+                        <img
+                          src={slide.src}
+                          alt={slide.title || 'Uploaded preview'}
+                          className="w-full max-h-64 rounded-2xl object-cover bg-gray-100"
+                        />
+                      )
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-gray-400 text-center">
+                        {slide.type === 'video' ? 'Upload a local video file to preview it here.' : 'Upload a local image file to preview it here.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Live Preview">
+        <div className="space-y-4">
+          <div className="rounded-3xl overflow-hidden border border-gray-200 bg-slate-950 p-3 shadow-lg">
+            <MediaCarousel items={previewSlides.length > 0 ? previewSlides : slides} autoPlay interval={customerDisplaySettings?.autoplayInterval || 5000} className="h-[320px]" />
+          </div>
+          <p className="text-xs text-gray-500">
+            The customer screen uses the same offline media stored in the app, so the second display stays local to this device.
+          </p>
+        </div>
+      </SettingsSection>
     </div>
   )
 }
@@ -612,6 +888,9 @@ export default function Settings() {
             </div>
           </SettingsSection>
         )
+
+      case 'customer-display':
+        return <CustomerDisplayTab />
 
       case 'hardware':
         return (

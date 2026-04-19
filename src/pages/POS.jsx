@@ -14,6 +14,7 @@ import CustomerDisplay from '@/components/CustomerDisplay'
 import { useI18n } from '@/lib/i18n'
 import { v4 as uuidv4 } from 'uuid'
 import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
+import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
 
@@ -23,8 +24,42 @@ const CAT_EMOJI = {
   Beverages: '☕', 'Personal Care': '🧴', Pharmacy: '💊', Condiments: '🧂',
 }
 
+const playTone = (type = 'tick') => {
+  if (typeof window === 'undefined') return
+  const AudioCtx = window.AudioContext || window.webkitAudioContext
+  if (!AudioCtx) return
+  try {
+    const ctx = new AudioCtx()
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+
+    if (type === 'success') {
+      osc.frequency.setValueAtTime(620, now)
+      osc.frequency.exponentialRampToValueAtTime(940, now + 0.18)
+      gain.gain.setValueAtTime(0.001, now)
+      gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26)
+    } else {
+      osc.frequency.setValueAtTime(540, now)
+      gain.gain.setValueAtTime(0.001, now)
+      gain.gain.exponentialRampToValueAtTime(0.05, now + 0.01)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12)
+    }
+
+    osc.type = 'sine'
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + (type === 'success' ? 0.28 : 0.14))
+    osc.onended = () => ctx.close()
+  } catch {
+    // best-effort feedback only
+  }
+}
+
 // ─── Payment Modal ───────────────────────────────────────────────────────────
-const PaymentModal = ({ open, onClose, total, onComplete }) => {
+const PaymentModal = ({ open, onClose, total, onCheckout, onComplete }) => {
   const [method, setMethod] = useState('cash')
   const [cashGiven, setCashGiven] = useState('')
   const [processing, setProcessing] = useState(false)
@@ -39,6 +74,9 @@ const PaymentModal = ({ open, onClose, total, onComplete }) => {
 
   const handlePay = () => {
     if (!canPay) return
+    if (typeof onCheckout === 'function') {
+      onCheckout(method)
+    }
     setProcessing(true)
     setTimeout(() => {
       onComplete(method, cashNum, change)
@@ -209,14 +247,38 @@ export default function POS() {
   const { currentUser, switchCashierByBarcode } = useAuthStore()
   const { t } = useI18n()
 
-  useEffect(() => {
-    if (!customerDisplay) return
-    const method = String(customerDisplay.paymentMethod || '').toLowerCase()
-    if (method === 'helaqr') return
+  const subtotal = getSubtotal()
+  const discountAmt = getDiscountAmount()
+  const taxAmt = getTax(taxSettings.rate, taxSettings.inclusive)
+  const total = getTotal(taxSettings.rate, taxSettings.inclusive)
 
-    const timer = setTimeout(() => setCustomerDisplay(null), 6000)
-    return () => clearTimeout(timer)
-  }, [customerDisplay])
+  const closeCustomerScreen = useCallback(() => {
+    setCustomerDisplay(null)
+    clearCustomerDisplay()
+  }, [])
+
+  const openCustomerScreen = useCallback((payload) => {
+    setCustomerDisplay(payload)
+    publishCustomerDisplay(payload)
+  }, [])
+
+  const previewCheckoutState = useCallback((selectedMethod) => {
+    const method = String(selectedMethod || 'cash').toLowerCase()
+    openCustomerScreen({
+      status: 'checkout',
+      amount: total,
+      paymentMethod: method,
+      items: cart.map((item) => ({
+        id: item.id,
+        name: item.name,
+        qty: Number(item.qty || 0),
+        price: Number(item.salePrice || item.price || 0),
+        lineTotal: Number(item.salePrice || item.price || 0) * Number(item.qty || 0),
+      })),
+      title: 'Order Summary',
+      subtitle: 'Please choose payment',
+    })
+  }, [cart, total, openCustomerScreen])
 
   const getCartQty = (id) => Number(cart.find((i) => i.id === id)?.qty || 0)
 
@@ -232,12 +294,12 @@ export default function POS() {
     const handleKey = (e) => {
       if (e.key === 'F2') { searchRef.current?.focus(); e.preventDefault() }
       if (e.key === 'F5') { if (cart.length > 0) setShowPayment(true); e.preventDefault() }
-      if (e.key === 'Escape') { setSearch(''); setShowPayment(false); setShowReceipt(false); setCustomerDisplay(null) }
+      if (e.key === 'Escape') { setSearch(''); setShowPayment(false); setShowReceipt(false); closeCustomerScreen() }
       if (e.key === 'Delete' && e.ctrlKey) { clearCart(); toast.warning('Cart cleared'); e.preventDefault() }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [cart, clearCart])
+  }, [cart, clearCart, closeCustomerScreen])
 
   const filteredProducts = products.filter((p) => {
     if (!p.active) return false
@@ -258,6 +320,7 @@ export default function POS() {
           return
         }
         addToCart(found)
+        playTone('tick')
         toast.success(`${found.name} added`, { duration: 1500 })
         setSearch('')
       } else {
@@ -271,6 +334,7 @@ export default function POS() {
     const stock = Number(p.stock || 0)
     if (stock <= currentQty) { toast.error(`${p.name} is out of stock`); return }
     addToCart(p)
+    playTone('tick')
     toast.success(`${p.name} added to cart`, { duration: 1200 })
   }
 
@@ -299,12 +363,9 @@ export default function POS() {
     toast.error(result?.error || 'Unable to switch cashier')
   }
 
-  const subtotal = getSubtotal()
-  const discountAmt = getDiscountAmount()
-  const taxAmt = getTax(taxSettings.rate, taxSettings.inclusive)
-  const total = getTotal(taxSettings.rate, taxSettings.inclusive)
-
   const handleCompleteSale = async (method, cashGiven = 0, change = 0) => {
+    previewCheckoutState(method)
+
     const receiptNo = generateReceiptNumber()
     const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
     let paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
@@ -373,18 +434,61 @@ export default function POS() {
     clearCart()
     setSelectedCartItem(null)
     setShowReceipt(!isHelaQR)
-    setCustomerDisplay({
+    openCustomerScreen({
       amount: total,
       qrData,
       paymentMethod: method,
+      status: isHelaQR ? 'paying' : 'paid',
+      cashGiven,
+      change,
+      items: cart.map((item) => ({
+        id: item.id,
+        name: item.name,
+        qty: Number(item.qty || 0),
+        price: Number(item.salePrice || item.price || 0),
+        lineTotal: Number(item.salePrice || item.price || 0) * Number(item.qty || 0),
+      })),
       reference: paymentRef,
       title: isHelaQR ? 'HelaQR Payment' : 'Customer Payment View',
       subtitle: isHelaQR
         ? 'Please scan this code and complete payment from your banking app.'
         : `Please confirm this amount for ${String(method || '').toUpperCase()} payment.`,
     })
+    if (!isHelaQR) playTone('success')
     toast.success(isHelaQR ? `HelaQR created: ${paymentRef}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
   }
+
+  useEffect(() => {
+    const transactional = ['checkout', 'paying', 'paid'].includes(String(customerDisplay?.status || '').toLowerCase())
+    if (transactional) return
+
+    if (cart.length > 0) {
+      publishCustomerDisplay({
+        status: 'active',
+        amount: total,
+        paymentMethod: 'cash',
+        items: cart.map((item) => ({
+          id: item.id,
+          name: item.name,
+          qty: Number(item.qty || 0),
+          price: Number(item.salePrice || item.price || 0),
+          lineTotal: Number(item.salePrice || item.price || 0) * Number(item.qty || 0),
+        })),
+        title: 'Order in Progress',
+        subtitle: 'Items are being added',
+      })
+      return
+    }
+
+    publishCustomerDisplay({
+      status: 'idle',
+      amount: 0,
+      paymentMethod: 'cash',
+      items: [],
+      title: 'Customer Display',
+      subtitle: 'Ready to order',
+    })
+  }, [cart, total, customerDisplay?.status])
 
   const moduleProducts = products.filter((p) => p.active && (!p.module || p.module === activeModule))
   const categories = ['All', ...new Set(moduleProducts.map((p) => p.category))]
@@ -760,6 +864,7 @@ export default function POS() {
         open={showPayment}
         onClose={() => setShowPayment(false)}
         total={total}
+        onCheckout={previewCheckoutState}
         onComplete={handleCompleteSale}
       />
       {showReceipt && lastSale && (
@@ -774,10 +879,15 @@ export default function POS() {
         amount={customerDisplay?.amount}
         qrData={customerDisplay?.qrData}
         paymentMethod={customerDisplay?.paymentMethod}
+        status={customerDisplay?.status}
+        items={customerDisplay?.items}
+        cashGiven={customerDisplay?.cashGiven}
+        change={customerDisplay?.change}
         reference={customerDisplay?.reference}
         title={customerDisplay?.title}
         subtitle={customerDisplay?.subtitle}
-        onClose={() => setCustomerDisplay(null)}
+        onAutoReset={closeCustomerScreen}
+        onClose={closeCustomerScreen}
       />
     </div>
   )

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
 import path from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
@@ -287,6 +287,22 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
 });
 
 // ─── Window ─────────────────────────────────────────────────────────────────
+function attachWindowDiagnostics(win, label) {
+  win.webContents.on('did-fail-load', (_, code, desc, url) => {
+    console.error(`[${label}] did-fail-load`, code, desc, url);
+  });
+
+  win.webContents.on('render-process-gone', (_, details) => {
+    console.error(`[${label}] render-process-gone`, details?.reason || details);
+  });
+
+  win.webContents.on('console-message', (_, level, message, line, sourceId) => {
+    if (level >= 2) {
+      console.error(`[${label}] renderer`, message, `(${sourceId}:${line})`);
+    }
+  });
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -296,6 +312,8 @@ function createWindow() {
       contextIsolation: false
     }
   });
+
+  attachWindowDiagnostics(mainWindow, 'main');
 
   const loadRenderer = async (retries = 30) => {
     if (!app.isPackaged) {
@@ -341,6 +359,40 @@ function createWindow() {
       autoUpdater.quitAndInstall();
     });
   }
+
+  const createCustomerWindow = async () => {
+    const displays = screen.getAllDisplays();
+    const externalDisplay = displays.find((d) => d.id !== screen.getPrimaryDisplay().id);
+    const bounds = externalDisplay?.workArea;
+
+    const customerWindow = new BrowserWindow({
+      width: bounds?.width || 900,
+      height: bounds?.height || 700,
+      x: bounds?.x,
+      y: bounds?.y,
+      autoHideMenuBar: true,
+      title: 'Paxxmo Customer Display',
+      backgroundColor: '#0b1220',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      },
+    });
+
+    attachWindowDiagnostics(customerWindow, 'customer');
+
+    try {
+      if (!app.isPackaged) {
+        await customerWindow.loadURL(`${DEV_SERVER_URL}/#/customer-screen`);
+      } else {
+        await customerWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: '/customer-screen' });
+      }
+    } catch (err) {
+      console.error('Customer window failed to load:', err?.message || err);
+    }
+  };
+
+  createCustomerWindow();
 }
 
 app.whenReady().then(() => {

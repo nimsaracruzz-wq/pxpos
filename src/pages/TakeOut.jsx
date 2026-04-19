@@ -1,15 +1,17 @@
-import React, { useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { ShoppingBag, Banknote, CreditCard, Split, X, Clock, CheckCircle2 } from 'lucide-react'
 import { useSalesStore, useAppStore, useProductStore, useTableStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { cn, formatCurrency, generateReceiptNumber } from '@/lib/utils'
 import ReceiptModal from '@/components/Receipt'
+import CustomerDisplay from '@/components/CustomerDisplay'
+import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
 // Removed hardcoded MENU_ITEMS - Now pulling dynamically from useProductStore
 
 
 // ─── Payment Modal ─────────────────────────────────────────────────────────────
-function PayModal({ items, notes, customerName, customerPhone, taxSettings, onClose, onPaid }) {
+function PayModal({ items, notes, customerName, customerPhone, taxSettings, onClose, onPaid, onCheckout }) {
   const [method, setMethod] = useState('cash')
   const [cashGiven, setCashGiven] = useState('')
   const [processing, setProcessing] = useState(false)
@@ -26,6 +28,21 @@ function PayModal({ items, notes, customerName, customerPhone, taxSettings, onCl
 
   const confirm = () => {
     if (!canPay) return
+    if (typeof onCheckout === 'function') {
+      onCheckout({
+        method,
+        subtotal,
+        tax,
+        total,
+        items: items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          qty: Number(i.qty || 0),
+          price: Number(i.price || 0),
+          lineTotal: Number(i.price || 0) * Number(i.qty || 0),
+        })),
+      })
+    }
     setProcessing(true)
     setTimeout(() => onPaid({ method, cashNum, change, subtotal, tax, total }), 500)
   }
@@ -137,6 +154,17 @@ export default function TakeOut() {
   const [notes, setNotes] = useState('')
   const [showPay, setShowPay] = useState(false)
   const [receipt, setReceipt] = useState(null)
+  const [customerDisplay, setCustomerDisplay] = useState(null)
+
+  const closeCustomerScreen = useCallback(() => {
+    setCustomerDisplay(null)
+    clearCustomerDisplay()
+  }, [])
+
+  const openCustomerScreen = useCallback((payload) => {
+    setCustomerDisplay(payload)
+    publishCustomerDisplay(payload)
+  }, [])
 
   const filtered = activeCategory === 'All' ? restaurantProducts : restaurantProducts.filter((i) => i.category === activeCategory)
 
@@ -177,11 +205,61 @@ export default function TakeOut() {
     })
 
     addSale(saleData)
+
+    openCustomerScreen({
+      status: 'paid',
+      amount: total,
+      paymentMethod: method,
+      cashGiven: cashNum,
+      change,
+      items: items.map((i) => ({
+        id: i.id,
+        name: i.name,
+        qty: Number(i.qty || 0),
+        price: Number(i.price || 0),
+        lineTotal: Number(i.price || 0) * Number(i.qty || 0),
+      })),
+      title: 'Take Out Payment',
+      subtitle: `Please confirm this amount for ${String(method || '').toUpperCase()} payment.`,
+    })
+
     setReceipt(saleData)
     setItems([]); setCustomerName(''); setCustomerPhone(''); setNotes('')
     setShowPay(false)
     toast.success(`Take Out paid! ${formatCurrency(total)} via ${method}`)
   }
+
+  useEffect(() => {
+    const transactional = ['checkout', 'paying', 'paid'].includes(String(customerDisplay?.status || '').toLowerCase())
+    if (transactional) return
+
+    if (items.length > 0) {
+      publishCustomerDisplay({
+        status: 'active',
+        amount: total,
+        paymentMethod: 'cash',
+        items: items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          qty: Number(i.qty || 0),
+          price: Number(i.price || 0),
+          lineTotal: Number(i.price || 0) * Number(i.qty || 0),
+        })),
+        title: 'Take Out Order',
+        subtitle: 'Items are being added',
+      })
+      return
+    }
+
+    publishCustomerDisplay({
+      status: 'idle',
+      amount: 0,
+      paymentMethod: 'cash',
+      items: [],
+      title: 'Customer Display',
+      subtitle: 'Ready to order',
+    })
+  }, [items, total, customerDisplay?.status])
 
   // Today's orders
   const today = new Date().toDateString()
@@ -327,11 +405,39 @@ export default function TakeOut() {
       {/* Modals */}
       {showPay && (
         <PayModal items={items} notes={notes} customerName={customerName} customerPhone={customerPhone}
-          taxSettings={taxSettings} onClose={() => setShowPay(false)} onPaid={handlePaid} />
+          taxSettings={taxSettings}
+          onClose={() => setShowPay(false)}
+          onCheckout={(preview) => {
+            openCustomerScreen({
+              status: 'checkout',
+              amount: Number(preview?.total || 0),
+              paymentMethod: String(preview?.method || 'cash').toLowerCase(),
+              items: Array.isArray(preview?.items) ? preview.items : [],
+              title: 'Take Out Order Summary',
+              subtitle: 'Please choose payment',
+            })
+          }}
+          onPaid={handlePaid}
+        />
       )}
       {receipt && (
         <ReceiptModal sale={receipt} businessInfo={businessInfo} onClose={() => setReceipt(null)} />
       )}
+      <CustomerDisplay
+        open={Boolean(customerDisplay)}
+        amount={customerDisplay?.amount}
+        qrData={customerDisplay?.qrData}
+        paymentMethod={customerDisplay?.paymentMethod}
+        status={customerDisplay?.status}
+        items={customerDisplay?.items}
+        cashGiven={customerDisplay?.cashGiven}
+        change={customerDisplay?.change}
+        reference={customerDisplay?.reference}
+        title={customerDisplay?.title}
+        subtitle={customerDisplay?.subtitle}
+        onAutoReset={closeCustomerScreen}
+        onClose={closeCustomerScreen}
+      />
     </div>
   )
 }
