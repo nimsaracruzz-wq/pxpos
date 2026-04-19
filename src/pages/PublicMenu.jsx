@@ -227,7 +227,7 @@ export default function PublicMenu() {
     const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
     const activeProducts = productSource.filter((p) => p?.active)
     const scopedProducts = decodedStoreId
-      ? activeProducts.filter((p) => !p?.storeId || String(p.storeId).trim() === decodedStoreId)
+      ? activeProducts.filter((p) => String(p.storeId || '').trim() === decodedStoreId)
       : activeProducts
     const restaurantProducts = scopedProducts.filter((p) => {
       if (!p?.active) return false
