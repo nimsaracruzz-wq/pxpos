@@ -70,12 +70,7 @@ function ensureRealtimeDb() {
  */
 export async function initializeFirebase() {
   try {
-    const { cloudSettings, cloudSubscription } = useAppStore.getState()
-
-    if (cloudSubscription?.deploymentMode !== 'cloud' || cloudSubscription?.status === 'inactive') {
-      db = null
-      return false
-    }
+    const { cloudSettings } = useAppStore.getState()
 
     // Allow user to override via Settings JSON, otherwise use hardcoded config
     let config = HARDCODED_CONFIG
@@ -108,11 +103,10 @@ export async function initializeFirebase() {
  * Mirrors local IndexedDB slices to Firestore collections under stores/{storeId}
  */
 export async function syncToCloud() {
-  // Use ensureRealtimeDb() to bypass the deploymentMode gate in initializeFirebase().
-  // This ensures products always sync to Firebase regardless of subscription status.
-  const activeDb = ensureRealtimeDb()
-  if (!activeDb) return false
-  db = activeDb
+  if (!db) {
+    const success = await initializeFirebase()
+    if (!success || !db) return false
+  }
 
   try {
     const { sales }        = useSalesStore.getState()
