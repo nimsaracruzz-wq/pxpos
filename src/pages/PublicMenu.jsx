@@ -222,8 +222,9 @@ export default function PublicMenu() {
     }
   }, [decodedStoreId])
 
-  // If cloud products are available, use them. Otherwise fallback to local POS products for local previews.
-  const productSource = cloudProductsLoaded && cloudProducts.length > 0 ? cloudProducts : products
+  // Use local products if available (means we are previewing on the POS itself). 
+  // If empty (means we are on a customer's phone), fallback to cloud-synced items.
+  const productSource = products.length > 0 ? products : cloudProducts
   const menuItems = useMemo(() => {
     const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
 
