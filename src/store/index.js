@@ -7,7 +7,7 @@ import { publishCustomerDisplaySettings } from '@/lib/customerDisplayChannel'
 import { BRAND } from '@/lib/brand'
 
 const APP_STORE_VERSION = 4
-const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
+const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || 'https://ceypos.paxxmo.com').trim()
 const LICENSED_MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online']
 
 function createCustomerDisplayDefaults() {
