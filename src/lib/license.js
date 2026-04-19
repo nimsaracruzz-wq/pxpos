@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app'
 import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection } from 'firebase/firestore'
+import { useAppStore } from '@/store'
 
 const FIREBASE_CONFIG = {
   apiKey:            'AIzaSyAXL7uGGsIXNbwHHnNkr0D2zfvU4E8Cmc8',
@@ -38,6 +39,15 @@ function randomGroup(length = 4) {
 
 export function generateLicenseKey(prefix = 'CEY') {
   return [String(prefix || 'CEY').trim().toUpperCase(), randomGroup(), randomGroup(), randomGroup(), randomGroup()].join('-')
+}
+
+export async function checkCurrentLicenseAccess() {
+  const { licenseActive, licenseKey } = useAppStore.getState()
+  if (!licenseActive || !licenseKey) {
+    return { valid: false, error: 'No active license found.' }
+  }
+
+  return revalidateLicense(licenseKey)
 }
 
 function serializeLicenseDoc(data = {}, key = '') {
@@ -81,7 +91,7 @@ async function getDeviceId() {
 export async function validateLicense(key) {
   try {
     const db       = getDB()
-    const clean    = key.trim().toUpperCase()
+    const clean    = String(key || '').trim().toUpperCase()
     const ref      = doc(db, 'licenses', clean)
     const snap     = await getDoc(ref)
     const deviceId = await getDeviceId()

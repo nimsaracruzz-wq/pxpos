@@ -188,7 +188,7 @@ export const useAppStore = create(
         set((s) => ({ receiptSettings: { ...s.receiptSettings, ...r } })),
       updateHardwareSettings: (h) =>
         set((s) => ({ hardwareSettings: { ...s.hardwareSettings, ...h } })),
-      activateLicense: (key) => set({ licenseKey: key, licenseActive: true }),
+      activateLicense: (key) => set({ licenseKey: String(key || '').trim().toUpperCase(), licenseActive: true }),
       setLanguage: (lang) => set({ language: lang }),
       setTheme: (theme) => set({ theme: theme === 'dark' ? 'dark' : 'light' }),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),

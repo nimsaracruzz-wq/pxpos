@@ -27,7 +27,7 @@ import LicensePortal from '@/pages/LicensePortal'
 import Login from '@/pages/Login'
 import Activation from '@/pages/Activation'
 import { useAuthStore, useAppStore } from '@/store'
-import { revalidateLicense } from '@/lib/license'
+import { checkCurrentLicenseAccess } from '@/lib/license'
 
 export default function App() {
   const { currentUser, logout }              = useAuthStore()
@@ -96,19 +96,38 @@ export default function App() {
 
   // Re-validate stored license on every app startup
   useEffect(() => {
+    let cancelled = false
+
     async function check() {
-      if (licenseActive && licenseKey) {
-        const result = await revalidateLicense(licenseKey)
-        if (!result.valid) {
-          // License revoked / expired / wrong PC → kick out
-          useAppStore.setState({ licenseActive: false, licenseKey: '' })
-          logout()
-        }
+      const result = await checkCurrentLicenseAccess()
+      if (cancelled) return
+
+      if (!result.valid) {
+        // License revoked / expired / wrong PC → kick out immediately.
+        useAppStore.setState({ licenseActive: false, licenseKey: '' })
+        logout()
       }
       setChecking(false)
     }
+
     check()
-  }, [])
+    const intervalId = window.setInterval(check, 30000)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        check()
+      }
+    }
+
+    window.addEventListener('focus', check)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', check)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [licenseActive, licenseKey, logout])
 
   // Show loading while checking license
   if (checking) {

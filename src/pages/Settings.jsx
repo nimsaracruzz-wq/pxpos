@@ -4,7 +4,7 @@ import {
   Printer, Barcode, Save, CheckCircle, ChevronRight,
   ShoppingBag, Utensils, Shirt, Pill, Truck, Cloud, Database, Users, Upload, Sun, Moon,
   Banknote, History, CalendarDays, BadgeDollarSign, CircleDollarSign,
-  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw
+  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw, Copy
 } from 'lucide-react'
 import { useAppStore, useAuthStore } from '@/store'
 import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
@@ -571,7 +571,7 @@ export default function Settings() {
     receiptSettings, updateReceiptSettings,
     hardwareSettings, updateHardwareSettings,
     modules, toggleModule,
-    licenseActive, activateLicense,
+    licenseActive, licenseKey, activateLicense,
     cloudSettings, updateCloudSettings,
     helaQRSettings, updateHelaQRSettings,
     cloudSubscription, setDeploymentMode, updateCloudSubscription, recordCloudPayment,
@@ -589,6 +589,20 @@ export default function Settings() {
   const showSaved = () => {
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  const handleCopyLicenseKey = async () => {
+    if (!licenseKey) {
+      toast.error('No activated license key found')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(licenseKey)
+      toast.success('Activated license key copied')
+    } catch {
+      toast.error('Unable to copy license key')
+    }
   }
 
   const getNextDueAt = (plan) => {
@@ -1202,12 +1216,34 @@ export default function Settings() {
                   <p className="text-xs text-amber-600 mt-1">Enter your license key to unlock all features</p>
                 </div>
               )}
-              <Input
-                label="License Key"
-                value={licenseInput}
-                onChange={(e) => setLicenseInput(e.target.value)}
-                placeholder="XXXX-XXXX-XXXX-XXXX"
-              />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <Input
+                  label="License Key"
+                  value={licenseInput}
+                  onChange={(e) => setLicenseInput(e.target.value)}
+                  placeholder="XXXX-XXXX-XXXX-XXXX"
+                />
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Activated License Key</p>
+                  <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
+                    <span className="font-mono text-sm break-all text-gray-900">
+                      {licenseKey || 'No active license key'}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-gray-400 hover:text-green-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={handleCopyLicenseKey}
+                      disabled={!licenseKey}
+                      title="Copy activated license key"
+                    >
+                      <Copy size={15} />
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    This key is checked by the portal and desktop app when they start and while they stay open.
+                  </p>
+                </div>
+              </div>
               <button
                 className="btn-primary w-fit"
                 onClick={() => {
