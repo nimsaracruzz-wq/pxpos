@@ -3,9 +3,8 @@ import { Copy, KeyRound, Plus, RefreshCcw, Search, ShieldCheck, ShieldOff, Trash
 import { useToast } from '@/components/Toast'
 import { Button, Input, Modal, Select, Badge } from '@/components/ui'
 import { BRAND } from '@/lib/brand'
-import { checkCurrentLicenseAccess, deleteLicense, generateLicenseKey, listLicenses, resetLicenseDevice, setLicenseStatus, upsertLicense } from '@/lib/license'
+import { deleteLicense, generateLicenseKey, listLicenses, resetLicenseDevice, setLicenseStatus, upsertLicense } from '@/lib/license'
 import { clearPortalSession, createPortalAdmin, getPortalSession, listPortalAdmins, verifyPortalLogin } from '@/lib/portalAuth'
-import { useAppStore } from '@/store'
 
 const PLAN_OPTIONS = [
   { value: 'basic', label: 'Basic' },
@@ -85,13 +84,11 @@ function emptyForm() {
 export default function LicensePortal() {
   const portalUrl = 'https://ceypos.paxxmo.com/license-portal'
   const toast = useToast()
-  const { licenseActive, licenseKey } = useAppStore()
   const [portalSession, setPortalSession] = useState(() => getPortalSession())
   const [portalAdmins, setPortalAdmins] = useState([])
   const [authLoading, setAuthLoading] = useState(true)
   const [authSaving, setAuthSaving] = useState(false)
   const [authError, setAuthError] = useState('')
-  const [licenseGate, setLicenseGate] = useState({ checking: true, allowed: false, message: '' })
   const [showPassword, setShowPassword] = useState(false)
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [setupForm, setSetupForm] = useState({ fullName: '', username: '', password: '' })
@@ -124,28 +121,9 @@ export default function LicensePortal() {
     }
   }
 
-  const checkPortalLicense = async () => {
-    const result = await checkCurrentLicenseAccess()
-    if (!result.valid) {
-      useAppStore.setState({ licenseActive: false, licenseKey: '' })
-      clearPortalSession()
-      setPortalSession(null)
-      setLicenseGate({ checking: false, allowed: false, message: result.error || 'License access is blocked.' })
-      return false
-    }
-
-    setLicenseGate({ checking: false, allowed: true, message: '' })
-    return true
-  }
-
   useEffect(() => {
     const init = async () => {
       setAuthLoading(true)
-      await checkPortalLicense()
-      if (!useAppStore.getState().licenseActive || !useAppStore.getState().licenseKey) {
-        setAuthLoading(false)
-        return
-      }
       await loadPortalAdmins()
       const session = getPortalSession()
       setPortalSession(session)
@@ -155,24 +133,7 @@ export default function LicensePortal() {
       }
     }
     init()
-
-    const intervalId = window.setInterval(() => {
-      checkPortalLicense().catch(() => {})
-    }, 30000)
-
-    const handleFocus = () => {
-      checkPortalLicense().catch(() => {})
-    }
-
-    window.addEventListener('focus', handleFocus)
-    document.addEventListener('visibilitychange', handleFocus)
-
-    return () => {
-      window.clearInterval(intervalId)
-      window.removeEventListener('focus', handleFocus)
-      document.removeEventListener('visibilitychange', handleFocus)
-    }
-  }, [licenseActive, licenseKey])
+  }, [])
 
   const handleLogin = async (event) => {
     event.preventDefault()
@@ -365,27 +326,6 @@ export default function LicensePortal() {
     )
   }
 
-  if (!licenseGate.allowed) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-rose-950 text-white flex items-center justify-center p-6">
-        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-6 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-200">
-            <ShieldOff size={26} />
-          </div>
-          <p className="text-[11px] uppercase tracking-[0.24em] text-rose-200/70 font-bold">License revoked</p>
-          <h1 className="text-3xl font-black mt-2">Portal access blocked</h1>
-          <p className="text-sm text-slate-300 mt-3">
-            {licenseGate.message || 'Your active POS license is no longer valid, so the portal and desktop app are both locked.'}
-          </p>
-          <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-left text-sm text-slate-300">
-            <p className="font-semibold text-white mb-2">Current license</p>
-            <p className="font-mono break-all text-xs">{licenseKey || 'No active license key found'}</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   if (!portalSession) {
     const hasAdmins = portalAdmins.length > 0
 
@@ -494,9 +434,6 @@ export default function LicensePortal() {
               </p>
               <p className="text-xs text-slate-400 mt-1">
                 Logged in as: <span className="text-white font-semibold">{portalSession.fullName || portalSession.username}</span>
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Active POS license: <span className="font-mono text-emerald-300">{licenseKey || 'Not activated'}</span>
               </p>
             </div>
             <div className="flex gap-2 flex-wrap">
