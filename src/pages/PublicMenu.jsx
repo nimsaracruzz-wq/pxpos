@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Search, Clock3, ListOrdered, Languages, SlidersHorizontal } from 'lucide-react'
-import { useAppStore } from '@/store'
+import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession } from '@/lib/firebase'
@@ -158,6 +158,7 @@ export default function PublicMenu() {
   const qrToken = String(searchParams.get('token') || '').trim()
   const effectiveSession = rawSession && rawSession !== 'static' ? rawSession : `table-${tableNo || 'na'}`
 
+  const { products } = useProductStore()
   const { taxSettings, serviceChargeSettings, businessInfo, receiptSettings } = useAppStore()
   const [customerName, setCustomerName] = useState('')
   const [notes, setNotes] = useState('')
@@ -221,18 +222,19 @@ export default function PublicMenu() {
     }
   }, [decodedStoreId])
 
-  // Only use cloud-synced products — never fall back to unregistered local products.
-  // This ensures the mobile QR menu only shows items registered in the POS system.
+  // If cloud products are available, use them. Otherwise fallback to local POS products for local previews.
+  const productSource = cloudProductsLoaded && cloudProducts.length > 0 ? cloudProducts : products
   const menuItems = useMemo(() => {
-    if (!cloudProductsLoaded) return []
-
     const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
 
-    // Step 1: Only active products synced from this specific POS store.
-    const scopedActiveProducts = cloudProducts.filter((p) => {
+    // Step 1: Only active products. If it's a cloud product, filter by storeId too.
+    const scopedActiveProducts = productSource.filter((p) => {
       if (!p?.active) return false
-      if (!decodedStoreId) return false
-      return String(p.storeId || '').trim() === decodedStoreId
+      // Only apply storeId restriction to cloud products, local ones belong here natively.
+      if (cloudProductsLoaded && cloudProducts.length > 0 && decodedStoreId) {
+        return String(p.storeId || '').trim() === decodedStoreId
+      }
+      return true
     })
 
     // Step 2: Prefer restaurant-module items. Fall back to ALL scoped active items
@@ -248,10 +250,8 @@ export default function PublicMenu() {
       return false
     })
 
-    // Return restaurant items when available; otherwise all POS-registered active items.
-    // Never fall back to products outside this store's cloud registry.
     return restaurantProducts.length > 0 ? restaurantProducts : scopedActiveProducts
-  }, [decodedStoreId, cloudProducts, cloudProductsLoaded])
+  }, [decodedStoreId, productSource, cloudProductsLoaded, cloudProducts])
   const categories = useMemo(() => ['All', ...new Set(menuItems.map((item) => item.category).filter(Boolean))], [menuItems])
 
   const filteredItems = useMemo(() => {
@@ -586,8 +586,8 @@ export default function PublicMenu() {
     )
   }
 
-  // Loading POS menu from the cloud
-  if (!cloudProductsLoaded) {
+  // Loading POS menu from the cloud (only show if local products are also empty)
+  if (!cloudProductsLoaded && products.length === 0) {
     return (
       <div
         className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"
@@ -607,7 +607,8 @@ export default function PublicMenu() {
   }
 
   // Cloud loaded but this store has no active POS-registered items
-  if (cloudProductsLoaded && menuItems.length === 0) {
+  // Cloud/Local loaded but this store has no active POS-registered items
+  if (menuItems.length === 0 && (cloudProductsLoaded || products.length > 0)) {
     return (
       <div
         className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"
