@@ -240,17 +240,9 @@ export default function PublicMenu() {
       return true
     })
 
-    const restaurantProducts = scopedActiveProducts.filter((p) => {
-      const moduleValue = String(p.module || '').trim().toLowerCase()
-      if (moduleValue === 'restaurant' || moduleValue === 'resturant') return true
-      if (!moduleValue) {
-        const categoryValue = String(p.category || '').trim().toLowerCase()
-        return restaurantCategories.has(categoryValue)
-      }
-      return false
-    })
-
-    return restaurantProducts.length > 0 ? restaurantProducts : scopedActiveProducts
+    // Return all active products assigned to this store, regardless of module mapping.
+    // The UI automatically groups them perfectly by their assigned category.
+    return scopedActiveProducts
   }, [decodedStoreId, productSource, isElectron, cloudProductsLoaded, cloudProducts])
   const categories = useMemo(() => ['All', ...new Set(menuItems.map((item) => item.category).filter(Boolean))], [menuItems])
 
