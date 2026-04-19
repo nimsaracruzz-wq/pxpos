@@ -10,6 +10,7 @@ import { useAppStore, useAuthStore } from '@/store'
 import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
 import { useToast } from '@/components/Toast'
 import { testCloudConnection } from '@/lib/firebase'
+import { validateLicense } from '@/lib/license'
 import { cn } from '@/lib/utils'
 import UserBarcodeGenerator, { generateUserBarcode } from '@/components/UserBarcodeGenerator'
 import MediaCarousel from '@/components/display/MediaCarousel'
@@ -562,6 +563,7 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState('business')
   const [saved, setSaved] = useState(false)
   const [licenseInput, setLicenseInput] = useState('')
+  const [activatingLicense, setActivatingLicense] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
   const toast = useToast()
   const {
@@ -1246,15 +1248,28 @@ export default function Settings() {
               </div>
               <button
                 className="btn-primary w-fit"
-                onClick={() => {
-                  if (licenseInput) {
-                    activateLicense(licenseInput)
+                disabled={activatingLicense}
+                onClick={async () => {
+                  if (!licenseInput) return
+
+                  setActivatingLicense(true)
+                  try {
+                    const result = await validateLicense(licenseInput)
+                    if (!result.valid) {
+                      toast.error(result.error || 'License activation failed')
+                      return
+                    }
+
+                    activateLicense(licenseInput, result)
                     showSaved()
+                    toast.success('License activated successfully')
+                  } finally {
+                    setActivatingLicense(false)
                   }
                 }}
               >
                 <Shield size={14} />
-                Activate License
+                {activatingLicense ? 'Activating...' : 'Activate License'}
               </button>
               <div className="border-t border-gray-100 pt-4">
                 <p className="text-xs text-gray-400">Device ID: <span className="font-mono">PXM-{Math.random().toString(36).slice(2, 10).toUpperCase()}</span></p>

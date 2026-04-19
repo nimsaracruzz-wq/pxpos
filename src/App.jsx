@@ -106,6 +106,8 @@ export default function App() {
         // License revoked / expired / wrong PC → kick out immediately.
         useAppStore.setState({ licenseActive: false, licenseKey: '' })
         logout()
+      } else {
+        useAppStore.getState().applyLicenseFeatures?.(result)
       }
       setChecking(false)
     }

@@ -8,6 +8,7 @@ import { BRAND } from '@/lib/brand'
 
 const APP_STORE_VERSION = 4
 const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
+const LICENSED_MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online']
 
 function createCustomerDisplayDefaults() {
   return {
@@ -73,6 +74,23 @@ function ensureBusinessStoreId(businessInfo = {}) {
     storeId: businessInfo.storeId || uuidv4(),
     publicMenuBaseUrl: businessInfo.publicMenuBaseUrl || DEFAULT_PUBLIC_MENU_BASE_URL,
   }
+}
+
+function normalizeLicensedModules(modules = {}, currentModules = {}) {
+  const source = modules && typeof modules === 'object' ? modules : {}
+  return LICENSED_MODULE_KEYS.reduce((acc, key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      acc[key] = source[key] !== false
+    } else {
+      acc[key] = currentModules[key] ?? true
+    }
+    return acc
+  }, {})
+}
+
+function normalizeLicensedDeploymentMode(value, fallback = 'local') {
+  const candidate = String(value || fallback || '').trim().toLowerCase()
+  return candidate === 'cloud' ? 'cloud' : 'local'
 }
 
 // ─── Real Database Implementation (IndexedDB) ──────────────────────────────────
@@ -188,7 +206,65 @@ export const useAppStore = create(
         set((s) => ({ receiptSettings: { ...s.receiptSettings, ...r } })),
       updateHardwareSettings: (h) =>
         set((s) => ({ hardwareSettings: { ...s.hardwareSettings, ...h } })),
-      activateLicense: (key) => set({ licenseKey: String(key || '').trim().toUpperCase(), licenseActive: true }),
+      activateLicense: (key, profile = {}) => {
+        const normalizedKey = String(key || '').trim().toUpperCase()
+        const previousKey = String(get().licenseKey || '').trim().toUpperCase()
+        const licenseChanged = normalizedKey && normalizedKey !== previousKey
+
+        if (licenseChanged) {
+          resetBusinessDataForNewLicense()
+        }
+
+        set((state) => {
+          const deploymentMode = normalizeLicensedDeploymentMode(profile?.deploymentMode, state.cloudSubscription?.deploymentMode)
+          const modules = normalizeLicensedModules(profile?.modules, state.modules)
+          const nextActiveModule = modules[state.activeModule]
+            ? state.activeModule
+            : (LICENSED_MODULE_KEYS.find((moduleName) => modules[moduleName]) || 'grocery')
+
+          return {
+            licenseKey: normalizedKey,
+            licenseActive: true,
+            modules,
+            activeModule: nextActiveModule,
+            cloudSubscription: {
+              ...state.cloudSubscription,
+              deploymentMode,
+              status: deploymentMode === 'cloud'
+                ? (state.cloudSubscription?.status === 'inactive' ? 'active' : state.cloudSubscription?.status)
+                : 'inactive',
+            },
+            cloudSettings: {
+              ...state.cloudSettings,
+              enabled: deploymentMode === 'cloud' ? state.cloudSettings.enabled : false,
+            },
+          }
+        })
+      },
+      applyLicenseFeatures: (profile = {}) =>
+        set((state) => {
+          const deploymentMode = normalizeLicensedDeploymentMode(profile?.deploymentMode, state.cloudSubscription?.deploymentMode)
+          const modules = normalizeLicensedModules(profile?.modules, state.modules)
+          const nextActiveModule = modules[state.activeModule]
+            ? state.activeModule
+            : (LICENSED_MODULE_KEYS.find((moduleName) => modules[moduleName]) || 'grocery')
+
+          return {
+            modules,
+            activeModule: nextActiveModule,
+            cloudSubscription: {
+              ...state.cloudSubscription,
+              deploymentMode,
+              status: deploymentMode === 'cloud'
+                ? (state.cloudSubscription?.status === 'inactive' ? 'active' : state.cloudSubscription?.status)
+                : 'inactive',
+            },
+            cloudSettings: {
+              ...state.cloudSettings,
+              enabled: deploymentMode === 'cloud' ? state.cloudSettings.enabled : false,
+            },
+          }
+        }),
       setLanguage: (lang) => set({ language: lang }),
       setTheme: (theme) => set({ theme: theme === 'dark' ? 'dark' : 'light' }),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
@@ -1139,6 +1215,25 @@ export const useActivityStore = create(
     { name: 'paxxmo-activities', storage: createJSONStorage(() => idbStorage) }
   )
 )
+
+export function resetBusinessDataForNewLicense() {
+  try {
+    if (typeof window !== 'undefined' && window.require) {
+      window.require('electron').ipcRenderer.invoke('reset-business-data').catch(() => {})
+    }
+  } catch (_) {}
+
+  usePOSStore.setState({ cart: [], customer: null, discount: 0, discountType: 'percent', note: '', heldTransactions: [] })
+  useTableStore.setState((state) => ({
+    tables: state.tables.map((table) => ({ ...table, status: 'available', order: null, waiter: null, sessionId: null, guests: 0, qrToken: null })),
+    kots: [],
+  }))
+  useProductStore.setState({ products: [] })
+  useRecipeStore.setState({ recipes: {} })
+  useSalesStore.setState({ sales: [] })
+  useCustomerStore.setState({ customers: [] })
+  useActivityStore.setState({ logs: [] })
+}
 
 // Boot: load users from DB into store on startup
 if (typeof window !== 'undefined' && window.require) {

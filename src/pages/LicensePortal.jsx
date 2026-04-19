@@ -12,6 +12,23 @@ const PLAN_OPTIONS = [
   { value: 'enterprise', label: 'Enterprise' },
 ]
 
+const MODULE_OPTIONS = [
+  { key: 'grocery', label: 'Grocery' },
+  { key: 'restaurant', label: 'Restaurant' },
+  { key: 'clothing', label: 'Clothing' },
+  { key: 'pharmacy', label: 'Pharmacy' },
+  { key: 'wholesale', label: 'Wholesale' },
+  { key: 'online', label: 'Online' },
+]
+
+function normalizeLicenseModules(modules = {}) {
+  const source = modules && typeof modules === 'object' ? modules : {}
+  return MODULE_OPTIONS.reduce((acc, item) => {
+    acc[item.key] = source[item.key] !== false
+    return acc
+  }, {})
+}
+
 function formatDate(value) {
   if (!value) return '-'
   const parsed = new Date(value)
@@ -72,6 +89,8 @@ function emptyForm() {
     expiresAt: '',
     notes: '',
     active: true,
+    deploymentMode: 'local',
+    modules: normalizeLicenseModules(),
     maxDevices: 1,
     activatedDevices: [],
     deviceId: '',
@@ -234,6 +253,8 @@ export default function LicensePortal() {
       expiresAt: license.expiresAt ? String(license.expiresAt).slice(0, 10) : '',
       notes: license.notes || '',
       active: Boolean(license.active),
+      deploymentMode: String(license.deploymentMode || 'local').trim().toLowerCase() === 'cloud' ? 'cloud' : 'local',
+      modules: normalizeLicenseModules(license.modules),
       maxDevices: Number(license.maxDevices || 1),
       activatedDevices: devices,
       deviceId: license.deviceId || '',
@@ -599,6 +620,10 @@ export default function LicensePortal() {
           <Input label="Business Name" value={editing.businessName} onChange={(e) => setEditing((prev) => ({ ...prev, businessName: e.target.value }))} />
           <Input label="Business Email" value={editing.businessEmail} onChange={(e) => setEditing((prev) => ({ ...prev, businessEmail: e.target.value }))} />
           <Input label="Owner Name" value={editing.ownerName} onChange={(e) => setEditing((prev) => ({ ...prev, ownerName: e.target.value }))} />
+          <Select label="Deployment Mode" value={editing.deploymentMode} onChange={(e) => setEditing((prev) => ({ ...prev, deploymentMode: e.target.value === 'cloud' ? 'cloud' : 'local' }))}>
+            <option value="local">Offline / Local</option>
+            <option value="cloud">Cloud Sync</option>
+          </Select>
           <Input
             label="Allowed Devices"
             type="number"
@@ -613,6 +638,27 @@ export default function LicensePortal() {
             <option value="true">Active</option>
             <option value="false">Inactive</option>
           </Select>
+          <div className="md:col-span-2 rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-300">POS Modules</p>
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2">
+              {MODULE_OPTIONS.map((item) => (
+                <label key={item.key} className="flex items-center gap-2 rounded-lg border border-white/10 bg-slate-950/50 px-3 py-2 text-xs text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={editing.modules?.[item.key] !== false}
+                    onChange={(e) => setEditing((prev) => ({
+                      ...prev,
+                      modules: {
+                        ...normalizeLicenseModules(prev.modules),
+                        [item.key]: e.target.checked,
+                      },
+                    }))}
+                  />
+                  {item.label}
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="md:col-span-2 rounded-2xl border border-white/10 bg-slate-900/60 p-4">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Activated Devices & IPs</p>
             {editing.activatedDevices?.length ? (

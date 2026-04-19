@@ -230,6 +230,21 @@ ipcMain.handle('delete-product', (event, id) => {
   stmt.run({ id });
 });
 
+// Clear business transactional product data when switching to a different license key.
+ipcMain.handle('reset-business-data', () => {
+  const transaction = db.transaction(() => {
+    db.prepare('DELETE FROM product_batches').run();
+    db.prepare('DELETE FROM products').run();
+  });
+
+  try {
+    transaction();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to reset local business data' };
+  }
+});
+
 // ─── Batch IPC Handlers ─────────────────────────────────────────────────────
 
 ipcMain.handle('get-product-batches', (event, productId) => {

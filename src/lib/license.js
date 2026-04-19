@@ -24,6 +24,20 @@ function normalizeLicenseKey(key) {
   return String(key || '').trim().toUpperCase()
 }
 
+const MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online']
+
+function normalizeDeploymentMode(value) {
+  return String(value || '').trim().toLowerCase() === 'cloud' ? 'cloud' : 'local'
+}
+
+function normalizeLicenseModules(modules = {}) {
+  const source = modules && typeof modules === 'object' ? modules : {}
+  return MODULE_KEYS.reduce((acc, key) => {
+    acc[key] = source[key] !== false
+    return acc
+  }, {})
+}
+
 function clampMaxDevices(value) {
   const parsed = parseInt(value, 10)
   if (!Number.isFinite(parsed) || parsed < 1) return 1
@@ -93,6 +107,8 @@ export async function checkCurrentLicenseAccess() {
 function serializeLicenseDoc(data = {}, key = '') {
   const normalizedKey = normalizeLicenseKey(key || data.key)
   const activatedDevices = normalizeActivatedDevices(data.activatedDevices, data)
+  const deploymentMode = normalizeDeploymentMode(data.deploymentMode)
+  const modules = normalizeLicenseModules(data.modules)
   return {
     key: normalizedKey,
     businessName: String(data.businessName || '').trim(),
@@ -100,6 +116,8 @@ function serializeLicenseDoc(data = {}, key = '') {
     ownerName: String(data.ownerName || '').trim(),
     plan: String(data.plan || 'basic').trim().toLowerCase(),
     active: Boolean(data.active),
+    deploymentMode,
+    modules,
     expiresAt: data.expiresAt || null,
     maxDevices: clampMaxDevices(data.maxDevices),
     activatedDevices,
@@ -222,6 +240,8 @@ export async function validateLicense(key) {
       businessName: data.businessName || 'My Store',
       plan:         data.plan         || 'basic',
       expiresAt:    data.expiresAt    || null,
+      deploymentMode: normalizeDeploymentMode(data.deploymentMode),
+      modules: normalizeLicenseModules(data.modules),
       maxDevices,
       activeDeviceCount: activatedDevices.length,
     }
@@ -244,6 +264,8 @@ export async function listLicenses() {
       return {
         key: item.id,
         ...data,
+        deploymentMode: normalizeDeploymentMode(data.deploymentMode),
+        modules: normalizeLicenseModules(data.modules),
         maxDevices: clampMaxDevices(data.maxDevices),
         activatedDevices,
       }

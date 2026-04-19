@@ -34,7 +34,7 @@ export default function Activation() {
     if (result.valid) {
       setStatus('success')
       setMessage(`Welcome, ${result.businessName}!`)
-      setTimeout(() => activateLicense(key), 1200)
+      setTimeout(() => activateLicense(key, result), 1200)
     } else {
       setStatus('error')
       setMessage(result.error)
