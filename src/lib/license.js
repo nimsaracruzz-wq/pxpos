@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app'
-import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore'
+import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection } from 'firebase/firestore'
 
 const FIREBASE_CONFIG = {
   apiKey:            'AIzaSyAXL7uGGsIXNbwHHnNkr0D2zfvU4E8Cmc8',
@@ -13,6 +13,50 @@ const FIREBASE_CONFIG = {
 function getDB() {
   const app = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIG)
   return getFirestore(app)
+}
+
+function nowIso() {
+  return new Date().toISOString()
+}
+
+function normalizeLicenseKey(key) {
+  return String(key || '').trim().toUpperCase()
+}
+
+function randomGroup(length = 4) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const source = typeof globalThis !== 'undefined' ? globalThis.crypto : null
+  const bytes = new Uint8Array(length)
+
+  if (source?.getRandomValues) {
+    source.getRandomValues(bytes)
+    return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join('')
+  }
+
+  return Array.from({ length }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
+}
+
+export function generateLicenseKey(prefix = 'CEY') {
+  return [String(prefix || 'CEY').trim().toUpperCase(), randomGroup(), randomGroup(), randomGroup(), randomGroup()].join('-')
+}
+
+function serializeLicenseDoc(data = {}, key = '') {
+  const normalizedKey = normalizeLicenseKey(key || data.key)
+  return {
+    key: normalizedKey,
+    businessName: String(data.businessName || '').trim(),
+    businessEmail: String(data.businessEmail || '').trim(),
+    ownerName: String(data.ownerName || '').trim(),
+    plan: String(data.plan || 'basic').trim().toLowerCase(),
+    active: Boolean(data.active),
+    expiresAt: data.expiresAt || null,
+    deviceId: String(data.deviceId || '').trim(),
+    activatedAt: data.activatedAt || null,
+    lastSeen: data.lastSeen || null,
+    notes: String(data.notes || '').trim(),
+    createdAt: data.createdAt || nowIso(),
+    updatedAt: nowIso(),
+  }
 }
 
 // Get this machine's unique hardware fingerprint via Electron IPC
@@ -95,6 +139,61 @@ export async function validateLicense(key) {
       error: 'Cannot reach license server. Check your internet connection and try again.',
     }
   }
+}
+
+export async function listLicenses() {
+  const db = getDB()
+  const snap = await getDocs(collection(db, 'licenses'))
+  return snap.docs
+    .map((item) => ({ key: item.id, ...item.data() }))
+    .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
+}
+
+export async function upsertLicense(license) {
+  const db = getDB()
+  const key = normalizeLicenseKey(license?.key)
+  if (!key) throw new Error('License key is required')
+
+  const ref = doc(db, 'licenses', key)
+  const existing = await getDoc(ref)
+  const payload = serializeLicenseDoc({
+    ...(existing.exists() ? existing.data() : {}),
+    ...license,
+    key,
+    createdAt: existing.exists() ? (existing.data()?.createdAt || nowIso()) : nowIso(),
+  }, key)
+
+  await setDoc(ref, payload, { merge: true })
+  return payload
+}
+
+export async function setLicenseStatus(key, active) {
+  const db = getDB()
+  const normalizedKey = normalizeLicenseKey(key)
+  if (!normalizedKey) throw new Error('License key is required')
+
+  const ref = doc(db, 'licenses', normalizedKey)
+  await setDoc(ref, { active: Boolean(active), updatedAt: nowIso() }, { merge: true })
+  return { key: normalizedKey, active: Boolean(active) }
+}
+
+export async function resetLicenseDevice(key) {
+  const db = getDB()
+  const normalizedKey = normalizeLicenseKey(key)
+  if (!normalizedKey) throw new Error('License key is required')
+
+  const ref = doc(db, 'licenses', normalizedKey)
+  await setDoc(ref, { deviceId: '', activatedAt: null, lastSeen: null, updatedAt: nowIso() }, { merge: true })
+  return { key: normalizedKey }
+}
+
+export async function deleteLicense(key) {
+  const db = getDB()
+  const normalizedKey = normalizeLicenseKey(key)
+  if (!normalizedKey) throw new Error('License key is required')
+
+  await deleteDoc(doc(db, 'licenses', normalizedKey))
+  return { key: normalizedKey }
 }
 
 /**

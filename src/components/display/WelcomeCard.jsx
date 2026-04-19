@@ -1,5 +1,7 @@
+import { BRAND } from '@/lib/brand'
+
 export default function WelcomeCard({
-  title = 'Welcome to Paxxmo POS',
+  title = `Welcome to ${BRAND.name} POS`,
   subtitle = 'Ready to order',
   message = 'Your order will be prepared with care',
   className = '',

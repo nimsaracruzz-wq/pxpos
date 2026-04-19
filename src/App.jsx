@@ -23,6 +23,7 @@ import WebOrders from '@/pages/WebOrders'
 import Refunds from '@/pages/Refunds'
 import PublicMenu from '@/pages/PublicMenu'
 import CustomerScreen from '@/pages/CustomerScreen'
+import LicensePortal from '@/pages/LicensePortal'
 import Login from '@/pages/Login'
 import Activation from '@/pages/Activation'
 import { useAuthStore, useAppStore } from '@/store'
@@ -53,10 +54,11 @@ export default function App() {
   })()
   const isHashPublicMenuRoute = hashPath.startsWith('/menu/') || hashPath.includes('/menu/')
   const isHashCustomerRoute = hashPath.startsWith('/customer-screen')
+  const isHashLicensePortalRoute = hashPath.startsWith('/license-portal')
   const hasQrQueryMarkers = /(?:\?|&)(table|session|token|guests)=/i.test(decodedHref)
   const hasMenuMarker = /(?:\/|#|%2f)menu(?:\/|%2f)/i.test(decodedHref)
   const forcePublicMenuFromHref = hasMenuMarker || (hasQrQueryMarkers && /menu/i.test(decodedHref))
-  const Router = isFileProtocol || isHashPublicMenuRoute || isHashCustomerRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
+  const Router = isFileProtocol || isHashPublicMenuRoute || isHashCustomerRoute || isHashLicensePortalRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
   const currentPath = (() => {
     if (typeof window === 'undefined') return '/'
     if (isFileProtocol) {
@@ -66,6 +68,9 @@ export default function App() {
       return hashPath || '/'
     }
     if (isHashCustomerRoute) {
+      return hashPath || '/'
+    }
+    if (isHashLicensePortalRoute) {
       return hashPath || '/'
     }
     return window.location.pathname || '/'
@@ -78,6 +83,10 @@ export default function App() {
     currentPath.startsWith('/customer-screen') ||
     /customer-screen/i.test(decodedHref) ||
     isHashCustomerRoute
+  const isLicensePortalRoute =
+    currentPath.startsWith('/license-portal') ||
+    /license-portal/i.test(decodedHref) ||
+    isHashLicensePortalRoute
 
   useEffect(() => {
     const isDark = theme === 'dark'
@@ -147,6 +156,19 @@ export default function App() {
     )
   }
 
+  // Standalone super-admin license portal (separate from POS login flow)
+  if (isLicensePortalRoute) {
+    return (
+      <Router>
+        <Routes>
+          <Route path="/license-portal" element={<LicensePortal />} />
+          <Route path="*" element={<LicensePortal />} />
+        </Routes>
+        <ToastContainer />
+      </Router>
+    )
+  }
+
   // Step 1 — License gate (must activate before anything else)
   if (!licenseActive) {
     return (
@@ -198,6 +220,9 @@ export default function App() {
 
           {/* Settings — owner and above */}
           <Route path="/settings" element={<AccessGuard permission="manage_settings"><Settings /></AccessGuard>} />
+
+          {/* Super Admin License Portal */}
+          <Route path="/license-portal" element={<AccessGuard permission="manage_license"><LicensePortal /></AccessGuard>} />
         </Routes>
       </Layout>
       <ToastContainer />

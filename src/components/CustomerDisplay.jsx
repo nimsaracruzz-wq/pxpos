@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
+import { BRAND } from '@/lib/brand'
 import { useAppStore } from '@/store'
 import MediaCarousel from '@/components/display/MediaCarousel'
 import OrderStatusCard from '@/components/display/OrderStatusCard'
@@ -166,10 +167,10 @@ export default function CustomerDisplay({
         ? 'pending'
         : 'pending'
 
-  const welcomeTitle = useCustomDisplay && resolvedDisplaySettings.headline ? resolvedDisplaySettings.headline : 'Welcome to Paxxmo POS'
+  const welcomeTitle = useCustomDisplay && resolvedDisplaySettings.headline ? resolvedDisplaySettings.headline : `Welcome to ${BRAND.name} POS`
   const welcomeSubtitle = useCustomDisplay && resolvedDisplaySettings.subtitle ? resolvedDisplaySettings.subtitle : 'Ready to order'
   const welcomeMessage = useCustomDisplay && resolvedDisplaySettings.message ? resolvedDisplaySettings.message : 'Your order will be prepared with care'
-  const displayTitle = useCustomDisplay && resolvedDisplaySettings.bannerTitle ? resolvedDisplaySettings.bannerTitle : title
+  const displayTitle = useCustomDisplay && resolvedDisplaySettings.bannerTitle ? resolvedDisplaySettings.bannerTitle : title || BRAND.displayTitle
   const carouselInterval = Number(useCustomDisplay ? (resolvedDisplaySettings.autoplayInterval || 5000) : 5000)
 
   const qrInstructions = method === 'helaqr'
@@ -237,6 +238,16 @@ export default function CustomerDisplay({
             />
           )}
 
+          {displayStatus === 'paid' && (
+            <div className="floating-card accent-glow p-5 max-w-sm border border-emerald-300/40 bg-emerald-300/10">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-emerald-200">Payment Successful</p>
+              <h3 className="mt-2 text-3xl font-black text-white leading-tight">Thank you for your purchase!</h3>
+              <p className="mt-2 text-sm text-slate-200">
+                Your payment has been received successfully. Please come again.
+              </p>
+            </div>
+          )}
+
           {displayStatus === 'checkout' && (
             <div className="floating-card p-5 max-w-sm border border-emerald-500/40 bg-emerald-500/10">
               <p className="text-[11px] uppercase tracking-[0.18em] text-emerald-300">TOTAL</p>
@@ -272,7 +283,7 @@ export default function CustomerDisplay({
           <QRPaymentCard
             qrData={(displayStatus === 'checkout' || displayStatus === 'paying') && method === 'helaqr' ? qrData : ''}
             amount={amount}
-            merchantName="Paxxmo POS"
+            merchantName={BRAND.fullName}
             instructions={qrInstructions}
             active={(displayStatus === 'checkout' || displayStatus === 'paying') && method === 'helaqr'}
             className="animate-in fade-in slide-in-from-top-4 duration-500 delay-150 mt-auto"

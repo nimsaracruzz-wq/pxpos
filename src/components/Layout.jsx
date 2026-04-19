@@ -12,6 +12,7 @@ import { format } from 'date-fns'
 import { markQRCodeOrderProcessed, subscribeToQRCodeOrders, syncToCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
 import { useI18n } from '@/lib/i18n'
 import { checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
+import { BRAND } from '@/lib/brand'
 
 const CORE_NAV = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav_dashboard', permission: null },
@@ -492,7 +493,7 @@ export function Layout({ children }) {
           </div>
           {!collapsed && (
             <div className="overflow-hidden">
-              <p className="font-black text-gray-900 text-base leading-tight tracking-tight">Paxxmo</p>
+              <p className="font-black text-gray-900 text-base leading-tight tracking-tight">{BRAND.name}</p>
               <p className="text-[11px] text-green-600 font-bold uppercase tracking-widest">POS System</p>
             </div>
           )}

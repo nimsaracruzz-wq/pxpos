@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { BRAND } from '@/lib/brand'
 
 export default function MediaCarousel({
   items = [],
@@ -90,7 +91,7 @@ export default function MediaCarousel({
         }}
       >
         <div className="max-w-2xl">
-          <p className="text-xs uppercase tracking-[0.2em] text-cyan-200/80 mb-2">Paxxmo Display</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-cyan-200/80 mb-2">{BRAND.name} Display</p>
           <h3 className="text-4xl font-black text-white mt-2 max-w-xl">{item.title || 'Premium POS Experience'}</h3>
           {item.description && <p className="text-sm text-slate-200/90 mt-3 max-w-xl">{item.description}</p>}
           {item.tag && (

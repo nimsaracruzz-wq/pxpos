@@ -1,11 +1,12 @@
 import { QrCode } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { formatCurrency } from '@/lib/utils'
+import { BRAND } from '@/lib/brand'
 
 export default function QRPaymentCard({
   qrData = '',
   amount = 0,
-  merchantName = 'Paxxmo POS',
+  merchantName = BRAND.fullName,
   instructions = 'Scan the QR and approve in your banking app',
   className = '',
   active = false,

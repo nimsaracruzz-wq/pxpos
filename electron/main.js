@@ -307,6 +307,7 @@ function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    title: 'CeyPos POS',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -371,7 +372,7 @@ function createWindow() {
       x: bounds?.x,
       y: bounds?.y,
       autoHideMenuBar: true,
-      title: 'Paxxmo Customer Display',
+      title: 'CeyPos Customer Display',
       backgroundColor: '#0b1220',
       webPreferences: {
         nodeIntegration: true,

@@ -1,7 +1,7 @@
 {
-  "name": "paxxmo-pos",
+  "name": "ceypos-pos",
   "version": "1.0.0",
-  "description": "Paxxmo POS - Modern Desktop Point of Sale System",
+  "description": "CeyPos - Modern Desktop Point of Sale System",
   "private": true,
   "main": "electron/main.js",
   "type": "module",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.paxxmo.pos",
-    "productName": "Paxxmo POS",
+    "productName": "CeyPos POS",
     "directories": {
       "output": "dist-electron"
     },

@@ -3,6 +3,7 @@ import { X, Printer, CheckCircle2 } from 'lucide-react'
 import Barcode from 'react-barcode'
 import { formatCurrency } from '@/lib/utils'
 import { tr } from '@/lib/i18n'
+import { BRAND } from '@/lib/brand'
 
 const PRINT_STYLES = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -216,7 +217,7 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, compact = 
         <div>{businessInfo.phone}</div>
         <div>Visit us again at {businessInfo.name}</div>
         <div style={{ fontSize: '8.5px', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#aaa', marginTop: 6 }}>
-          Powered by Paxxmo POS
+          Powered by {BRAND.fullName}
         </div>
       </div>
     </div>

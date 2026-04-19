@@ -393,7 +393,7 @@ function CustomerDisplayTab() {
               label="Welcome Title"
               value={customerDisplaySettings?.headline || ''}
               onChange={(e) => updateCustomerDisplaySettings({ headline: e.target.value })}
-              placeholder="Welcome to Paxxmo POS"
+              placeholder="Welcome to CeyPos POS"
             />
             <Input
               label="Welcome Subtitle"
@@ -818,7 +818,7 @@ export default function Settings() {
           <div className="flex flex-col gap-4">
             <div className="card p-4 mb-2" style={{ background: 'linear-gradient(135deg,#f0fdf4,#dcfce7)', border: '1px solid #bbf7d0' }}>
               <p className="text-sm text-green-700 font-medium">
-                🧩 Enable or disable business modules to customize Paxxmo POS for your specific needs.
+                🧩 Enable or disable business modules to customize CeyPos POS for your specific needs.
               </p>
             </div>
             {MODULE_LIST.map(({ id, icon: Icon, label, description, color }) => (
@@ -921,7 +921,7 @@ export default function Settings() {
                       'Printer Test',
                       `<div style="text-align: center; margin: 20px 0;">
                         <h2 style="font-size: 20px; font-weight: bold; margin-bottom: 10px;">Printer Test</h2>
-                        <p style="font-size: 14px; color: #555;">Paxxmo POS System</p>
+                        <p style="font-size: 14px; color: #555;">CeyPos POS System</p>
                         <hr style="margin: 15px 0; border: none; border-top: 1px dashed #ccc;" />
                         <p style="font-size: 12px; color: #777;">Test printed at: <br/>${new Date().toLocaleString()}</p>
                         <p style="font-size: 10px; color: #aaa; margin-top: 10px;">Status: SUCCESS</p>
@@ -1193,7 +1193,7 @@ export default function Settings() {
                   <CheckCircle size={24} className="text-green-600" />
                   <div>
                     <p className="font-bold text-green-800">License Active</p>
-                    <p className="text-xs text-green-600">Your Paxxmo POS is fully activated</p>
+                    <p className="text-xs text-green-600">Your CeyPos POS is fully activated</p>
                   </div>
                 </div>
               ) : (

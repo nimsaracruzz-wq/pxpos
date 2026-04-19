@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Lock, ScanBarcode, User, Loader2, Zap, Eye, EyeOff, Check, AlertCircle } from 'lucide-react'
 import { useAuthStore } from '@/store'
 import { useToast } from '@/components/Toast'
+import { BRAND } from '@/lib/brand'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -83,7 +84,7 @@ export default function Login() {
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-[18px] bg-gradient-to-br from-[#16a34a] to-[#15803d] shadow-[0_8px_32px_rgba(22,163,74,0.4)]">
               <Zap size={30} color="white" />
             </div>
-            <h1 className="text-[30px] font-extrabold leading-none text-[#f0fdf4]" style={{ fontFamily: 'Syne, DM Sans, sans-serif' }}>Paxxmo <span className="text-[#22c55e]">POS</span></h1>
+            <h1 className="text-[30px] font-extrabold leading-none text-[#f0fdf4]" style={{ fontFamily: 'Syne, DM Sans, sans-serif' }}>{BRAND.name} <span className="text-[#22c55e]">POS</span></h1>
             <p className="mt-2 text-[13px] text-[#6b8f72]">Secure staff login</p>
           </div>
 
@@ -182,7 +183,9 @@ export default function Login() {
           </button>
 
           <div className="flex items-center justify-center gap-2 border-t border-[#1f3325] pt-4 text-[11px] text-[#2d4a35]">
-            <span>Paxxmo POS</span>
+            <span>{BRAND.name}</span>
+            <span className="h-1 w-1 rounded-full bg-[#2d4a35]" />
+            <span>{BRAND.website}</span>
             <span className="h-1 w-1 rounded-full bg-[#2d4a35]" />
             <span>Secure Login</span>
             <span className="h-1 w-1 rounded-full bg-[#2d4a35]" />

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { get, set, del } from 'idb-keyval'
 import { generateReceiptNumber } from '@/lib/utils'
 import { publishCustomerDisplaySettings } from '@/lib/customerDisplayChannel'
+import { BRAND } from '@/lib/brand'
 
 const APP_STORE_VERSION = 4
 const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
@@ -11,8 +12,8 @@ const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL 
 function createCustomerDisplayDefaults() {
   return {
     enabled: true,
-    bannerTitle: 'Customer Display',
-    headline: 'Welcome to Paxxmo POS',
+    bannerTitle: `${BRAND.name} Customer Display`,
+    headline: `Welcome to ${BRAND.name} POS`,
     subtitle: 'Ready to order',
     message: 'Your order will be prepared with care',
     autoplayInterval: 5000,
@@ -102,10 +103,10 @@ export const useAppStore = create(
         online: false,
       },
       businessInfo: {
-        name: 'Paxxmo Store',
+        name: BRAND.name,
         address: '123 Main Street, Colombo',
         phone: '+94 11 234 5678',
-        email: 'store@paxxmo.com',
+        email: `support@${BRAND.website}`,
         taxId: 'TAX-001',
         storeId: uuidv4(), // Random ID for QR links (not Tax ID)
         publicMenuBaseUrl: DEFAULT_PUBLIC_MENU_BASE_URL,
@@ -125,7 +126,7 @@ export const useAppStore = create(
       },
       receiptSettings: {
         header: 'Thank you for shopping!',
-        footer: 'Powered by Paxxmo POS',
+        footer: `Powered by ${BRAND.fullName}`,
         showBarcode: true,
         showTax: true,
         autoPrint: false,
@@ -293,6 +294,17 @@ export const useAppStore = create(
       migrate: (persistedState) => ({
         ...persistedState,
         businessInfo: ensureBusinessStoreId(persistedState?.businessInfo || {}),
+        receiptSettings: {
+          header: persistedState?.receiptSettings?.header || 'Thank you for shopping!',
+          footer: persistedState?.receiptSettings?.footer === 'Powered by Paxxmo POS'
+            ? `Powered by ${BRAND.fullName}`
+            : (persistedState?.receiptSettings?.footer || `Powered by ${BRAND.fullName}`),
+          showBarcode: persistedState?.receiptSettings?.showBarcode ?? true,
+          showTax: persistedState?.receiptSettings?.showTax ?? true,
+          autoPrint: persistedState?.receiptSettings?.autoPrint ?? false,
+          showCashier: persistedState?.receiptSettings?.showCashier ?? true,
+          logoUrl: persistedState?.receiptSettings?.logoUrl ?? null,
+        },
         helaQRSettings: {
           enabled: false,
           testMode: true,
@@ -308,6 +320,9 @@ export const useAppStore = create(
       onRehydrateStorage: () => (state) => {
         if (state?.businessInfo) {
           state.businessInfo = ensureBusinessStoreId(state.businessInfo)
+        }
+        if (state?.receiptSettings?.footer === 'Powered by Paxxmo POS') {
+          state.receiptSettings.footer = `Powered by ${BRAND.fullName}`
         }
         if (state?.customerDisplaySettings) {
           state.customerDisplaySettings = normalizeCustomerDisplaySettings(state.customerDisplaySettings)

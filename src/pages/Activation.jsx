@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { validateLicense } from '@/lib/license'
 import { useAppStore } from '@/store'
+import { BRAND } from '@/lib/brand'
 
 export default function Activation() {
   const [key, setKey]         = useState('')
@@ -102,7 +103,7 @@ export default function Activation() {
             <span style={{ fontSize: '32px' }}>🔐</span>
           </div>
           <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 700, color: isDark ? '#fff' : '#334155', letterSpacing: '-0.5px' }}>
-            Paxxmo POS
+            {BRAND.name} POS
           </h1>
           <p style={{ margin: '8px 0 0', color: isDark ? 'rgba(255,255,255,0.5)' : '#475569', fontSize: '14px' }}>
             Enter your license key to activate
@@ -188,7 +189,7 @@ export default function Activation() {
         <p style={{ marginTop: '32px', color: isDark ? 'rgba(255,255,255,0.3)' : '#64748b', fontSize: '12px' }}>
           Don't have a license?{' '}
           <span style={{ color: isDark ? 'rgba(99,102,241,0.8)' : '#0f766e', cursor: 'pointer' }}>
-            Contact Paxxmo Support
+            Contact {BRAND.name} Support
           </span>
         </p>
       </div>
