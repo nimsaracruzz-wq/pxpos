@@ -242,13 +242,13 @@ export const useAppStore = create(
         set((s) => ({ receiptSettings: { ...s.receiptSettings, ...r } })),
       updateHardwareSettings: (h) =>
         set((s) => ({ hardwareSettings: { ...s.hardwareSettings, ...h } })),
-      activateLicense: (key, profile = {}) => {
+      activateLicense: async (key, profile = {}) => {
         const normalizedKey = String(key || '').trim().toUpperCase()
         const previousKey = String(get().licenseKey || '').trim().toUpperCase()
         const licenseChanged = normalizedKey && normalizedKey !== previousKey
 
         if (licenseChanged) {
-          resetBusinessDataForNewLicense()
+          await resetBusinessDataForNewLicense()
         }
 
         set((state) => {
@@ -1266,13 +1266,43 @@ export const useActivityStore = create(
   )
 )
 
-export function resetBusinessDataForNewLicense() {
+export async function resetBusinessDataForNewLicense() {
+  // ── Step 1: Sync everything to Cloud BEFORE clearing ─────────────────────
+  try {
+    const { syncToCloud } = await import('@/lib/firebase')
+    await syncToCloud()
+  } catch (_) {}
+
+  // ── Step 2: Save a full local JSON backup to the device ───────────────────
+  try {
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      products:   useProductStore.getState().products,
+      sales:      useSalesStore.getState().sales,
+      customers:  useCustomerStore.getState().customers,
+      logs:       useActivityStore.getState().logs,
+      recipes:    useRecipeStore.getState().recipes,
+      tables:     useTableStore.getState().tables,
+      kots:       useTableStore.getState().kots,
+    }
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `paxxmo-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 2000)
+  } catch (_) {}
+
+  // ── Step 3: Clear SQLite on Electron ──────────────────────────────────────
   try {
     if (typeof window !== 'undefined' && window.require) {
       window.require('electron').ipcRenderer.invoke('reset-business-data').catch(() => {})
     }
   } catch (_) {}
 
+  // ── Step 4: Clear Zustand stores (in-memory + IndexedDB) ─────────────────
   usePOSStore.setState({ cart: [], customer: null, discount: 0, discountType: 'percent', note: '', heldTransactions: [] })
   useTableStore.setState((state) => ({
     tables: state.tables.map((table) => ({ ...table, status: 'available', order: null, waiter: null, sessionId: null, guests: 0, qrToken: null })),
