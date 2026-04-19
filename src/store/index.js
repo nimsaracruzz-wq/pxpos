@@ -5,6 +5,7 @@ import { get, set, del } from 'idb-keyval'
 import { generateReceiptNumber } from '@/lib/utils'
 import { publishCustomerDisplaySettings } from '@/lib/customerDisplayChannel'
 import { BRAND } from '@/lib/brand'
+import { defaultFirebaseConfigJson } from '@/lib/defaultFirebaseConfig'
 
 const APP_STORE_VERSION = 4
 const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || 'https://ceypos.paxxmo.com').trim()
@@ -166,7 +167,7 @@ export const useAppStore = create(
       cloudSettings: {
         enabled: false,
         provider: 'firebase',
-        firebaseConfig: '',
+        firebaseConfig: defaultFirebaseConfigJson(),
         syncInterval: 10,
       },
       helaQRSettings: {
@@ -392,10 +393,24 @@ export const useAppStore = create(
           ...(persistedState?.helaQRSettings || {}),
         },
         customerDisplaySettings: normalizeCustomerDisplaySettings(persistedState?.customerDisplaySettings || {}),
+        cloudSettings: {
+          enabled: persistedState?.cloudSettings?.enabled ?? false,
+          provider: persistedState?.cloudSettings?.provider || 'firebase',
+          firebaseConfig: persistedState?.cloudSettings?.firebaseConfig || defaultFirebaseConfigJson(),
+          syncInterval: persistedState?.cloudSettings?.syncInterval || 10,
+        },
       }),
       onRehydrateStorage: () => (state) => {
         if (state?.businessInfo) {
           state.businessInfo = ensureBusinessStoreId(state.businessInfo)
+        }
+        if (state?.cloudSettings) {
+          state.cloudSettings = {
+            enabled: state.cloudSettings.enabled ?? false,
+            provider: state.cloudSettings.provider || 'firebase',
+            firebaseConfig: state.cloudSettings.firebaseConfig || defaultFirebaseConfigJson(),
+            syncInterval: state.cloudSettings.syncInterval || 10,
+          }
         }
         if (state?.receiptSettings?.footer === 'Powered by Paxxmo POS') {
           state.receiptSettings.footer = `Powered by ${BRAND.fullName}`

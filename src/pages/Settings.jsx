@@ -11,6 +11,7 @@ import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
 import { useToast } from '@/components/Toast'
 import { testCloudConnection } from '@/lib/firebase'
 import { validateLicense } from '@/lib/license'
+import { defaultFirebaseConfigJson } from '@/lib/defaultFirebaseConfig'
 import { cn } from '@/lib/utils'
 import UserBarcodeGenerator, { generateUserBarcode } from '@/components/UserBarcodeGenerator'
 import MediaCarousel from '@/components/display/MediaCarousel'
@@ -1049,7 +1050,7 @@ export default function Settings() {
                         Firebase Config (JSON format)
                       </label>
                       <textarea
-                        value={cloudSettings.firebaseConfig}
+                        value={cloudSettings.firebaseConfig || defaultFirebaseConfigJson()}
                         onChange={(e) => updateCloudSettings({ firebaseConfig: e.target.value })}
                         placeholder={'{\n  "apiKey": "AIzaSy...",\n  "authDomain": "...",\n  "projectId": "..."\n}'}
                         className="input-base text-xs font-mono w-full h-32 p-3 resize-y"

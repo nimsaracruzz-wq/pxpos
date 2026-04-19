@@ -1,17 +1,10 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app'
 import { getFirestore, doc, setDoc, deleteDoc, collection, writeBatch, addDoc, onSnapshot, query, where, updateDoc, serverTimestamp, limit } from 'firebase/firestore'
 import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore } from '@/store'
+import { DEFAULT_FIREBASE_CONFIG } from '@/lib/defaultFirebaseConfig'
 
 // ─── Paxxmo POS – Firebase Project Config ───────────────────────────────────
-const HARDCODED_CONFIG = {
-  apiKey:            "AIzaSyAXL7uGGsIXNbwHHnNkr0D2zfvU4E8Cmc8",
-  authDomain:        "pxpos-7d777.firebaseapp.com",
-  projectId:         "pxpos-7d777",
-  storageBucket:     "pxpos-7d777.firebasestorage.app",
-  messagingSenderId: "759604307830",
-  appId:             "1:759604307830:web:09668e1b4e2ff4740cbc57",
-  measurementId:     "G-N0F75CXC4W",
-}
+const HARDCODED_CONFIG = DEFAULT_FIREBASE_CONFIG
 
 let db = null
 
