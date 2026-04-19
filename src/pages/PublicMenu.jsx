@@ -222,7 +222,7 @@ export default function PublicMenu() {
     }
   }, [decodedStoreId])
 
-  const productSource = cloudProductsLoaded ? cloudProducts : products
+  const productSource = cloudProductsLoaded && cloudProducts.length > 0 ? cloudProducts : products
   const menuItems = useMemo(() => {
     const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
     const activeProducts = productSource.filter((p) => p?.active)
