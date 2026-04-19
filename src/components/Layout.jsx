@@ -9,7 +9,7 @@ import {
 import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStore } from '@/store'
 import { cn, generateReceiptNumber } from '@/lib/utils'
 import { format } from 'date-fns'
-import { markQRCodeOrderProcessed, subscribeToQRCodeOrders, syncToCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { markQRCodeOrderProcessed, resolveCloudTenantId, subscribeToQRCodeOrders, syncToCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
 import { useI18n } from '@/lib/i18n'
 import { checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
 import { BRAND } from '@/lib/brand'
@@ -61,7 +61,7 @@ export function Layout({ children }) {
   const [lastSyncTime, setLastSyncTime] = useState(new Date())
   const ingestedQrOrderIdsRef = useRef(new Set())
 
-  const { businessInfo, modules, activeModule, setActiveModule, theme, toggleTheme, cloudSubscription } = useAppStore()
+  const { businessInfo, licenseKey, modules, activeModule, setActiveModule, theme, toggleTheme, cloudSubscription } = useAppStore()
   const isDark = theme === 'dark'
   const { products, getLowStock, getOutOfStock } = useProductStore()
   const { currentUser, logout, hasPermission } = useAuthStore()
@@ -81,7 +81,7 @@ export function Layout({ children }) {
   }
 
   useEffect(() => {
-    const storeId = String(businessInfo?.storeId || businessInfo?.taxId || '').trim()
+    const storeId = resolveCloudTenantId(businessInfo, licenseKey)
     if (!storeId) return () => {}
 
     const unsubscribe = subscribeToQRCodeOrders(storeId, async (incoming) => {
@@ -259,7 +259,7 @@ export function Layout({ children }) {
     })
 
     return () => unsubscribe()
-  }, [businessInfo?.storeId, businessInfo?.taxId])
+  }, [businessInfo?.storeId, businessInfo?.taxId, licenseKey])
 
   useEffect(() => {
     const checker = async () => {

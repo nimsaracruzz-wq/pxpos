@@ -15,14 +15,13 @@ const HARDCODED_CONFIG = {
 
 let db = null
 
+export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
+  return String(licenseKey || businessInfo?.storeId || businessInfo?.taxId || '').trim()
+}
+
 function getCloudStoreIds(businessInfo = {}, licenseKey = '') {
-  return Array.from(
-    new Set(
-      [businessInfo?.storeId, businessInfo?.taxId, licenseKey]
-        .map((value) => String(value || '').trim())
-        .filter(Boolean)
-    )
-  )
+  const tenantId = resolveCloudTenantId(businessInfo, licenseKey)
+  return tenantId ? [tenantId] : []
 }
 
 function getEffectiveFirebaseConfig() {
@@ -112,8 +111,7 @@ export async function syncToCloud() {
       return false
     }
 
-    // Each business is isolated by one or more store IDs.
-    // Write to the new storeId plus any legacy taxId/licenseKey path so mobile can read either.
+    // Each business/client is isolated by a single tenant key (license key preferred).
     const storeIds = getCloudStoreIds(businessInfo, licenseKey)
     const storeId = storeIds[0] || 'default-store'
     const batch   = writeBatch(db)
@@ -153,8 +151,8 @@ export async function testCloudConnection() {
   if (!ok) throw new Error('Failed to initialise Firebase. Check your project config.')
 
   try {
-    const { businessInfo } = useAppStore.getState()
-    const storeId = businessInfo.storeId || businessInfo.taxId || 'default-store'
+    const { businessInfo, licenseKey } = useAppStore.getState()
+    const storeId = resolveCloudTenantId(businessInfo, licenseKey) || 'default-store'
     await setDoc(
       doc(db, 'stores', storeId),
       { lastConnectionTest: new Date().toISOString() },

@@ -9,7 +9,7 @@ import CustomerDisplay from '@/components/CustomerDisplay'
 import { v4 as uuidv4 } from 'uuid'
 import { QRCodeSVG } from 'qrcode.react'
 import { ArrowRightLeft } from 'lucide-react'
-import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, resolveCloudTenantId, updateQRCodeOrderStatus } from '@/lib/firebase'
 import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
@@ -331,14 +331,14 @@ function TableActionModal({ table, onOpen, onReserve, onCancelReserve, onClose }
 
 // ─── QR Code Modal ─────────────────────────────────────────────────────────────
 function QRModal({ table, onClose }) {
-  const { businessInfo } = useAppStore()
+  const { businessInfo, licenseKey } = useAppStore()
   const toast = useToast()
 
   const configuredBase = (businessInfo.publicMenuBaseUrl || import.meta.env.VITE_PUBLIC_MENU_BASE_URL || '').trim()
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
   const fallbackOrigin = browserOrigin && !browserOrigin.startsWith('file://') ? browserOrigin : 'http://localhost:5173'
   const baseOrigin = (configuredBase || fallbackOrigin).replace(/\/$/, '')
-  const storeKey = (businessInfo.storeId || '').trim() // Use random store ID, not tax ID
+  const storeKey = resolveCloudTenantId(businessInfo, licenseKey)
   const storeId = encodeURIComponent(storeKey)
   const tableQuery = encodeURIComponent(String(table.number || ''))
   const sessionQuery = encodeURIComponent(String(table.sessionId || `table-${table.number || 'na'}`))
@@ -659,11 +659,12 @@ function TableManagerModal({ tables, onAdd, onEdit, onDelete, onClose }) {
 // ─── Order Modal ───────────────────────────────────────────────────────────────
 function OrderModal({ table, onClose, onSettle, onCheckout }) {
   const { tables, updateTable, addKOT, transferTable, clearTable } = useTableStore()
-  const { taxSettings, serviceChargeSettings, businessInfo } = useAppStore()
+  const { taxSettings, serviceChargeSettings, businessInfo, licenseKey } = useAppStore()
   const { products } = useProductStore()
   const { currentUser } = useAuthStore()
   const { addLog } = useActivityStore()
   const toast = useToast()
+  const tenantStoreId = resolveCloudTenantId(businessInfo, licenseKey)
   
   const restaurantProducts = products.filter(p => p.active && p.module === 'restaurant')
 
@@ -775,7 +776,7 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
       : (order?.qrOrderId ? [String(order.qrOrderId)] : [])
 
     let nextQrIds = existingQrIds
-    const syncStoreId = String(businessInfo?.storeId || businessInfo?.taxId || '').trim()
+    const syncStoreId = tenantStoreId
     if (syncStoreId && table?.number && table?.sessionId && table?.qrToken) {
       const publishResult = await publishPOSOrderToQRCodeHistory({
         storeId: syncStoreId,
@@ -815,7 +816,7 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
       notes: normalizedNotes,
       qrOrderIds: nextQrIds,
       qrOrderId: nextQrIds.length ? nextQrIds[nextQrIds.length - 1] : order?.qrOrderId,
-      storeId: order?.storeId || String(businessInfo?.storeId || businessInfo?.taxId || ''),
+      storeId: order?.storeId || tenantStoreId,
       source: order?.source || 'pos',
     }
     addKOT({ tableId: table.id, tableNumber: table.number, items: mergedItems, notes: normalizedNotes, waiter })
@@ -1083,9 +1084,9 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
              const movedGuests = Number(table.guests || 0)
              // Execute transfer
              transferTable(table.id, newTable.id)
-             if (businessInfo?.storeId && movedSession && movedToken) {
-               publishTableQrSession(businessInfo.storeId, newTable.number, movedSession, movedToken, { guests: movedGuests })
-               clearTableQrSession(businessInfo.storeId, table.number, {
+             if (tenantStoreId && movedSession && movedToken) {
+               publishTableQrSession(tenantStoreId, newTable.number, movedSession, movedToken, { guests: movedGuests })
+               clearTableQrSession(tenantStoreId, table.number, {
                  status: 'moved',
                  movedToTable: String(newTable.number),
                  session: movedSession,
@@ -1190,10 +1191,11 @@ export default function Tables() {
   const { addSale } = useSalesStore()
   const { products, adjustStock } = useProductStore()
   const { deductIngredients } = useRecipeStore()
-  const { businessInfo, taxSettings, serviceChargeSettings } = useAppStore()
+  const { businessInfo, licenseKey, taxSettings, serviceChargeSettings } = useAppStore()
   const { currentUser } = useAuthStore()
   const { addLog } = useActivityStore()
   const toast = useToast()
+  const tenantStoreId = resolveCloudTenantId(businessInfo, licenseKey)
 
   const [selectedTable, setSelectedTable] = useState(null)
   const [actionTable, setActionTable] = useState(null)
@@ -1312,8 +1314,8 @@ export default function Tables() {
       )
     }
 
-    if (businessInfo?.storeId && selectedTable?.number) {
-      clearTableQrSession(businessInfo.storeId, selectedTable.number)
+    if (tenantStoreId && selectedTable?.number) {
+      clearTableQrSession(tenantStoreId, selectedTable.number)
     }
 
     // Clear the table
@@ -1376,7 +1378,7 @@ export default function Tables() {
     const emptyOrder = { items: [], waiter: '', notes: '', subtotal: 0, tax: 0, serviceCharge: 0, total: 0 }
     updateTable(actionTable.id, { status: 'occupied', guests, sessionId, qrToken, order: emptyOrder })
     setSelectedTable({ ...actionTable, status: 'occupied', guests, sessionId, qrToken, order: emptyOrder })
-    publishTableQrSession(businessInfo?.storeId, actionTable.number, sessionId, qrToken, { guests })
+    publishTableQrSession(tenantStoreId, actionTable.number, sessionId, qrToken, { guests })
     addLog('Opened Table', `Table ${actionTable.number} opened for ${guests} guests`, currentUser?.name || 'System')
     setActionTable(null)
   }
@@ -1440,8 +1442,8 @@ export default function Tables() {
       toast.error('Only available tables can be deleted')
       return
     }
-    if (businessInfo?.storeId && table.number) {
-      clearTableQrSession(businessInfo.storeId, table.number)
+    if (tenantStoreId && table.number) {
+      clearTableQrSession(tenantStoreId, table.number)
     }
     deleteTable(id)
     toast.success(`Table ${table.number} deleted`)
