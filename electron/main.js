@@ -261,7 +261,8 @@ ipcMain.handle('reset-business-data', () => {
 // ─── Backup & Restore Database ──────────────────────────────────────────────
 ipcMain.handle('download-sqlite-backup', async () => {
   try {
-    const { filePath } = await dialog.showSaveDialog({
+    const win = BrowserWindow.getAllWindows()[0];
+    const { filePath } = await dialog.showSaveDialog(win, {
       title: 'Save Paxxmo SQLite Backup',
       defaultPath: `paxxmo_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.db`,
       filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }]
@@ -280,7 +281,8 @@ ipcMain.handle('download-sqlite-backup', async () => {
 
 ipcMain.handle('restore-sqlite-backup', async () => {
   try {
-    const { filePaths } = await dialog.showOpenDialog({
+    const win = BrowserWindow.getAllWindows()[0];
+    const { filePaths } = await dialog.showOpenDialog(win, {
       title: 'Restore Paxxmo SQLite Backup',
       filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }],
       properties: ['openFile']
