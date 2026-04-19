@@ -154,7 +154,7 @@ ipcMain.handle('users-delete', (event, { id }) => {
 // ─── Device Fingerprint ─────────────────────────────────────────────────────
 // Returns a stable hardware ID for this machine — used for license locking.
 // Same machine always returns the same ID.
-ipcMain.handle('get-device-id', () => {
+function getMachineDeviceId() {
   const raw = [
     os.hostname(),
     os.platform(),
@@ -162,6 +162,36 @@ ipcMain.handle('get-device-id', () => {
     os.cpus()[0]?.model || 'cpu',
   ].join('|');
   return crypto.createHash('sha256').update(raw).digest('hex').substring(0, 32);
+}
+
+function getLocalIPv4Addresses() {
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+
+  Object.values(interfaces).forEach((entries) => {
+    (entries || []).forEach((entry) => {
+      if (!entry || entry.internal) return;
+      if (entry.family !== 'IPv4') return;
+      if (!entry.address) return;
+      ips.push(entry.address);
+    });
+  });
+
+  return Array.from(new Set(ips));
+}
+
+ipcMain.handle('get-device-id', () => {
+  return getMachineDeviceId();
+});
+
+ipcMain.handle('get-device-metadata', () => {
+  const ipAddresses = getLocalIPv4Addresses();
+  return {
+    deviceId: getMachineDeviceId(),
+    hostname: os.hostname(),
+    ipAddresses,
+    lastIp: ipAddresses[0] || '',
+  };
 });
 
 // ─── Product IPC Handlers ───────────────────────────────────────────────────

@@ -24,6 +24,45 @@ function statusVariant(active) {
   return active ? 'green' : 'red'
 }
 
+function normalizeActivatedDevices(license = {}) {
+  const list = Array.isArray(license.activatedDevices) ? license.activatedDevices : []
+  if (list.length > 0) {
+    return list
+      .map((item) => ({
+        deviceId: String(item?.deviceId || '').trim(),
+        hostname: String(item?.hostname || '').trim(),
+        ipAddresses: Array.isArray(item?.ipAddresses)
+          ? item.ipAddresses.map((ip) => String(ip || '').trim()).filter(Boolean)
+          : [],
+        lastIp: String(item?.lastIp || '').trim(),
+        activatedAt: item?.activatedAt || null,
+        lastSeen: item?.lastSeen || null,
+      }))
+      .filter((item) => item.deviceId)
+  }
+
+  if (license.deviceId) {
+    return [{
+      deviceId: String(license.deviceId || '').trim(),
+      hostname: '',
+      ipAddresses: [],
+      lastIp: '',
+      activatedAt: license.activatedAt || null,
+      lastSeen: license.lastSeen || null,
+    }]
+  }
+
+  return []
+}
+
+function deviceIps(device = {}) {
+  const fromArray = Array.isArray(device.ipAddresses) ? device.ipAddresses.filter(Boolean) : []
+  const withLast = device.lastIp && !fromArray.includes(device.lastIp)
+    ? [...fromArray, device.lastIp]
+    : fromArray
+  return withLast.length > 0 ? withLast.join(', ') : '-'
+}
+
 function emptyForm() {
   return {
     key: generateLicenseKey('CEY'),
@@ -34,6 +73,8 @@ function emptyForm() {
     expiresAt: '',
     notes: '',
     active: true,
+    maxDevices: 1,
+    activatedDevices: [],
     deviceId: '',
     activatedAt: '',
     lastSeen: '',
@@ -222,6 +263,7 @@ export default function LicensePortal() {
   }
 
   const openEdit = (license) => {
+    const devices = normalizeActivatedDevices(license)
     setEditing({
       key: license.key || '',
       businessName: license.businessName || '',
@@ -231,6 +273,8 @@ export default function LicensePortal() {
       expiresAt: license.expiresAt ? String(license.expiresAt).slice(0, 10) : '',
       notes: license.notes || '',
       active: Boolean(license.active),
+      maxDevices: Number(license.maxDevices || 1),
+      activatedDevices: devices,
       deviceId: license.deviceId || '',
       activatedAt: license.activatedAt || '',
       lastSeen: license.lastSeen || '',
@@ -248,6 +292,7 @@ export default function LicensePortal() {
     try {
       await upsertLicense({
         ...editing,
+        maxDevices: Math.max(1, parseInt(editing.maxDevices, 10) || 1),
         expiresAt: editing.expiresAt ? new Date(editing.expiresAt).toISOString() : null,
       })
       toast.success('License saved')
@@ -518,14 +563,17 @@ export default function LicensePortal() {
                     <th className="text-left px-4 py-3">Business</th>
                     <th className="text-left px-4 py-3">Plan</th>
                     <th className="text-left px-4 py-3">Status</th>
-                    <th className="text-left px-4 py-3">Device</th>
+                    <th className="text-left px-4 py-3">Devices</th>
                     <th className="text-left px-4 py-3">Expiry</th>
                     <th className="text-left px-4 py-3">Last Seen</th>
                     <th className="text-right px-4 py-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredLicenses.map((license) => (
+                  {filteredLicenses.map((license) => {
+                    const devices = normalizeActivatedDevices(license)
+                    const maxDevices = Math.max(1, Number(license.maxDevices || 1))
+                    return (
                     <tr key={license.key} className="border-t border-white/10 hover:bg-white/5">
                       <td className="px-4 py-4 align-top">
                         <div className="font-mono font-bold text-white flex items-center gap-2">
@@ -548,11 +596,25 @@ export default function LicensePortal() {
                           {license.active ? 'Active' : 'Inactive'}
                         </Badge>
                         <div className="text-[11px] text-slate-400 mt-1">
-                          {license.deviceId ? 'Device locked' : 'No device lock'}
+                          {devices.length} / {maxDevices} device slots used
                         </div>
                       </td>
-                      <td className="px-4 py-4 align-top font-mono text-xs text-slate-300 max-w-[180px] break-all">
-                        {license.deviceId || '-'}
+                      <td className="px-4 py-4 align-top text-xs text-slate-300 max-w-[280px]">
+                        {devices.length === 0 ? (
+                          <span className="font-mono">-</span>
+                        ) : (
+                          <div className="space-y-2">
+                            {devices.slice(0, 2).map((device) => (
+                              <div key={device.deviceId} className="rounded-lg border border-white/10 bg-slate-900/60 p-2">
+                                <p className="font-mono break-all text-[11px] text-white">{device.deviceId}</p>
+                                <p className="text-[11px] text-slate-400">IP: {deviceIps(device)}</p>
+                              </div>
+                            ))}
+                            {devices.length > 2 && (
+                              <p className="text-[11px] text-emerald-300">+{devices.length - 2} more device(s)</p>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-4 align-top text-slate-300">
                         {formatDate(license.expiresAt)}
@@ -578,7 +640,7 @@ export default function LicensePortal() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
@@ -600,12 +662,37 @@ export default function LicensePortal() {
           <Input label="Business Name" value={editing.businessName} onChange={(e) => setEditing((prev) => ({ ...prev, businessName: e.target.value }))} />
           <Input label="Business Email" value={editing.businessEmail} onChange={(e) => setEditing((prev) => ({ ...prev, businessEmail: e.target.value }))} />
           <Input label="Owner Name" value={editing.ownerName} onChange={(e) => setEditing((prev) => ({ ...prev, ownerName: e.target.value }))} />
+          <Input
+            label="Allowed Devices"
+            type="number"
+            min={1}
+            max={50}
+            value={editing.maxDevices}
+            onChange={(e) => setEditing((prev) => ({ ...prev, maxDevices: Math.min(50, Math.max(1, parseInt(e.target.value, 10) || 1)) }))}
+          />
           <Input label="Expiry Date" type="date" value={editing.expiresAt} onChange={(e) => setEditing((prev) => ({ ...prev, expiresAt: e.target.value }))} />
           <Input label="Device ID" value={editing.deviceId} onChange={(e) => setEditing((prev) => ({ ...prev, deviceId: e.target.value }))} placeholder="Leave blank for unassigned" />
           <Select label="Status" value={String(Boolean(editing.active))} onChange={(e) => setEditing((prev) => ({ ...prev, active: e.target.value === 'true' }))}>
             <option value="true">Active</option>
             <option value="false">Inactive</option>
           </Select>
+          <div className="md:col-span-2 rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Activated Devices & IPs</p>
+            {editing.activatedDevices?.length ? (
+              <div className="mt-3 space-y-2">
+                {editing.activatedDevices.map((device) => (
+                  <div key={device.deviceId} className="rounded-xl border border-white/10 bg-slate-950/70 p-3">
+                    <p className="font-mono text-xs text-white break-all">{device.deviceId}</p>
+                    <p className="text-xs text-slate-400 mt-1">Host: {device.hostname || '-'}</p>
+                    <p className="text-xs text-slate-400 mt-1">IP: {deviceIps(device)}</p>
+                    <p className="text-xs text-slate-500 mt-1">Activated: {formatDate(device.activatedAt)} · Last seen: {formatDate(device.lastSeen)}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 mt-3">No devices have activated this license yet.</p>
+            )}
+          </div>
           <div className="md:col-span-2">
             <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Notes</label>
             <textarea

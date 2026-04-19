@@ -24,6 +24,46 @@ function normalizeLicenseKey(key) {
   return String(key || '').trim().toUpperCase()
 }
 
+function clampMaxDevices(value) {
+  const parsed = parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed < 1) return 1
+  return Math.min(parsed, 50)
+}
+
+function normalizeIpAddresses(items) {
+  if (!Array.isArray(items)) return []
+  return Array.from(new Set(items.map((item) => String(item || '').trim()).filter(Boolean)))
+}
+
+function normalizeActivatedDevices(items = [], legacy = {}) {
+  const devices = Array.isArray(items)
+    ? items
+      .map((item) => ({
+        deviceId: String(item?.deviceId || '').trim(),
+        hostname: String(item?.hostname || '').trim(),
+        ipAddresses: normalizeIpAddresses(item?.ipAddresses),
+        lastIp: String(item?.lastIp || '').trim(),
+        activatedAt: item?.activatedAt || null,
+        lastSeen: item?.lastSeen || null,
+      }))
+      .filter((item) => item.deviceId)
+    : []
+
+  if (devices.length === 0 && legacy?.deviceId) {
+    const legacyIps = normalizeIpAddresses(legacy?.ipAddresses)
+    devices.push({
+      deviceId: String(legacy.deviceId || '').trim(),
+      hostname: String(legacy.hostname || '').trim(),
+      ipAddresses: legacyIps,
+      lastIp: String(legacy.lastIp || legacyIps[0] || '').trim(),
+      activatedAt: legacy.activatedAt || null,
+      lastSeen: legacy.lastSeen || null,
+    })
+  }
+
+  return devices
+}
+
 function randomGroup(length = 4) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   const source = typeof globalThis !== 'undefined' ? globalThis.crypto : null
@@ -52,6 +92,7 @@ export async function checkCurrentLicenseAccess() {
 
 function serializeLicenseDoc(data = {}, key = '') {
   const normalizedKey = normalizeLicenseKey(key || data.key)
+  const activatedDevices = normalizeActivatedDevices(data.activatedDevices, data)
   return {
     key: normalizedKey,
     businessName: String(data.businessName || '').trim(),
@@ -60,8 +101,10 @@ function serializeLicenseDoc(data = {}, key = '') {
     plan: String(data.plan || 'basic').trim().toLowerCase(),
     active: Boolean(data.active),
     expiresAt: data.expiresAt || null,
-    deviceId: String(data.deviceId || '').trim(),
-    activatedAt: data.activatedAt || null,
+    maxDevices: clampMaxDevices(data.maxDevices),
+    activatedDevices,
+    deviceId: String(data.deviceId || activatedDevices[0]?.deviceId || '').trim(),
+    activatedAt: data.activatedAt || activatedDevices[0]?.activatedAt || null,
     lastSeen: data.lastSeen || null,
     notes: String(data.notes || '').trim(),
     createdAt: data.createdAt || nowIso(),
@@ -69,14 +112,25 @@ function serializeLicenseDoc(data = {}, key = '') {
   }
 }
 
-// Get this machine's unique hardware fingerprint via Electron IPC
-async function getDeviceId() {
+async function getDeviceContext() {
+  let metadata = null
   try {
     if (typeof window !== 'undefined' && window.require) {
-      return await window.require('electron').ipcRenderer.invoke('get-device-id')
+      metadata = await window.require('electron').ipcRenderer.invoke('get-device-metadata')
     }
   } catch (_) {}
-  return 'dev-browser-mode' // fallback for browser dev only
+
+  const fallbackDeviceId = (() => {
+    if (typeof window === 'undefined') return 'dev-browser-mode'
+    return String(window.location?.host || 'dev-browser-mode').trim() || 'dev-browser-mode'
+  })()
+
+  return {
+    deviceId: String(metadata?.deviceId || fallbackDeviceId).trim() || 'dev-browser-mode',
+    hostname: String(metadata?.hostname || '').trim(),
+    ipAddresses: normalizeIpAddresses(metadata?.ipAddresses),
+    lastIp: String(metadata?.lastIp || '').trim(),
+  }
 }
 
 /**
@@ -94,7 +148,9 @@ export async function validateLicense(key) {
     const clean    = String(key || '').trim().toUpperCase()
     const ref      = doc(db, 'licenses', clean)
     const snap     = await getDoc(ref)
-    const deviceId = await getDeviceId()
+    const device = await getDeviceContext()
+    const deviceId = device.deviceId
+    const timestamp = nowIso()
 
     // ── 1. Key must exist ────────────────────────────────────────────────────
     if (!snap.exists()) {
@@ -116,31 +172,58 @@ export async function validateLicense(key) {
       }
     }
 
-    // ── 4. Device lock — one license = one PC ────────────────────────────────
-    if (data.deviceId && data.deviceId !== deviceId) {
+    // ── 4. Device lock — one license can allow multiple managed devices ─────
+    const maxDevices = clampMaxDevices(data.maxDevices)
+    const activatedDevices = normalizeActivatedDevices(data.activatedDevices, data)
+    const existingIndex = activatedDevices.findIndex((item) => item.deviceId === deviceId)
+
+    if (existingIndex === -1 && activatedDevices.length >= maxDevices) {
       return {
         valid: false,
-        error: 'This license is already activated on another computer. Contact support to transfer.',
+        error: `This license already has ${maxDevices} activated device(s). Increase allowed devices or reset one from the portal.`,
       }
     }
 
-    // ── First activation: record device + timestamp ──────────────────────────
-    if (!data.deviceId || !data.activatedAt) {
-      await setDoc(ref, {
-        deviceId,
-        activatedAt: new Date().toISOString(),
-        lastSeen:    new Date().toISOString(),
-      }, { merge: true })
+    if (existingIndex >= 0) {
+      const current = activatedDevices[existingIndex]
+      activatedDevices[existingIndex] = {
+        ...current,
+        hostname: device.hostname || current.hostname || '',
+        ipAddresses: normalizeIpAddresses([
+          ...(current.ipAddresses || []),
+          ...(device.ipAddresses || []),
+          device.lastIp,
+        ]),
+        lastIp: device.lastIp || current.lastIp || '',
+        lastSeen: timestamp,
+      }
     } else {
-      // Update last-seen timestamp silently (for your admin visibility)
-      setDoc(ref, { lastSeen: new Date().toISOString() }, { merge: true }).catch(() => {})
+      activatedDevices.push({
+        deviceId,
+        hostname: device.hostname,
+        ipAddresses: normalizeIpAddresses([...(device.ipAddresses || []), device.lastIp]),
+        lastIp: device.lastIp,
+        activatedAt: timestamp,
+        lastSeen: timestamp,
+      })
     }
+
+    await setDoc(ref, {
+      maxDevices,
+      activatedDevices,
+      deviceId: activatedDevices[0]?.deviceId || deviceId,
+      activatedAt: activatedDevices[0]?.activatedAt || timestamp,
+      lastSeen: timestamp,
+      updatedAt: timestamp,
+    }, { merge: true })
 
     return {
       valid:        true,
       businessName: data.businessName || 'My Store',
       plan:         data.plan         || 'basic',
       expiresAt:    data.expiresAt    || null,
+      maxDevices,
+      activeDeviceCount: activatedDevices.length,
     }
   } catch (err) {
     console.error('[License]', err)
@@ -155,7 +238,16 @@ export async function listLicenses() {
   const db = getDB()
   const snap = await getDocs(collection(db, 'licenses'))
   return snap.docs
-    .map((item) => ({ key: item.id, ...item.data() }))
+    .map((item) => {
+      const data = item.data() || {}
+      const activatedDevices = normalizeActivatedDevices(data.activatedDevices, data)
+      return {
+        key: item.id,
+        ...data,
+        maxDevices: clampMaxDevices(data.maxDevices),
+        activatedDevices,
+      }
+    })
     .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
 }
 
@@ -193,7 +285,7 @@ export async function resetLicenseDevice(key) {
   if (!normalizedKey) throw new Error('License key is required')
 
   const ref = doc(db, 'licenses', normalizedKey)
-  await setDoc(ref, { deviceId: '', activatedAt: null, lastSeen: null, updatedAt: nowIso() }, { merge: true })
+  await setDoc(ref, { deviceId: '', activatedAt: null, lastSeen: null, activatedDevices: [], updatedAt: nowIso() }, { merge: true })
   return { key: normalizedKey }
 }
 
