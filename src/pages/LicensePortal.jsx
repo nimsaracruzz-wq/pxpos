@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Copy, KeyRound, Plus, RefreshCcw, Search, ShieldCheck, ShieldOff, Trash2, Pencil, RotateCcw, Loader2 } from 'lucide-react'
+import { Copy, KeyRound, Plus, RefreshCcw, Search, ShieldCheck, ShieldOff, Trash2, Pencil, RotateCcw, Loader2, LogOut, Lock, UserPlus, Eye, EyeOff } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { Button, Input, Modal, Select, Badge } from '@/components/ui'
 import { BRAND } from '@/lib/brand'
 import { deleteLicense, generateLicenseKey, listLicenses, resetLicenseDevice, setLicenseStatus, upsertLicense } from '@/lib/license'
+import { clearPortalSession, createPortalAdmin, getPortalSession, listPortalAdmins, verifyPortalLogin } from '@/lib/portalAuth'
 
 const PLAN_OPTIONS = [
   { value: 'basic', label: 'Basic' },
@@ -40,7 +41,16 @@ function emptyForm() {
 }
 
 export default function LicensePortal() {
+  const portalUrl = 'https://ceypos.paxxmo.com/license-portal'
   const toast = useToast()
+  const [portalSession, setPortalSession] = useState(() => getPortalSession())
+  const [portalAdmins, setPortalAdmins] = useState([])
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authSaving, setAuthSaving] = useState(false)
+  const [authError, setAuthError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [setupForm, setSetupForm] = useState({ fullName: '', username: '', password: '' })
   const [licenses, setLicenses] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -48,6 +58,15 @@ export default function LicensePortal() {
   const [activeOnly, setActiveOnly] = useState('all')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(emptyForm())
+
+  const loadPortalAdmins = async () => {
+    try {
+      const items = await listPortalAdmins()
+      setPortalAdmins(items)
+    } catch (error) {
+      toast.error(error?.message || 'Unable to load portal admins')
+    }
+  }
 
   const loadLicenses = async () => {
     setLoading(true)
@@ -62,8 +81,76 @@ export default function LicensePortal() {
   }
 
   useEffect(() => {
-    loadLicenses()
+    const init = async () => {
+      setAuthLoading(true)
+      await loadPortalAdmins()
+      const session = getPortalSession()
+      setPortalSession(session)
+      setAuthLoading(false)
+      if (session) {
+        await loadLicenses()
+      }
+    }
+    init()
   }, [])
+
+  const handleLogin = async (event) => {
+    event.preventDefault()
+    setAuthSaving(true)
+    setAuthError('')
+    try {
+      const result = await verifyPortalLogin(loginForm)
+      if (!result.success) {
+        setAuthError(result.error || 'Login failed')
+        toast.error(result.error || 'Login failed')
+        return
+      }
+      setPortalSession(result.user)
+      toast.success('Portal login successful')
+      setLoginForm({ username: '', password: '' })
+      await loadLicenses()
+    } catch (error) {
+      const message = error?.message || 'Unable to login'
+      setAuthError(message)
+      toast.error(message)
+    } finally {
+      setAuthSaving(false)
+    }
+  }
+
+  const handleCreateFirstAdmin = async (event) => {
+    event.preventDefault()
+    setAuthSaving(true)
+    setAuthError('')
+    try {
+      await createPortalAdmin({
+        username: setupForm.username,
+        password: setupForm.password,
+        fullName: setupForm.fullName,
+        role: 'super_admin',
+      })
+      toast.success('Portal admin created')
+      setSetupForm({ fullName: '', username: '', password: '' })
+      await loadPortalAdmins()
+      const result = await verifyPortalLogin({ username: setupForm.username, password: setupForm.password })
+      if (result.success) {
+        setPortalSession(result.user)
+        await loadLicenses()
+      }
+    } catch (error) {
+      const message = error?.message || 'Unable to create portal admin'
+      setAuthError(message)
+      toast.error(message)
+    } finally {
+      setAuthSaving(false)
+    }
+  }
+
+  const handleLogout = () => {
+    clearPortalSession()
+    setPortalSession(null)
+    toast.success('Logged out')
+  }
 
   const stats = useMemo(() => {
     const total = licenses.length
@@ -184,6 +271,108 @@ export default function LicensePortal() {
     }
   }
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
+        <div className="flex items-center gap-2 text-slate-300">
+          <Loader2 className="animate-spin" size={18} /> Loading portal...
+        </div>
+      </div>
+    )
+  }
+
+  if (!portalSession) {
+    const hasAdmins = portalAdmins.length > 0
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-6">
+          <div className="text-center mb-6">
+            <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">{BRAND.name} Portal</p>
+            <h1 className="text-3xl font-black mt-2">License Management Login</h1>
+            <p className="text-sm text-slate-300 mt-2">
+              Sign in to manage licenses or create the first super-admin portal account.
+            </p>
+          </div>
+
+          {!hasAdmins ? (
+            <form className="space-y-4" onSubmit={handleCreateFirstAdmin}>
+              <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4 text-sm text-emerald-100">
+                No portal admin exists yet. Create the first super-admin account below.
+              </div>
+              <Input
+                label="Your Name"
+                value={setupForm.fullName}
+                onChange={(e) => setSetupForm((prev) => ({ ...prev, fullName: e.target.value }))}
+                placeholder="e.g. Nimsara"
+              />
+              <Input
+                label="Username"
+                value={setupForm.username}
+                onChange={(e) => setSetupForm((prev) => ({ ...prev, username: e.target.value }))}
+                placeholder="superadmin"
+              />
+              <div className="relative">
+                <Input
+                  label="Password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={setupForm.password}
+                  onChange={(e) => setSetupForm((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Choose a strong password"
+                />
+                <button
+                  type="button"
+                  className="absolute right-3 top-[42px] text-slate-400 hover:text-white"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              {authError && <p className="text-sm text-red-300">{authError}</p>}
+              <Button type="submit" className="w-full" disabled={authSaving}>
+                {authSaving ? <Loader2 className="animate-spin" size={15} /> : <UserPlus size={15} />}
+                Create Portal Admin
+              </Button>
+            </form>
+          ) : (
+            <form className="space-y-4" onSubmit={handleLogin}>
+              <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-sm text-slate-300">
+                Portal access is restricted to authorized admins only.
+              </div>
+              <Input
+                label="Username"
+                value={loginForm.username}
+                onChange={(e) => setLoginForm((prev) => ({ ...prev, username: e.target.value }))}
+                placeholder="superadmin"
+              />
+              <div className="relative">
+                <Input
+                  label="Password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Enter portal password"
+                />
+                <button
+                  type="button"
+                  className="absolute right-3 top-[42px] text-slate-400 hover:text-white"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              {authError && <p className="text-sm text-red-300">{authError}</p>}
+              <Button type="submit" className="w-full" disabled={authSaving}>
+                {authSaving ? <Loader2 className="animate-spin" size={15} /> : <Lock size={15} />}
+                Login to Portal
+              </Button>
+            </form>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-full overflow-y-auto p-6 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 text-white">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -196,10 +385,16 @@ export default function LicensePortal() {
                 Create, activate, revoke, and transfer licenses for {BRAND.name}. Data is stored in your Firebase <span className="font-mono">licenses</span> collection.
               </p>
               <p className="text-xs text-slate-400 mt-2">
-                Direct link: <span className="font-mono text-emerald-300">{typeof window !== 'undefined' ? `${window.location.origin}/license-portal` : '/license-portal'}</span>
+                Direct link: <span className="font-mono text-emerald-300">{portalUrl}</span>
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                Logged in as: <span className="text-white font-semibold">{portalSession.fullName || portalSession.username}</span>
               </p>
             </div>
             <div className="flex gap-2 flex-wrap">
+              <Button variant="ghost" onClick={handleLogout} disabled={saving}>
+                <LogOut size={15} /> Logout
+              </Button>
               <Button variant="secondary" onClick={loadLicenses} disabled={loading || saving}>
                 <RefreshCcw size={15} /> Refresh
               </Button>
