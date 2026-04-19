@@ -222,28 +222,27 @@ export default function PublicMenu() {
     }
   }, [decodedStoreId])
 
-  // Use local products if available (means we are previewing on the POS itself). 
-  // If empty (means we are on a customer's phone), fallback to cloud-synced items.
-  const productSource = products.length > 0 ? products : cloudProducts
+  // Detect if running inside Electron (POS desktop app) vs mobile browser.
+  // In Electron, local products are always fresh from SQLite — use them.
+  // In a mobile browser, local IndexedDB products are STALE CACHE — always use cloudProducts.
+  const isElectron = typeof window !== 'undefined' && Boolean(window?.require)
+  const productSource = isElectron ? products : cloudProducts
+
   const menuItems = useMemo(() => {
     const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
 
-    // Step 1: Only active products. If it's a cloud product, filter by storeId too.
     const scopedActiveProducts = productSource.filter((p) => {
       if (!p?.active) return false
-      // Only apply storeId restriction to cloud products, local ones belong here natively.
-      if (productSource === cloudProducts && decodedStoreId) {
+      // On mobile (cloud products): filter by storeId so each store sees only its own menu
+      if (!isElectron && decodedStoreId) {
         return String(p.storeId || '').trim() === decodedStoreId
       }
       return true
     })
 
-    // Step 2: Prefer restaurant-module items. Fall back to ALL scoped active items
-    // only if no restaurant items exist (i.e. store hasn't set module yet).
     const restaurantProducts = scopedActiveProducts.filter((p) => {
       const moduleValue = String(p.module || '').trim().toLowerCase()
       if (moduleValue === 'restaurant' || moduleValue === 'resturant') return true
-      // Backward compat: dishes imported before module field existed.
       if (!moduleValue) {
         const categoryValue = String(p.category || '').trim().toLowerCase()
         return restaurantCategories.has(categoryValue)
@@ -252,7 +251,7 @@ export default function PublicMenu() {
     })
 
     return restaurantProducts.length > 0 ? restaurantProducts : scopedActiveProducts
-  }, [decodedStoreId, productSource, cloudProductsLoaded, cloudProducts])
+  }, [decodedStoreId, productSource, isElectron, cloudProductsLoaded, cloudProducts])
   const categories = useMemo(() => ['All', ...new Set(menuItems.map((item) => item.category).filter(Boolean))], [menuItems])
 
   const filteredItems = useMemo(() => {
@@ -588,7 +587,9 @@ export default function PublicMenu() {
   }
 
   // Loading POS menu from the cloud (only show if local products are also empty)
-  if (!cloudProductsLoaded && products.length === 0) {
+  // On mobile: show loading screen while Firebase hasn't responded yet
+  // On Electron (POS): skip this - local products load instantly
+  if (!isElectron && !cloudProductsLoaded) {
     return (
       <div
         className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"
@@ -607,9 +608,9 @@ export default function PublicMenu() {
     )
   }
 
-  // Cloud loaded but this store has no active POS-registered items
-  // Cloud/Local loaded but this store has no active POS-registered items
-  if (menuItems.length === 0 && (cloudProductsLoaded || products.length > 0)) {
+  // Show empty state only after data has loaded and there are genuinely no active items
+  const isDataReady = isElectron ? true : cloudProductsLoaded
+  if (isDataReady && menuItems.length === 0) {
     return (
       <div
         className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"

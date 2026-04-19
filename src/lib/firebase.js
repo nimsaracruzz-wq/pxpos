@@ -9,7 +9,11 @@ const HARDCODED_CONFIG = DEFAULT_FIREBASE_CONFIG
 let db = null
 
 export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
-  return String(licenseKey || businessInfo?.storeId || businessInfo?.taxId || '').trim()
+  const explicit = String(licenseKey || businessInfo?.storeId || businessInfo?.taxId || '').trim()
+  if (explicit) return explicit
+  // Stable fallback: derive a slug from the business name so products always have a storeId
+  const name = String(businessInfo?.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return name ? `store-${name}` : 'default-store'
 }
 
 function getCloudStoreIds(businessInfo = {}, licenseKey = '') {
@@ -104,10 +108,11 @@ export async function initializeFirebase() {
  * Mirrors local IndexedDB slices to Firestore collections under stores/{storeId}
  */
 export async function syncToCloud() {
-  if (!db) {
-    const ok = await initializeFirebase()
-    if (!ok) return false
-  }
+  // Use ensureRealtimeDb() to bypass the deploymentMode gate in initializeFirebase().
+  // This ensures products always sync to Firebase regardless of subscription status.
+  const activeDb = ensureRealtimeDb()
+  if (!activeDb) return false
+  db = activeDb
 
   try {
     const { sales }        = useSalesStore.getState()
