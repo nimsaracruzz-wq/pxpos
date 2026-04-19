@@ -409,12 +409,12 @@ export default function PublicMenu() {
     return finalEta
   }, [cart, orderHistory])
 
-  const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0)
-  const taxRate = taxSettings.enabled ? taxSettings.rate : 0
-  const tax = (subtotal * taxRate) / 100
-  const serviceRate = serviceChargeSettings?.enabled ? serviceChargeSettings.rate : 0
-  const serviceCharge = (subtotal * serviceRate) / 100
-  const grandTotal = subtotal + tax + serviceCharge
+  const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.qty || 0), 0), [cart])
+  const taxRate = taxSettings?.enabled ? Number(taxSettings.rate || 0) : 0
+  const tax = taxRate > 0 ? Math.round((subtotal * taxRate) / 100 * 100) / 100 : 0
+  const serviceRate = serviceChargeSettings?.enabled ? Number(serviceChargeSettings.rate || 0) : 0
+  const serviceCharge = serviceRate > 0 ? Math.round((subtotal * serviceRate) / 100 * 100) / 100 : 0
+  const grandTotal = Math.round((subtotal + tax + serviceCharge) * 100) / 100
   const outstandingHistoryTotal = useMemo(
     () =>
       orderHistory
@@ -974,12 +974,39 @@ export default function PublicMenu() {
               </div>
             )}
 
-            <div className="mb-2 rounded-xl border border-emerald-100 bg-emerald-50/70 p-2 text-[11px] text-gray-600">
-              <div className="flex items-center justify-between"><span>{t.grandTotal}</span><span className="font-semibold text-gray-800">{formatCurrency(grandTotal)}</span></div>
-              {paidBeforeTotal > 0 && (
-                <div className="mt-1 flex items-center justify-between"><span>{t.paidBefore}</span><span className="font-semibold text-emerald-700">{formatCurrency(paidBeforeTotal)}</span></div>
+            <div className="mb-2 rounded-xl border border-emerald-100 bg-emerald-50/70 p-2.5 text-[11px] text-gray-600 space-y-1">
+              <div className="flex items-center justify-between">
+                <span>{t.subtotal || 'Subtotal'}</span>
+                <span className="font-semibold text-gray-800">{formatCurrency(subtotal)}</span>
+              </div>
+              {tax > 0 && (
+                <div className="flex items-center justify-between">
+                  <span>{taxSettings?.name || 'Tax'} ({taxRate}%)</span>
+                  <span className="font-semibold text-gray-800">{formatCurrency(tax)}</span>
+                </div>
               )}
-              <div className="mt-1 flex items-center justify-between border-t border-emerald-200 pt-1"><span>{t.totalSoFar}</span><span className="font-bold text-gray-800">{formatCurrency(totalSoFar)}</span></div>
+              {serviceCharge > 0 && (
+                <div className="flex items-center justify-between">
+                  <span>{serviceChargeSettings?.name || 'Service Charge'} ({serviceRate}%)</span>
+                  <span className="font-semibold text-gray-800">{formatCurrency(serviceCharge)}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-emerald-200 pt-1">
+                <span className="font-semibold">{t.grandTotal}</span>
+                <span className="font-bold text-gray-900 text-[13px]">{formatCurrency(grandTotal)}</span>
+              </div>
+              {outstandingHistoryTotal > 0 && (
+                <div className="flex items-center justify-between border-t border-emerald-200 pt-1">
+                  <span className="text-gray-500">Previous orders</span>
+                  <span className="font-semibold text-amber-700">{formatCurrency(outstandingHistoryTotal)}</span>
+                </div>
+              )}
+              {paidBeforeTotal > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">{t.paidBefore}</span>
+                  <span className="font-semibold text-emerald-700">- {formatCurrency(paidBeforeTotal)}</span>
+                </div>
+              )}
             </div>
 
             <button
