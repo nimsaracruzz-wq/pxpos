@@ -10,6 +10,7 @@ import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStor
 import { cn, generateReceiptNumber } from '@/lib/utils'
 import { format } from 'date-fns'
 import { markQRCodeOrderProcessed, resolveCloudTenantId, subscribeToQRCodeOrders, syncToCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { useToast } from '@/components/Toast'
 import { useI18n } from '@/lib/i18n'
 import { checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
 import { BRAND } from '@/lib/brand'
@@ -65,7 +66,21 @@ export function Layout({ children }) {
   const isDark = theme === 'dark'
   const { products, getLowStock, getOutOfStock } = useProductStore()
   const { currentUser, logout, hasPermission } = useAuthStore()
+  const toast = useToast()
   const { t } = useI18n()
+
+  const handleManualSync = async () => {
+    if (isSyncing) return
+    setIsSyncing(true)
+    const success = await syncToCloud()
+    setIsSyncing(false)
+    if (success) {
+      setLastSyncTime(new Date())
+      toast.success('All data synced to cloud successfully!')
+    } else {
+      toast.error('Sync failed. Check your internet connection.')
+    }
+  }
 
   const notificationTtlMs = {
     low: 12 * 60 * 60 * 1000,
@@ -620,15 +635,15 @@ export function Layout({ children }) {
               <p className="text-xs text-gray-400 dark:text-zinc-500">{format(time, 'EEE, MMM d yyyy')}</p>
             </div>
 
-            {/* Network Sync Engine Status */}
-            <div className="flex flex-col items-end mr-4 hidden sm:flex">
-              <div className="flex items-center gap-1.5 cursor-pointer">
+            {/* Network / Sync Status + Manual Sync Now Button */}
+            <div className="flex flex-col items-end mr-2 hidden sm:flex">
+              <div className="flex items-center gap-1.5">
                 <span className={cn("status-dot", isOnline ? "online" : "bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.2)]")} />
                 <span className="text-xs text-gray-700 font-bold">
                   {isOnline ? 'Cloud Online' : 'Offline Mode'}
                 </span>
               </div>
-              <div className="flex items-center gap-1 mt-0.5">
+              <div className="flex items-center gap-1.5 mt-0.5">
                 {isSyncing ? (
                   <RefreshCw size={10} className="text-blue-500 animate-spin" />
                 ) : (
@@ -637,8 +652,23 @@ export function Layout({ children }) {
                 <span className={cn("text-[10px] uppercase font-bold tracking-wider", isSyncing ? "text-blue-500" : "text-gray-400")}>
                   {isSyncing ? 'Syncing...' : `Synced • ${format(lastSyncTime, 'HH:mm')}`}
                 </span>
+                <button
+                  onClick={handleManualSync}
+                  disabled={isSyncing || !isOnline}
+                  title="Sync all data to cloud now"
+                  className={cn(
+                    'ml-1 flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all',
+                    isSyncing || !isOnline
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-green-100 text-green-700 hover:bg-green-200 cursor-pointer active:scale-95'
+                  )}
+                >
+                  <RefreshCw size={9} className={isSyncing ? 'animate-spin' : ''} />
+                  {isSyncing ? 'Syncing' : 'Sync Now'}
+                </button>
               </div>
             </div>
+
 
             {/* Notifications Bell & Theme Toggle */}
             <div className="flex items-center gap-2">
