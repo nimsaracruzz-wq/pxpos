@@ -303,9 +303,8 @@ export default function PublicMenu() {
         return
       }
 
+      // Allow continuous orders: only validate token, not table status
       const matches =
-        String(session.status || '') === 'occupied' &&
-        String(session.session || '') === effectiveSession &&
         String(session.token || '') === qrToken
 
       setSessionState(matches ? 'valid' : 'invalid')
