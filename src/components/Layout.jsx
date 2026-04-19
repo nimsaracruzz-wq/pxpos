@@ -333,32 +333,31 @@ export function Layout({ children }) {
     }
   }, [])
 
-  // Background Cloud Sync Engine
+  // Background Cloud Sync Engine — always syncs when online, no deployment-mode gate
   useEffect(() => {
-    // Determine interval time from settings (default to 10 min if absent)
-    const intervalMinutes = useAppStore.getState().cloudSettings?.syncInterval || 10
-    
-    const syncInterval = setInterval(async () => {
-      // Only execute sync if online and cloud sync is explicitly enabled
-      const settings = useAppStore.getState().cloudSettings
-      const subscription = useAppStore.getState().cloudSubscription
-      if (navigator.onLine && settings && settings.enabled && subscription?.deploymentMode === 'cloud' && subscription?.status !== 'inactive') {
-        setIsSyncing(true)
-        console.log('[Sync Engine] Initializing automated background cloud sync to', settings.provider)
-        
-        const success = await syncToCloud()
-        
-        setIsSyncing(false)
-        if (success) {
-          setLastSyncTime(new Date())
-          console.log('[Sync Engine] Push successful. Local state is synchronized with the Firestore cloud.')
-        } else {
-          console.error('[Sync Engine] Push failed. Will retry next cycle.')
-        }
-      }
-    }, intervalMinutes * 60 * 1000)
+    const intervalMinutes = useAppStore.getState().cloudSettings?.syncInterval || 5
 
-    return () => clearInterval(syncInterval)
+    const runSync = async () => {
+      if (!navigator.onLine) return
+      setIsSyncing(true)
+      const success = await syncToCloud()
+      setIsSyncing(false)
+      if (success) {
+        setLastSyncTime(new Date())
+        console.log('[Sync Engine] Cloud sync successful.')
+      }
+    }
+
+    // Sync immediately on startup (after 3s to let the app settle)
+    const startupTimer = setTimeout(runSync, 3000)
+
+    // Then sync on a recurring interval
+    const syncInterval = setInterval(runSync, intervalMinutes * 60 * 1000)
+
+    return () => {
+      clearTimeout(startupTimer)
+      clearInterval(syncInterval)
+    }
   }, [])
 
   const notifications = useMemo(() => {
@@ -626,9 +625,7 @@ export function Layout({ children }) {
               <div className="flex items-center gap-1.5 cursor-pointer">
                 <span className={cn("status-dot", isOnline ? "online" : "bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.2)]")} />
                 <span className="text-xs text-gray-700 font-bold">
-                  {cloudSubscription?.deploymentMode === 'local'
-                    ? 'Local Only'
-                    : isOnline ? 'Cloud Online' : 'Offline Mode'}
+                  {isOnline ? 'Cloud Online' : 'Offline Mode'}
                 </span>
               </div>
               <div className="flex items-center gap-1 mt-0.5">
@@ -638,9 +635,7 @@ export function Layout({ children }) {
                   <Cloud size={10} className="text-gray-400" />
                 )}
                 <span className={cn("text-[10px] uppercase font-bold tracking-wider", isSyncing ? "text-blue-500" : "text-gray-400")}>
-                  {cloudSubscription?.deploymentMode === 'local'
-                    ? 'Local Saves Only'
-                    : isSyncing ? 'Syncing...' : `Saved • ${format(lastSyncTime, 'HH:mm')}`}
+                  {isSyncing ? 'Syncing...' : `Synced • ${format(lastSyncTime, 'HH:mm')}`}
                 </span>
               </div>
             </div>
