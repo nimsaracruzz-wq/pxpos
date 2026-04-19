@@ -5,7 +5,7 @@ import { useToast } from '@/components/Toast'
 import { Button, Badge, Modal, Input, Select, SectionHeader, SearchInput, EmptyState } from '@/components/ui'
 import { formatCurrency } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import { publishStoreProductDelete, publishStoreProductUpsert, syncToCloud } from '@/lib/firebase'
+import { publishStoreProductDelete, publishStoreProductUpsert, resolveCloudTenantId, syncToCloud } from '@/lib/firebase'
 import Papa from 'papaparse'
 
 const PRODUCT_FORM_DEFAULT = {
@@ -371,10 +371,11 @@ const exportCSV = (products) => {
 
 export default function Products() {
   const { products, categories, getCategoriesForModule, addProduct, updateProduct, deleteProduct } = useProductStore()
-  const { activeModule } = useAppStore()
+  const { activeModule, businessInfo, licenseKey } = useAppStore()
   const { addLog } = useActivityStore()
   const { currentUser } = useAuthStore()
   const toast = useToast()
+  const currentStoreId = resolveCloudTenantId(businessInfo, licenseKey)
   
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState('All')
@@ -403,6 +404,7 @@ export default function Products() {
       const updatedProduct = {
         ...editProduct,
         ...form,
+        storeId: editProduct.storeId || currentStoreId,
         module: resolvedModule,
         price: parseFloat(form.price) || 0,
         cost: parseFloat(form.cost) || 0,
@@ -418,6 +420,7 @@ export default function Products() {
       const now = new Date().toISOString()
       const product = {
         ...form,
+        storeId: currentStoreId,
         module: resolvedModule,
         price: parseFloat(form.price) || 0,
         cost: parseFloat(form.cost) || 0,

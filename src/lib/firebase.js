@@ -162,7 +162,7 @@ export async function syncToCloud() {
     const productsRef = collection(db, 'stores', storeId, 'products')
     products.forEach((item) => {
       if (!item?.id) return
-      entries.push({ ref: doc(productsRef, String(item.id)), data: item })
+      entries.push({ ref: doc(productsRef, String(item.id)), data: { ...item, storeId } })
     })
 
     const salesRef = collection(db, 'stores', storeId, 'sales')
@@ -348,6 +348,7 @@ export async function publishStoreProductUpsert(product) {
     await Promise.all(storeIds.map((storeId) => setDoc(doc(rdb, 'stores', storeId, 'products', productId), {
       ...product,
       id: productId,
+      storeId,
       module: String(product?.module || '').trim(),
       name: String(product?.name || '').trim(),
       category: String(product?.category || '').trim(),

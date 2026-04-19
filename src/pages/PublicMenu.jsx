@@ -226,7 +226,10 @@ export default function PublicMenu() {
   const menuItems = useMemo(() => {
     const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
     const activeProducts = productSource.filter((p) => p?.active)
-    const restaurantProducts = activeProducts.filter((p) => {
+    const scopedProducts = decodedStoreId
+      ? activeProducts.filter((p) => !p?.storeId || String(p.storeId).trim() === decodedStoreId)
+      : activeProducts
+    const restaurantProducts = scopedProducts.filter((p) => {
       if (!p?.active) return false
 
       const moduleValue = String(p.module || '').trim().toLowerCase()
@@ -240,8 +243,10 @@ export default function PublicMenu() {
 
       return false
     })
-    return restaurantProducts.length > 0 ? restaurantProducts : activeProducts
-  }, [productSource])
+    if (restaurantProducts.length > 0) return restaurantProducts
+    if (scopedProducts.length > 0) return scopedProducts
+    return activeProducts
+  }, [decodedStoreId, productSource])
   const categories = useMemo(() => ['All', ...new Set(menuItems.map((item) => item.category).filter(Boolean))], [menuItems])
 
   const filteredItems = useMemo(() => {
