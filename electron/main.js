@@ -261,12 +261,16 @@ ipcMain.handle('reset-business-data', () => {
 // ─── Backup & Restore Database ──────────────────────────────────────────────
 ipcMain.handle('download-sqlite-backup', async () => {
   try {
-    const win = BrowserWindow.getAllWindows()[0];
-    const { filePath } = await dialog.showSaveDialog(win, {
+    const win = BrowserWindow.getFocusedWindow();
+    const opts = {
       title: 'Save Paxxmo SQLite Backup',
       defaultPath: `paxxmo_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.db`,
       filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }]
-    });
+    };
+    
+    const { filePath } = win 
+      ? await dialog.showSaveDialog(win, opts) 
+      : await dialog.showSaveDialog(opts);
 
     if (filePath) {
       if (!fs.existsSync(dbPath)) return { success: false, error: 'Source database file not found' };
@@ -281,12 +285,16 @@ ipcMain.handle('download-sqlite-backup', async () => {
 
 ipcMain.handle('restore-sqlite-backup', async () => {
   try {
-    const win = BrowserWindow.getAllWindows()[0];
-    const { filePaths } = await dialog.showOpenDialog(win, {
+    const win = BrowserWindow.getFocusedWindow();
+    const opts = {
       title: 'Restore Paxxmo SQLite Backup',
       filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }],
       properties: ['openFile']
-    });
+    };
+    
+    const { filePaths } = win 
+      ? await dialog.showOpenDialog(win, opts) 
+      : await dialog.showOpenDialog(opts);
 
     if (filePaths && filePaths.length > 0) {
       const sourceFile = filePaths[0];
