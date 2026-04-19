@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
@@ -254,6 +255,62 @@ ipcMain.handle('reset-business-data', () => {
     return { success: true };
   } catch (error) {
     return { success: false, error: error?.message || 'Failed to reset local business data' };
+  }
+});
+
+// ─── Backup & Restore Database ──────────────────────────────────────────────
+ipcMain.handle('download-sqlite-backup', async () => {
+  try {
+    const { filePath } = await dialog.showSaveDialog({
+      title: 'Save Paxxmo SQLite Backup',
+      defaultPath: `paxxmo_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.db`,
+      filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }]
+    });
+
+    if (filePath) {
+      if (!fs.existsSync(dbPath)) return { success: false, error: 'Source database file not found' };
+      fs.copyFileSync(dbPath, filePath);
+      return { success: true };
+    }
+    return { success: false, error: 'Cancelled' };
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to save backup' };
+  }
+});
+
+ipcMain.handle('restore-sqlite-backup', async () => {
+  try {
+    const { filePaths } = await dialog.showOpenDialog({
+      title: 'Restore Paxxmo SQLite Backup',
+      filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }],
+      properties: ['openFile']
+    });
+
+    if (filePaths && filePaths.length > 0) {
+      const sourceFile = filePaths[0];
+      if (!fs.existsSync(sourceFile)) return { success: false, error: 'Selected file not found' };
+
+      // Make a safety copy of the current DB just in case
+      const safetyBackup = dbPath + '.bak';
+      if (fs.existsSync(dbPath)) {
+        fs.copyFileSync(dbPath, safetyBackup);
+      }
+
+      // Close the DB connection before overwriting
+      db.close();
+
+      // Overwrite the actual db file
+      fs.copyFileSync(sourceFile, dbPath);
+
+      // We must restart the app so Better-SQLite3 can re-open the file cleanly
+      app.relaunch();
+      app.exit(0);
+
+      return { success: true }; // This won't technically send if app.exit(0) runs, but just in case
+    }
+    return { success: false, error: 'Cancelled' };
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to restore backup' };
   }
 });
 

@@ -4,7 +4,7 @@ import {
   Printer, Barcode, Save, CheckCircle, ChevronRight,
   ShoppingBag, Utensils, Shirt, Pill, Truck, Cloud, Database, Users, Upload, Sun, Moon,
   Banknote, History, CalendarDays, BadgeDollarSign, CircleDollarSign,
-  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw, Copy
+  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw, Copy, Download
 } from 'lucide-react'
 import { useAppStore, useAuthStore } from '@/store'
 import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
@@ -30,6 +30,7 @@ const TABS = [
   { id: 'cloud', label: 'Cloud & Billing', icon: Cloud },
   { id: 'users', label: 'Staff & Roles', icon: Users },
   { id: 'license', label: 'License', icon: Key },
+  { id: 'data', label: 'Data Management', icon: Database },
 ]
 
 const MODULE_LIST = [
@@ -961,6 +962,69 @@ export default function Settings() {
               <div className="flex flex-col gap-3">
                 <Toggle checked={hardwareSettings.autoOpenDrawer} onChange={(v) => updateHardwareSettings({ autoOpenDrawer: v })} label="Open cash drawer on sale complete" />
                 <Input label="Drawer Port" value={hardwareSettings.drawerPort} onChange={(e) => updateHardwareSettings({ drawerPort: e.target.value })} placeholder="e.g. COM1" />
+              </div>
+            </SettingsSection>
+          </div>
+        )
+
+      case 'data':
+        return (
+          <div className="flex flex-col gap-4">
+            <SettingsSection title="Local Database Backup & Restore" description="Export your POS database to a file, or restore a previous backup. Restoring will restart the application.">
+              <div className="flex flex-col gap-4 mt-2">
+                <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-blue-900 flex items-center gap-2"><Download size={18} /> Backup Database</h3>
+                    <p className="text-sm text-blue-700 mt-1">Download the entire local SQLite database (.db file) to your computer.</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!window.require) return toast.error('Desktop app required');
+                      const toastId = toast.loading('Saving backup...');
+                      try {
+                        const ipc = window.require('electron').ipcRenderer;
+                        const res = await ipc.invoke('download-sqlite-backup');
+                        if (res.success) toast.success('Database backup saved successfully', { id: toastId });
+                        else if (res.error === 'Cancelled') toast.dismiss(toastId);
+                        else toast.error(res.error || 'Failed to save', { id: toastId });
+                      } catch (e) {
+                        toast.error(e.message, { id: toastId });
+                      }
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Download size={16} /> Save Backup
+                  </button>
+                </div>
+
+                <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-orange-900 flex items-center gap-2"><Upload size={18} /> Restore Database</h3>
+                    <p className="text-sm text-orange-700 mt-1">Upload a previously saved .db file. WARNING: This will overwrite current data!</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!window.require) return toast.error('Desktop app required');
+                      if (!confirm('Are you sure you want to restore from a backup? ALL current local data will be permanently overwritten, and the app will restart.')) return;
+                      
+                      const toastId = toast.loading('Restoring database...');
+                      try {
+                        const ipc = window.require('electron').ipcRenderer;
+                        const res = await ipc.invoke('restore-sqlite-backup');
+                        // App will likely restart before this returns if successful
+                        if (res && !res.success) {
+                          if (res.error === 'Cancelled') toast.dismiss(toastId);
+                          else toast.error(res.error || 'Failed to restore', { id: toastId });
+                        }
+                      } catch (e) {
+                        toast.error(e.message, { id: toastId });
+                      }
+                    }}
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Upload size={16} /> Restore Backup
+                  </button>
+                </div>
               </div>
             </SettingsSection>
           </div>
