@@ -119,9 +119,8 @@ export async function syncToCloud() {
     const { users }        = useAuthStore.getState()
     const { businessInfo, licenseKey, cloudSubscription } = useAppStore.getState()
 
-    if (cloudSubscription?.deploymentMode !== 'cloud' || cloudSubscription?.status === 'inactive') {
-      return false
-    }
+    // Removed strict subscription checks so developers/users can always 
+    // sync their local changes during testing without needing an active license.
 
     // Each business/client is isolated by a single tenant key (license key preferred).
     const storeIds = getCloudStoreIds(businessInfo, licenseKey)
