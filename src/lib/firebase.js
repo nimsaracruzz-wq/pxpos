@@ -7,11 +7,48 @@ import { DEFAULT_FIREBASE_CONFIG } from '@/lib/defaultFirebaseConfig'
 const HARDCODED_CONFIG = DEFAULT_FIREBASE_CONFIG
 
 let db = null
+let _lastConfigStr = null
+
+function getEffectiveConfig() {
+  const { cloudSettings } = useAppStore.getState()
+  if (cloudSettings?.provider === 'firebase' && cloudSettings?.firebaseConfig) {
+    try {
+      const parsed = JSON.parse(cloudSettings.firebaseConfig)
+      if (parsed?.projectId) return parsed
+    } catch (_) {}
+  }
+  return HARDCODED_CONFIG
+}
+
+/** Lazy singleton: returns a Firestore instance, initializing only once or when config changes. */
+function getDb() {
+  const config = getEffectiveConfig()
+  const configStr = JSON.stringify(config)
+
+  // Already initialized with same config — reuse it
+  if (db && configStr === _lastConfigStr) return db
+
+  try {
+    // Tear down only if config actually changed
+    if (getApps().length > 0 && configStr !== _lastConfigStr) {
+      // deleteApp is async but we call it fire-and-forget here, then reinit
+      const oldApp = getApp()
+      deleteApp(oldApp).catch(() => {})
+    }
+    const app = getApps().length > 0 ? getApp() : initializeApp(config)
+    db = getFirestore(app)
+    _lastConfigStr = configStr
+    return db
+  } catch (err) {
+    console.error('[Firebase] getDb error:', err)
+    db = null
+    return null
+  }
+}
 
 export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
   const explicit = String(licenseKey || businessInfo?.storeId || businessInfo?.taxId || '').trim()
   if (explicit) return explicit
-  // Stable fallback: derive a slug from the business name so products always have a storeId
   const name = String(businessInfo?.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
   return name ? `store-${name}` : 'default-store'
 }
@@ -22,11 +59,11 @@ function getCloudStoreIds(businessInfo = {}, licenseKey = '') {
 }
 
 async function commitSetEntriesInChunks(entries = [], chunkSize = 400) {
-  if (!db || !Array.isArray(entries) || entries.length === 0) return
-
+  const activeDb = getDb()
+  if (!activeDb || !Array.isArray(entries) || entries.length === 0) return
   for (let index = 0; index < entries.length; index += chunkSize) {
     const chunk = entries.slice(index, index + chunkSize)
-    const batch = writeBatch(db)
+    const batch = writeBatch(activeDb)
     chunk.forEach((entry) => {
       if (!entry?.ref) return
       batch.set(entry.ref, entry.data || {}, entry.options || undefined)
@@ -35,78 +72,28 @@ async function commitSetEntriesInChunks(entries = [], chunkSize = 400) {
   }
 }
 
-function getEffectiveFirebaseConfig() {
-  const { cloudSettings } = useAppStore.getState()
-  if (cloudSettings?.provider === 'firebase' && cloudSettings?.firebaseConfig) {
-    try {
-      const parsed = JSON.parse(cloudSettings.firebaseConfig)
-      if (parsed?.projectId) return parsed
-    } catch (_) {
-      // Ignore invalid JSON and fall back to bundled project.
-    }
-  }
-  return HARDCODED_CONFIG
-}
-
-function ensureRealtimeDb() {
-  if (db) return db
-  try {
-    const config = getEffectiveFirebaseConfig()
-    const app = getApps().length > 0 ? getApp() : initializeApp(config)
-    db = getFirestore(app)
-    return db
-  } catch (error) {
-    console.error('[Firebase] Realtime DB init failed:', error)
-    return null
-  }
-}
-
-/**
- * Initializes or re-initializes Firebase.
- *
- * Priority:
- *  1. Hardcoded project config above (always works out of the box)
- *  2. JSON pasted by user in Settings → Cloud Sync (overrides #1 if valid)
- */
+/** @deprecated Use getDb() directly. Kept for backward compatibility. */
 export async function initializeFirebase() {
-  try {
-    const { cloudSettings } = useAppStore.getState()
+  const activeDb = getDb()
+  return !!activeDb
+}
 
-    // Allow user to override via Settings JSON, otherwise use hardcoded config
-    let config = HARDCODED_CONFIG
-    if (cloudSettings?.provider === 'firebase' && cloudSettings?.firebaseConfig) {
-      try {
-        const parsed = JSON.parse(cloudSettings.firebaseConfig)
-        if (parsed?.projectId) config = parsed
-      } catch (_) {
-        // Bad JSON → fall back to hardcoded
-      }
-    }
-
-    // Tear down existing app before reinitialising with (possibly new) config
-    if (getApps().length > 0) {
-      await deleteApp(getApp())
-    }
-
-    const app = initializeApp(config)
-    db = getFirestore(app)
-    return true
-  } catch (error) {
-    console.error('[Firebase] Initialisation error:', error)
-    db = null
-    return false
-  }
+/** @deprecated Use getDb() directly. Kept for backward compatibility. */
+function ensureRealtimeDb() {
+  return getDb()
 }
 
 /**
  * Background Sync Engine
- * Mirrors local IndexedDB slices to Firestore collections under stores/{storeId}
+ * Mirrors local store slices to Firestore collections under stores/{storeId}
  */
 export async function syncToCloud() {
-  if (!db) {
-    const success = await initializeFirebase()
-    if (!success || !db) return false
+  const activeDb = getDb()
+  if (!activeDb) {
+    console.warn('[syncToCloud] Firebase not available — skipping sync')
+    return false
   }
+  db = activeDb
 
   try {
     const { sales }        = useSalesStore.getState()

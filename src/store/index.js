@@ -906,7 +906,7 @@ const generateSampleSales = () => {
 export const useSalesStore = create(
   persist(
     (set, get) => ({
-      sales: generateSampleSales(),
+      sales: [],
 
       addSale: (sale) =>
         set((s) => ({
@@ -1072,7 +1072,13 @@ export const useSalesStore = create(
     }),
     { 
       name: 'paxxmo-sales',
-      storage: createJSONStorage(() => idbStorage)
+      version: 2,
+      storage: createJSONStorage(() => idbStorage),
+      migrate: (persisted) => ({
+        // Strip out auto-generated sample data by keeping only real sales (those with a proper receiptNo)
+        ...persisted,
+        sales: (persisted?.sales || []).filter((s) => s?.receiptNo && String(s.receiptNo).startsWith('R')),
+      }),
     }
   )
 )
@@ -1087,7 +1093,7 @@ const SAMPLE_CUSTOMERS = [
 export const useCustomerStore = create(
   persist(
     (set, get) => ({
-      customers: SAMPLE_CUSTOMERS,
+      customers: [],
       addCustomer: (c) =>
         set((s) => ({ customers: [...s.customers, { ...c, id: uuidv4(), totalPurchases: 0, credit: 0 }] })),
       updateCustomer: (id, updates) =>
