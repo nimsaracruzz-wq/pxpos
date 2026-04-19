@@ -232,7 +232,7 @@ export default function PublicMenu() {
     const scopedActiveProducts = productSource.filter((p) => {
       if (!p?.active) return false
       // Only apply storeId restriction to cloud products, local ones belong here natively.
-      if (cloudProductsLoaded && cloudProducts.length > 0 && decodedStoreId) {
+      if (productSource === cloudProducts && decodedStoreId) {
         return String(p.storeId || '').trim() === decodedStoreId
       }
       return true
