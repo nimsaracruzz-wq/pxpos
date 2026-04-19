@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app'
 import { getFirestore, doc, setDoc, deleteDoc, collection, writeBatch, addDoc, onSnapshot, query, where, updateDoc, serverTimestamp, limit } from 'firebase/firestore'
-import { useAppStore, useSalesStore, useProductStore } from '@/store'
+import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore } from '@/store'
 
 // ─── Paxxmo POS – Firebase Project Config ───────────────────────────────────
 const HARDCODED_CONFIG = {
@@ -22,6 +22,20 @@ export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
 function getCloudStoreIds(businessInfo = {}, licenseKey = '') {
   const tenantId = resolveCloudTenantId(businessInfo, licenseKey)
   return tenantId ? [tenantId] : []
+}
+
+async function commitSetEntriesInChunks(entries = [], chunkSize = 400) {
+  if (!db || !Array.isArray(entries) || entries.length === 0) return
+
+  for (let index = 0; index < entries.length; index += chunkSize) {
+    const chunk = entries.slice(index, index + chunkSize)
+    const batch = writeBatch(db)
+    chunk.forEach((entry) => {
+      if (!entry?.ref) return
+      batch.set(entry.ref, entry.data || {}, entry.options || undefined)
+    })
+    await batch.commit()
+  }
 }
 
 function getEffectiveFirebaseConfig() {
@@ -105,6 +119,11 @@ export async function syncToCloud() {
   try {
     const { sales }        = useSalesStore.getState()
     const { products }     = useProductStore.getState()
+    const { tables, kots } = useTableStore.getState()
+    const { customers }    = useCustomerStore.getState()
+    const { logs }         = useActivityStore.getState()
+    const { recipes }      = useRecipeStore.getState()
+    const { users }        = useAuthStore.getState()
     const { businessInfo, licenseKey, cloudSubscription } = useAppStore.getState()
 
     if (cloudSubscription?.deploymentMode !== 'cloud' || cloudSubscription?.status === 'inactive') {
@@ -114,28 +133,89 @@ export async function syncToCloud() {
     // Each business/client is isolated by a single tenant key (license key preferred).
     const storeIds = getCloudStoreIds(businessInfo, licenseKey)
     const storeId = storeIds[0] || 'default-store'
-    const batch   = writeBatch(db)
+    const now = new Date().toISOString()
 
-    // 1. Business info
-    batch.set(
+    // 1. Store-level metadata and settings.
+    await setDoc(
       doc(db, 'stores', storeId),
-      { ...businessInfo, lastSync: new Date().toISOString() },
+      {
+        ...businessInfo,
+        tenantId: storeId,
+        licenseKey: String(licenseKey || '').trim().toUpperCase(),
+        lastSync: now,
+      },
       { merge: true }
     )
 
-    // 2. Products
-    storeIds.forEach((id) => {
-      const productsRef = collection(db, 'stores', id, 'products')
-      products.forEach((p) => batch.set(doc(productsRef, p.id), p))
-    })
-
-    // 3. Last 100 sales (stays within Firestore's 500-write batch limit)
-    const salesRef = collection(db, 'stores', storeId, 'sales')
-    sales.slice(0, 100).forEach(s =>
-      batch.set(doc(salesRef, s.id), { ...s, date: new Date(s.date).toISOString() })
+    await setDoc(
+      doc(db, 'stores', storeId, 'settings', 'app'),
+      {
+        businessInfo,
+        taxSettings: useAppStore.getState().taxSettings,
+        serviceChargeSettings: useAppStore.getState().serviceChargeSettings,
+        receiptSettings: useAppStore.getState().receiptSettings,
+        hardwareSettings: useAppStore.getState().hardwareSettings,
+        modules: useAppStore.getState().modules,
+        activeModule: useAppStore.getState().activeModule,
+        cloudSubscription,
+        updatedAt: now,
+      },
+      { merge: true }
     )
 
-    await batch.commit()
+    // 2. Build all collection writes and commit in chunks.
+    const entries = []
+
+    const productsRef = collection(db, 'stores', storeId, 'products')
+    products.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ ref: doc(productsRef, String(item.id)), data: item })
+    })
+
+    const salesRef = collection(db, 'stores', storeId, 'sales')
+    sales.slice(0, 1000).forEach((item) => {
+      if (!item?.id) return
+      const saleDate = item.date ? new Date(item.date).toISOString() : now
+      entries.push({ ref: doc(salesRef, String(item.id)), data: { ...item, date: saleDate } })
+    })
+
+    const tablesRef = collection(db, 'stores', storeId, 'tables')
+    tables.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ ref: doc(tablesRef, String(item.id)), data: item })
+    })
+
+    const kotsRef = collection(db, 'stores', storeId, 'kots')
+    kots.slice(0, 1000).forEach((item) => {
+      if (!item?.id) return
+      entries.push({ ref: doc(kotsRef, String(item.id)), data: item })
+    })
+
+    const customersRef = collection(db, 'stores', storeId, 'customers')
+    customers.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ ref: doc(customersRef, String(item.id)), data: item })
+    })
+
+    const logsRef = collection(db, 'stores', storeId, 'activity_logs')
+    logs.slice(0, 1000).forEach((item) => {
+      if (!item?.id) return
+      entries.push({ ref: doc(logsRef, String(item.id)), data: item })
+    })
+
+    const recipesRef = collection(db, 'stores', storeId, 'recipes')
+    Object.entries(recipes || {}).forEach(([dishId, recipeItems]) => {
+      if (!dishId) return
+      entries.push({ ref: doc(recipesRef, String(dishId)), data: { dishId: String(dishId), ingredients: Array.isArray(recipeItems) ? recipeItems : [] } })
+    })
+
+    const usersRef = collection(db, 'stores', storeId, 'users')
+    users.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ ref: doc(usersRef, String(item.id)), data: item })
+    })
+
+    await commitSetEntriesInChunks(entries, 350)
     return true
   } catch (error) {
     console.error('[Firebase] Sync failed:', error)

@@ -236,7 +236,7 @@ export const useAppStore = create(
             },
             cloudSettings: {
               ...state.cloudSettings,
-              enabled: deploymentMode === 'cloud' ? state.cloudSettings.enabled : false,
+              enabled: deploymentMode === 'cloud',
             },
           }
         })
@@ -261,7 +261,7 @@ export const useAppStore = create(
             },
             cloudSettings: {
               ...state.cloudSettings,
-              enabled: deploymentMode === 'cloud' ? state.cloudSettings.enabled : false,
+              enabled: deploymentMode === 'cloud',
             },
           }
         }),
@@ -277,7 +277,7 @@ export const useAppStore = create(
           },
           cloudSettings: {
             ...s.cloudSettings,
-            enabled: deploymentMode === 'cloud' ? s.cloudSettings.enabled : false,
+            enabled: deploymentMode === 'cloud',
           },
         })),
       updateCloudSubscription: (updates) =>
