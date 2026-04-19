@@ -16,7 +16,7 @@ const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173
 
 // ─── Database Init ──────────────────────────────────────────────────────────
 const dbPath = path.join(app.getPath('userData'), 'paxxmo.db');
-const db = new Database(dbPath);
+let db = new Database(dbPath);
 
 // Helper: SHA-256 hash for passwords
 function hashPassword(plain) {
@@ -312,11 +312,13 @@ ipcMain.handle('restore-sqlite-backup', async () => {
       // Overwrite the actual db file
       fs.copyFileSync(sourceFile, dbPath);
 
-      // We must restart the app so Better-SQLite3 can re-open the file cleanly
-      app.relaunch();
-      app.exit(0);
+      // Re-initialize the db connection in memory without exiting the app
+      db = new Database(dbPath);
 
-      return { success: true }; // This won't technically send if app.exit(0) runs, but just in case
+      // Reload all front-end windows so they fetch the fresh database data
+      BrowserWindow.getAllWindows().forEach((w) => w.reload());
+
+      return { success: true };
     }
     return { success: false, error: 'Cancelled' };
   } catch (error) {
