@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Search, Clock3, ListOrdered, Languages, SlidersHorizontal } from 'lucide-react'
-import { useAppStore, useProductStore } from '@/store'
+import { useAppStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession } from '@/lib/firebase'
@@ -158,7 +158,6 @@ export default function PublicMenu() {
   const qrToken = String(searchParams.get('token') || '').trim()
   const effectiveSession = rawSession && rawSession !== 'static' ? rawSession : `table-${tableNo || 'na'}`
 
-  const { products } = useProductStore()
   const { taxSettings, serviceChargeSettings, businessInfo, receiptSettings } = useAppStore()
   const [customerName, setCustomerName] = useState('')
   const [notes, setNotes] = useState('')
@@ -222,31 +221,37 @@ export default function PublicMenu() {
     }
   }, [decodedStoreId])
 
-  const productSource = cloudProductsLoaded && cloudProducts.length > 0 ? cloudProducts : products
+  // Only use cloud-synced products — never fall back to unregistered local products.
+  // This ensures the mobile QR menu only shows items registered in the POS system.
   const menuItems = useMemo(() => {
-    const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
-    const activeProducts = productSource.filter((p) => p?.active)
-    const scopedProducts = decodedStoreId
-      ? activeProducts.filter((p) => String(p.storeId || '').trim() === decodedStoreId)
-      : activeProducts
-    const restaurantProducts = scopedProducts.filter((p) => {
-      if (!p?.active) return false
+    if (!cloudProductsLoaded) return []
 
+    const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
+
+    // Step 1: Only active products synced from this specific POS store.
+    const scopedActiveProducts = cloudProducts.filter((p) => {
+      if (!p?.active) return false
+      if (!decodedStoreId) return false
+      return String(p.storeId || '').trim() === decodedStoreId
+    })
+
+    // Step 2: Prefer restaurant-module items. Fall back to ALL scoped active items
+    // only if no restaurant items exist (i.e. store hasn't set module yet).
+    const restaurantProducts = scopedActiveProducts.filter((p) => {
       const moduleValue = String(p.module || '').trim().toLowerCase()
       if (moduleValue === 'restaurant' || moduleValue === 'resturant') return true
-
-      // Backward compatibility: older imported dishes might not have module set.
+      // Backward compat: dishes imported before module field existed.
       if (!moduleValue) {
         const categoryValue = String(p.category || '').trim().toLowerCase()
         return restaurantCategories.has(categoryValue)
       }
-
       return false
     })
-    if (restaurantProducts.length > 0) return restaurantProducts
-    if (scopedProducts.length > 0) return scopedProducts
-    return activeProducts
-  }, [decodedStoreId, productSource])
+
+    // Return restaurant items when available; otherwise all POS-registered active items.
+    // Never fall back to products outside this store's cloud registry.
+    return restaurantProducts.length > 0 ? restaurantProducts : scopedActiveProducts
+  }, [decodedStoreId, cloudProducts, cloudProductsLoaded])
   const categories = useMemo(() => ['All', ...new Set(menuItems.map((item) => item.category).filter(Boolean))], [menuItems])
 
   const filteredItems = useMemo(() => {
@@ -575,6 +580,46 @@ export default function PublicMenu() {
           <h1 className="text-xl font-black text-gray-900">Checking QR session...</h1>
           <p className="mt-2 text-sm text-gray-500">
             Verifying that this table link is still active.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading POS menu from the cloud
+  if (!cloudProductsLoaded) {
+    return (
+      <div
+        className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
+        <div className="w-full max-w-md rounded-3xl border border-emerald-200 bg-white p-6 text-center shadow-lg">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 animate-pulse">
+            <ChefHat size={24} />
+          </div>
+          <h1 className="text-xl font-black text-gray-900">Loading menu...</h1>
+          <p className="mt-2 text-sm text-gray-500">
+            Fetching the latest menu from the kitchen.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // Cloud loaded but this store has no active POS-registered items
+  if (cloudProductsLoaded && menuItems.length === 0) {
+    return (
+      <div
+        className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
+        <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-6 text-center shadow-lg">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-gray-100 text-gray-400">
+            <UtensilsCrossed size={24} />
+          </div>
+          <h1 className="text-xl font-black text-gray-900">Menu not available</h1>
+          <p className="mt-2 text-sm text-gray-500">
+            No items have been added to the menu yet. Please ask your server for assistance.
           </p>
         </div>
       </div>
