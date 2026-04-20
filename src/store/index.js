@@ -1326,10 +1326,17 @@ function canUseElectronIpc() {
 }
 
 function getBackupPayload() {
+  const appState = useAppStore.getState()
+  const {
+    licenseKey,
+    licenseActive,
+    ...safeAppState
+  } = appState
+
   return {
     version: 1,
     savedAt: new Date().toISOString(),
-    app: useAppStore.getState(),
+    app: safeAppState,
     tables: useTableStore.getState(),
     products: {
       categories: useProductStore.getState().categories,
@@ -1348,7 +1355,19 @@ function getBackupPayload() {
 export async function restoreFromLocalBackupPayload(payload) {
   if (!payload || typeof payload !== 'object') return false
   try {
-    if (payload.app) useAppStore.setState(payload.app, true)
+    // Never restore license fields from local backup snapshots.
+    // License persistence is handled by Zustand persist + Firebase validation flow.
+    if (payload.app) {
+      const {
+        licenseKey: _ignoredLicenseKey,
+        licenseActive: _ignoredLicenseActive,
+        ...safeAppState
+      } = payload.app
+      useAppStore.setState((state) => ({
+        ...state,
+        ...safeAppState,
+      }))
+    }
     if (payload.tables) useTableStore.setState(payload.tables, true)
     if (payload.products) {
       const currentProducts = useProductStore.getState()
