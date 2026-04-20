@@ -1321,6 +1321,133 @@ export async function resetBusinessDataForNewLicense() {
   useActivityStore.setState({ logs: [] })
 }
 
+function canUseElectronIpc() {
+  return typeof window !== 'undefined' && typeof window.require === 'function'
+}
+
+function getBackupPayload() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    app: useAppStore.getState(),
+    tables: useTableStore.getState(),
+    products: {
+      categories: useProductStore.getState().categories,
+      categoriesByModule: useProductStore.getState().categoriesByModule,
+    },
+    recipes: useRecipeStore.getState(),
+    sales: useSalesStore.getState(),
+    customers: useCustomerStore.getState(),
+    auth: {
+      currentUser: useAuthStore.getState().currentUser,
+    },
+    activities: useActivityStore.getState(),
+  }
+}
+
+export async function restoreFromLocalBackupPayload(payload) {
+  if (!payload || typeof payload !== 'object') return false
+  try {
+    if (payload.app) useAppStore.setState(payload.app, true)
+    if (payload.tables) useTableStore.setState(payload.tables, true)
+    if (payload.products) {
+      const currentProducts = useProductStore.getState()
+      useProductStore.setState({
+        ...currentProducts,
+        categories: Array.isArray(payload.products.categories) ? payload.products.categories : currentProducts.categories,
+        categoriesByModule: payload.products.categoriesByModule || currentProducts.categoriesByModule,
+      })
+    }
+    if (payload.recipes) useRecipeStore.setState(payload.recipes, true)
+    if (payload.sales) useSalesStore.setState(payload.sales, true)
+    if (payload.customers) useCustomerStore.setState(payload.customers, true)
+    if (payload.activities) useActivityStore.setState(payload.activities, true)
+    if (payload.auth?.currentUser !== undefined) {
+      useAuthStore.setState({ currentUser: payload.auth.currentUser })
+    }
+    return true
+  } catch (_) {
+    return false
+  }
+}
+
+export async function loadDesktopLocalBackup() {
+  try {
+    if (!canUseElectronIpc()) return false
+    const ipcRenderer = window.require('electron').ipcRenderer
+    const result = await ipcRenderer.invoke('local-backup-load')
+    if (!result?.success || !result?.data) return false
+    return restoreFromLocalBackupPayload(result.data)
+  } catch (_) {
+    return false
+  }
+}
+
+let backupTimer = null
+let cloudSyncTimer = null
+let desktopPersistenceInitialized = false
+
+async function flushDesktopLocalBackup() {
+  try {
+    if (!canUseElectronIpc()) return
+    const ipcRenderer = window.require('electron').ipcRenderer
+    await ipcRenderer.invoke('local-backup-save', getBackupPayload())
+  } catch (_) {}
+}
+
+async function scheduleCloudSync() {
+  try {
+    if (cloudSyncTimer) return
+    cloudSyncTimer = setTimeout(async () => {
+      cloudSyncTimer = null
+      const state = useAppStore.getState()
+      if (!state?.cloudSettings?.enabled || !navigator.onLine) return
+      const { syncToCloud } = await import('@/lib/firebase')
+      await syncToCloud()
+    }, 3000)
+  } catch (_) {}
+}
+
+function scheduleDesktopBackup() {
+  if (!canUseElectronIpc()) return
+  if (backupTimer) clearTimeout(backupTimer)
+  backupTimer = setTimeout(async () => {
+    backupTimer = null
+    await flushDesktopLocalBackup()
+    await scheduleCloudSync()
+  }, 900)
+}
+
+export function initDesktopDataPersistence() {
+  if (!canUseElectronIpc() || desktopPersistenceInitialized) return () => {}
+  desktopPersistenceInitialized = true
+
+  const unsubscribers = [
+    useAppStore.subscribe(scheduleDesktopBackup),
+    useTableStore.subscribe(scheduleDesktopBackup),
+    useProductStore.subscribe(scheduleDesktopBackup),
+    useRecipeStore.subscribe(scheduleDesktopBackup),
+    useSalesStore.subscribe(scheduleDesktopBackup),
+    useCustomerStore.subscribe(scheduleDesktopBackup),
+    useAuthStore.subscribe(scheduleDesktopBackup),
+    useActivityStore.subscribe(scheduleDesktopBackup),
+  ]
+
+  const persistBeforeClose = () => {
+    flushDesktopLocalBackup()
+  }
+  window.addEventListener('beforeunload', persistBeforeClose)
+
+  scheduleDesktopBackup()
+
+  return () => {
+    unsubscribers.forEach((unsub) => {
+      try { unsub() } catch (_) {}
+    })
+    window.removeEventListener('beforeunload', persistBeforeClose)
+  }
+}
+
 // Boot: load users from DB into store on startup
 if (typeof window !== 'undefined' && window.require) {
   setTimeout(() => useAuthStore.getState().loadUsers(), 200)

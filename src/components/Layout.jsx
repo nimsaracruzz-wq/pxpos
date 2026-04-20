@@ -9,7 +9,7 @@ import {
 import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStore } from '@/store'
 import { cn, generateReceiptNumber } from '@/lib/utils'
 import { format } from 'date-fns'
-import { markQRCodeOrderProcessed, resolveCloudTenantId, subscribeToQRCodeOrders, syncToCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { markQRCodeOrderProcessed, resolveCloudTenantId, subscribeToQRCodeOrders, syncWithCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
 import { useToast } from '@/components/Toast'
 import { useI18n } from '@/lib/i18n'
 import { checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
@@ -72,11 +72,11 @@ export function Layout({ children }) {
   const handleManualSync = async () => {
     if (isSyncing) return
     setIsSyncing(true)
-    const success = await syncToCloud()
+    const success = await syncWithCloud()
     setIsSyncing(false)
     if (success) {
       setLastSyncTime(new Date())
-      toast.success('All data synced to cloud successfully!')
+      toast.success('All devices synced with cloud successfully!')
     } else {
       toast.error('Sync failed. Check your internet connection.')
     }
@@ -355,11 +355,11 @@ export function Layout({ children }) {
     const runSync = async () => {
       if (!navigator.onLine) return
       setIsSyncing(true)
-      const success = await syncToCloud()
+      const success = await syncWithCloud()
       setIsSyncing(false)
       if (success) {
         setLastSyncTime(new Date())
-        console.log('[Sync Engine] Cloud sync successful.')
+        console.log('[Sync Engine] Two-way cloud sync successful.')
       }
     }
 

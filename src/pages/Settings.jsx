@@ -997,6 +997,31 @@ export default function Settings() {
                   </button>
                 </div>
 
+                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-indigo-900 flex items-center gap-2"><Download size={18} /> Export SQL File</h3>
+                    <p className="text-sm text-indigo-700 mt-1">Export a full SQL dump (.sql) for migration, inspection, or manual recovery.</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!window.require) return toast.error('Desktop app required');
+                      const toastId = toast.loading('Exporting SQL file...');
+                      try {
+                        const ipc = window.require('electron').ipcRenderer;
+                        const res = await ipc.invoke('download-sql-dump');
+                        if (res.success) toast.success('SQL dump exported successfully', { id: toastId });
+                        else if (res.error === 'Cancelled') toast.dismiss(toastId);
+                        else toast.error(res.error || 'Failed to export SQL dump', { id: toastId });
+                      } catch (e) {
+                        toast.error(e.message, { id: toastId });
+                      }
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Download size={16} /> Export .sql
+                  </button>
+                </div>
+
                 <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl flex items-center justify-between">
                   <div>
                     <h3 className="font-semibold text-orange-900 flex items-center gap-2"><Upload size={18} /> Restore Database</h3>
@@ -1023,6 +1048,33 @@ export default function Settings() {
                     className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
                   >
                     <Upload size={16} /> Restore Backup
+                  </button>
+                </div>
+
+                <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-rose-900 flex items-center gap-2"><Upload size={18} /> Restore SQL File</h3>
+                    <p className="text-sm text-rose-700 mt-1">Import from a .sql dump file. WARNING: This will overwrite current local data!</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!window.require) return toast.error('Desktop app required');
+                      if (!confirm('Are you sure you want to restore from an SQL file? ALL current local data will be permanently overwritten.')) return;
+
+                      const toastId = toast.loading('Restoring SQL dump...');
+                      try {
+                        const ipc = window.require('electron').ipcRenderer;
+                        const res = await ipc.invoke('restore-sql-dump');
+                        if (res?.success) toast.success('SQL dump restored successfully', { id: toastId });
+                        else if (res?.error === 'Cancelled') toast.dismiss(toastId);
+                        else toast.error(res?.error || 'Failed to restore SQL dump', { id: toastId });
+                      } catch (e) {
+                        toast.error(e.message, { id: toastId });
+                      }
+                    }}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Upload size={16} /> Restore .sql
                   </button>
                 </div>
               </div>

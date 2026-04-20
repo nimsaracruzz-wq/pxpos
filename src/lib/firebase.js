@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app'
-import { getFirestore, doc, setDoc, deleteDoc, collection, writeBatch, addDoc, onSnapshot, query, where, updateDoc, serverTimestamp, limit } from 'firebase/firestore'
+import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection, writeBatch, addDoc, onSnapshot, query, where, updateDoc, serverTimestamp, limit } from 'firebase/firestore'
 import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore } from '@/store'
 import { DEFAULT_FIREBASE_CONFIG } from '@/lib/defaultFirebaseConfig'
 
@@ -47,10 +47,8 @@ function getDb() {
 }
 
 export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
-  const explicit = String(licenseKey || businessInfo?.storeId || businessInfo?.taxId || '').trim()
-  if (explicit) return explicit
-  const name = String(businessInfo?.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-  return name ? `store-${name}` : 'default-store'
+  const normalizedLicenseKey = String(licenseKey || '').trim().toUpperCase()
+  return normalizedLicenseKey || ''
 }
 
 function getCloudStoreIds(businessInfo = {}, licenseKey = '') {
@@ -110,7 +108,11 @@ export async function syncToCloud() {
 
     // Each business/client is isolated by a single tenant key (license key preferred).
     const storeIds = getCloudStoreIds(businessInfo, licenseKey)
-    const storeId = storeIds[0] || 'default-store'
+    const storeId = storeIds[0]
+    if (!storeId) {
+      console.warn('[syncToCloud] Missing license key. Cloud sync skipped')
+      return false
+    }
     const now = new Date().toISOString()
 
     // 1. Store-level metadata and settings.
@@ -201,6 +203,99 @@ export async function syncToCloud() {
   }
 }
 
+async function readCollectionDocs(activeDb, storeId, name, max = 2000) {
+  const snapshot = await getDocs(query(collection(activeDb, 'stores', storeId, name), limit(max)))
+  return snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }))
+}
+
+async function mirrorProductsToLocalSqlite(products = []) {
+  try {
+    if (typeof window === 'undefined' || typeof window.require !== 'function') return
+    const ipcRenderer = window.require('electron').ipcRenderer
+    const normalized = Array.isArray(products) ? products : []
+    await Promise.all(normalized.map((item) => ipcRenderer.invoke('add-product', {
+      ...item,
+      id: String(item?.id || ''),
+      active: item?.active !== false,
+      variants: Array.isArray(item?.variants) ? item.variants : [],
+    })))
+  } catch (error) {
+    console.warn('[Firebase] mirrorProductsToLocalSqlite warning:', error?.message || error)
+  }
+}
+
+export async function pullFromCloud() {
+  const activeDb = getDb()
+  if (!activeDb) return false
+
+  try {
+    const { businessInfo, licenseKey } = useAppStore.getState()
+    const storeId = resolveCloudTenantId(businessInfo, licenseKey)
+    if (!storeId) {
+      console.warn('[pullFromCloud] Missing license key. Cloud pull skipped')
+      return false
+    }
+
+    const [appSettingsSnap, products, sales, tables, kots, customers, logs, recipesDocs, users] = await Promise.all([
+      getDoc(doc(activeDb, 'stores', storeId, 'settings', 'app')),
+      readCollectionDocs(activeDb, storeId, 'products', 4000),
+      readCollectionDocs(activeDb, storeId, 'sales', 4000),
+      readCollectionDocs(activeDb, storeId, 'tables', 300),
+      readCollectionDocs(activeDb, storeId, 'kots', 4000),
+      readCollectionDocs(activeDb, storeId, 'customers', 4000),
+      readCollectionDocs(activeDb, storeId, 'activity_logs', 4000),
+      readCollectionDocs(activeDb, storeId, 'recipes', 1200),
+      readCollectionDocs(activeDb, storeId, 'users', 500),
+    ])
+
+    if (appSettingsSnap.exists()) {
+      const remoteSettings = appSettingsSnap.data() || {}
+      useAppStore.setState((state) => ({
+        ...state,
+        businessInfo: remoteSettings.businessInfo || state.businessInfo,
+        taxSettings: remoteSettings.taxSettings || state.taxSettings,
+        serviceChargeSettings: remoteSettings.serviceChargeSettings || state.serviceChargeSettings,
+        receiptSettings: remoteSettings.receiptSettings || state.receiptSettings,
+        hardwareSettings: remoteSettings.hardwareSettings || state.hardwareSettings,
+        modules: remoteSettings.modules || state.modules,
+        activeModule: remoteSettings.activeModule || state.activeModule,
+        cloudSubscription: remoteSettings.cloudSubscription || state.cloudSubscription,
+      }))
+    }
+
+    if (products.length > 0) {
+      useProductStore.setState((state) => ({ ...state, products }))
+      await mirrorProductsToLocalSqlite(products)
+    }
+    if (sales.length > 0) useSalesStore.setState((state) => ({ ...state, sales }))
+    if (tables.length > 0 || kots.length > 0) useTableStore.setState((state) => ({ ...state, tables: tables.length > 0 ? tables : state.tables, kots: kots.length > 0 ? kots : state.kots }))
+    if (customers.length > 0) useCustomerStore.setState((state) => ({ ...state, customers }))
+    if (logs.length > 0) useActivityStore.setState((state) => ({ ...state, logs }))
+    if (users.length > 0) useAuthStore.setState((state) => ({ ...state, users }))
+
+    if (recipesDocs.length > 0) {
+      const recipes = recipesDocs.reduce((acc, row) => {
+        const key = String(row?.dishId || row?.id || '').trim()
+        if (!key) return acc
+        acc[key] = Array.isArray(row?.ingredients) ? row.ingredients : []
+        return acc
+      }, {})
+      useRecipeStore.setState((state) => ({ ...state, recipes }))
+    }
+
+    return true
+  } catch (error) {
+    console.error('[Firebase] pullFromCloud failed:', error)
+    return false
+  }
+}
+
+export async function syncWithCloud() {
+  const pulled = await pullFromCloud()
+  const pushed = await syncToCloud()
+  return pulled || pushed
+}
+
 /**
  * Test Firebase connection – called by Settings → Cloud Sync "Test Connection" button.
  */
@@ -210,7 +305,8 @@ export async function testCloudConnection() {
 
   try {
     const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeId = resolveCloudTenantId(businessInfo, licenseKey) || 'default-store'
+    const storeId = resolveCloudTenantId(businessInfo, licenseKey)
+    if (!storeId) throw new Error('License key is required for cloud sync.')
     await setDoc(
       doc(db, 'stores', storeId),
       { lastConnectionTest: new Date().toISOString() },

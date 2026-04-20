@@ -13,6 +13,7 @@ const { autoUpdater } = require('electron-updater');
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+const localBackupPath = path.join(app.getPath('userData'), 'paxxmo-local-backup.json');
 
 // ─── Database Init ──────────────────────────────────────────────────────────
 const dbPath = path.join(app.getPath('userData'), 'paxxmo.db');
@@ -21,6 +22,62 @@ let db = new Database(dbPath);
 // Helper: SHA-256 hash for passwords
 function hashPassword(plain) {
   return crypto.createHash('sha256').update(plain).digest('hex');
+}
+
+function escapeSqlIdentifier(name = '') {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+function serializeSqlValue(value) {
+  if (value === null || value === undefined) return 'NULL';
+  if (Buffer.isBuffer(value)) return `X'${value.toString('hex')}'`;
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL';
+  if (typeof value === 'boolean') return value ? '1' : '0';
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function buildSqlDump() {
+  const lines = [];
+  lines.push('-- Paxxmo POS SQLite SQL dump');
+  lines.push(`-- Generated at ${new Date().toISOString()}`);
+  lines.push('PRAGMA foreign_keys=OFF;');
+  lines.push('BEGIN TRANSACTION;');
+
+  const schemaRows = db.prepare(`
+    SELECT type, name, tbl_name, sql
+    FROM sqlite_master
+    WHERE sql IS NOT NULL
+      AND name NOT LIKE 'sqlite_%'
+    ORDER BY
+      CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'trigger' THEN 2 ELSE 3 END,
+      name ASC
+  `).all();
+
+  const tableNames = [];
+  schemaRows.forEach((row) => {
+    lines.push(`${row.sql};`);
+    if (row.type === 'table') tableNames.push(row.name);
+  });
+
+  tableNames.forEach((tableName) => {
+    const safeTable = escapeSqlIdentifier(tableName);
+    const columns = db.prepare(`PRAGMA table_info(${safeTable})`).all();
+    const columnNames = columns.map((column) => column.name);
+    if (!columnNames.length) return;
+
+    const selectColumns = columnNames.map((name) => escapeSqlIdentifier(name)).join(', ');
+    const rows = db.prepare(`SELECT ${selectColumns} FROM ${safeTable}`).all();
+    const insertColumns = columnNames.map((name) => escapeSqlIdentifier(name)).join(', ');
+
+    rows.forEach((row) => {
+      const valuesSql = columnNames.map((name) => serializeSqlValue(row[name])).join(', ');
+      lines.push(`INSERT INTO ${safeTable} (${insertColumns}) VALUES (${valuesSql});`);
+    });
+  });
+
+  lines.push('COMMIT;');
+  lines.push('');
+  return lines.join('\n');
 }
 
 // ─── Schema ─────────────────────────────────────────────────────────────────
@@ -181,17 +238,35 @@ function getLocalIPv4Addresses() {
   return Array.from(new Set(ips));
 }
 
+function getMacAddresses() {
+  const interfaces = os.networkInterfaces();
+  const macs = [];
+
+  Object.values(interfaces).forEach((entries) => {
+    (entries || []).forEach((entry) => {
+      if (!entry || entry.internal) return;
+      if (!entry.mac || entry.mac === '00:00:00:00:00:00') return;
+      macs.push(String(entry.mac).toLowerCase());
+    });
+  });
+
+  return Array.from(new Set(macs));
+}
+
 ipcMain.handle('get-device-id', () => {
   return getMachineDeviceId();
 });
 
 ipcMain.handle('get-device-metadata', () => {
   const ipAddresses = getLocalIPv4Addresses();
+  const macAddresses = getMacAddresses();
   return {
     deviceId: getMachineDeviceId(),
     hostname: os.hostname(),
     ipAddresses,
     lastIp: ipAddresses[0] || '',
+    macAddresses,
+    lastMac: macAddresses[0] || '',
   };
 });
 
@@ -255,6 +330,31 @@ ipcMain.handle('reset-business-data', () => {
     return { success: true };
   } catch (error) {
     return { success: false, error: error?.message || 'Failed to reset local business data' };
+  }
+});
+
+// ─── Local App Snapshot Backup (Electron userData) ──────────────────────────
+ipcMain.handle('local-backup-save', (event, payload) => {
+  try {
+    const snapshot = payload && typeof payload === 'object' ? payload : {};
+    const tempPath = `${localBackupPath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(snapshot, null, 2), 'utf8');
+    fs.renameSync(tempPath, localBackupPath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to write local backup' };
+  }
+});
+
+ipcMain.handle('local-backup-load', () => {
+  try {
+    if (!fs.existsSync(localBackupPath)) return { success: true, data: null };
+    const raw = fs.readFileSync(localBackupPath, 'utf8');
+    if (!raw || !raw.trim()) return { success: true, data: null };
+    const parsed = JSON.parse(raw);
+    return { success: true, data: parsed };
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to read local backup', data: null };
   }
 });
 
@@ -323,6 +423,72 @@ ipcMain.handle('restore-sqlite-backup', async () => {
     return { success: false, error: 'Cancelled' };
   } catch (error) {
     return { success: false, error: error?.message || 'Failed to restore backup' };
+  }
+});
+
+ipcMain.handle('download-sql-dump', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const opts = {
+      title: 'Save Paxxmo SQL Dump',
+      defaultPath: `paxxmo_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.sql`,
+      filters: [{ name: 'SQL Dump', extensions: ['sql'] }],
+    };
+
+    const { filePath } = win
+      ? await dialog.showSaveDialog(win, opts)
+      : await dialog.showSaveDialog(opts);
+
+    if (!filePath) return { success: false, error: 'Cancelled' };
+
+    const dump = buildSqlDump();
+    fs.writeFileSync(filePath, dump, 'utf8');
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error?.message || 'Failed to export SQL dump' };
+  }
+});
+
+ipcMain.handle('restore-sql-dump', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const opts = {
+      title: 'Restore Paxxmo SQL Dump',
+      filters: [{ name: 'SQL Dump', extensions: ['sql'] }],
+      properties: ['openFile'],
+    };
+
+    const { filePaths } = win
+      ? await dialog.showOpenDialog(win, opts)
+      : await dialog.showOpenDialog(opts);
+
+    if (!filePaths || filePaths.length === 0) return { success: false, error: 'Cancelled' };
+
+    const sourceFile = filePaths[0];
+    if (!fs.existsSync(sourceFile)) return { success: false, error: 'Selected SQL file not found' };
+    const sqlContent = fs.readFileSync(sourceFile, 'utf8');
+    if (!sqlContent || !sqlContent.trim()) return { success: false, error: 'SQL file is empty' };
+
+    const safetyBackup = `${dbPath}.bak`;
+    if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, safetyBackup);
+
+    db.close();
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    db = new Database(dbPath);
+
+    db.exec(sqlContent);
+
+    BrowserWindow.getAllWindows().forEach((w) => w.reload());
+    return { success: true };
+  } catch (error) {
+    try {
+      if (fs.existsSync(`${dbPath}.bak`)) {
+        if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+        fs.copyFileSync(`${dbPath}.bak`, dbPath);
+      }
+      db = new Database(dbPath);
+    } catch (_) {}
+    return { success: false, error: error?.message || 'Failed to restore SQL dump' };
   }
 });
 

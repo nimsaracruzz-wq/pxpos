@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, HashRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { ToastContainer } from '@/components/Toast'
@@ -28,11 +28,15 @@ import Login from '@/pages/Login'
 import Activation from '@/pages/Activation'
 import { useAuthStore, useAppStore } from '@/store'
 import { checkCurrentLicenseAccess } from '@/lib/license'
+import { syncWithCloud } from '@/lib/firebase'
 
 export default function App() {
   const { currentUser, logout }              = useAuthStore()
   const { licenseActive, licenseKey, theme } = useAppStore()
   const [checking, setChecking]              = useState(true)
+  const [initialCloudHydration, setInitialCloudHydration] = useState(false)
+  const [storeHydrated, setStoreHydrated] = useState(() => useAppStore.persist?.hasHydrated?.() ?? true)
+  const hydratedLicenseRef = useRef('')
 
   const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
   const hashPathRaw = typeof window !== 'undefined' ? window.location.hash.replace(/^#/, '') : ''
@@ -94,19 +98,45 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
   }, [theme])
 
+  useEffect(() => {
+    if (!useAppStore.persist) return () => {}
+    const maybeUnsub = useAppStore.persist.onFinishHydration(() => {
+      setStoreHydrated(true)
+    })
+    if (useAppStore.persist.hasHydrated()) {
+      setStoreHydrated(true)
+    }
+    return () => {
+      if (typeof maybeUnsub === 'function') maybeUnsub()
+    }
+  }, [])
+
   // Re-validate stored license on every app startup
   useEffect(() => {
+    if (!storeHydrated) return
     let cancelled = false
 
     async function check() {
+      const state = useAppStore.getState()
+      if (!state?.licenseKey) {
+        setChecking(false)
+        return
+      }
+
       const result = await checkCurrentLicenseAccess()
       if (cancelled) return
 
       if (!result.valid) {
-        // License revoked / expired / wrong PC → kick out immediately.
-        useAppStore.setState({ licenseActive: false, licenseKey: '' })
-        logout()
+        // Keep local license when server is temporarily unavailable.
+        if (result.transient) {
+          useAppStore.setState({ licenseActive: true })
+        } else {
+          // License revoked / expired / wrong PC → kick out immediately.
+          useAppStore.setState({ licenseActive: false, licenseKey: '' })
+          logout()
+        }
       } else {
+        useAppStore.setState({ licenseActive: true, licenseKey: String(state.licenseKey || '').trim().toUpperCase() })
         useAppStore.getState().applyLicenseFeatures?.(result)
       }
       setChecking(false)
@@ -129,10 +159,33 @@ export default function App() {
       window.removeEventListener('focus', check)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [licenseActive, licenseKey, logout])
+  }, [licenseActive, licenseKey, logout, storeHydrated])
+
+  // First-run / new-PC onboarding:
+  // Once a license is active, pull from cloud immediately so this POS starts with existing data.
+  useEffect(() => {
+    let cancelled = false
+
+    const runInitialHydration = async () => {
+      const normalizedLicense = String(licenseKey || '').trim().toUpperCase()
+      if (!licenseActive || !normalizedLicense) return
+      if (hydratedLicenseRef.current === normalizedLicense) return
+
+      setInitialCloudHydration(true)
+      try {
+        await syncWithCloud()
+        if (!cancelled) hydratedLicenseRef.current = normalizedLicense
+      } finally {
+        if (!cancelled) setInitialCloudHydration(false)
+      }
+    }
+
+    runInitialHydration()
+    return () => { cancelled = true }
+  }, [licenseActive, licenseKey])
 
   // Show loading while checking license
-  if (checking) {
+  if (!storeHydrated || checking) {
     const isDark = theme === 'dark'
     return (
       <div style={{
@@ -147,6 +200,26 @@ export default function App() {
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '40px', marginBottom: '16px' }}>🔐</div>
           <p>Verifying license...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (licenseActive && initialCloudHydration) {
+    const isDark = theme === 'dark'
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: isDark
+          ? 'linear-gradient(135deg, #0b1324, #101a33, #1a2747)'
+          : 'linear-gradient(135deg, #f0fdf4, #dcfce7, #bbf7d0)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: isDark ? 'rgba(255,255,255,0.7)' : '#475569',
+        fontFamily: 'Inter, sans-serif', fontSize: '16px',
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '40px', marginBottom: '16px' }}>☁️</div>
+          <p>Syncing cloud data to this POS...</p>
         </div>
       </div>
     )

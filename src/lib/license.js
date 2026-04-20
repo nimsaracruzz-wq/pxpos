@@ -49,6 +49,15 @@ function normalizeIpAddresses(items) {
   return Array.from(new Set(items.map((item) => String(item || '').trim()).filter(Boolean)))
 }
 
+function normalizeMacAddresses(items) {
+  if (!Array.isArray(items)) return []
+  return Array.from(new Set(
+    items
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean)
+  ))
+}
+
 function normalizeActivatedDevices(items = [], legacy = {}) {
   const devices = Array.isArray(items)
     ? items
@@ -57,6 +66,8 @@ function normalizeActivatedDevices(items = [], legacy = {}) {
         hostname: String(item?.hostname || '').trim(),
         ipAddresses: normalizeIpAddresses(item?.ipAddresses),
         lastIp: String(item?.lastIp || '').trim(),
+        macAddresses: normalizeMacAddresses(item?.macAddresses),
+        lastMac: String(item?.lastMac || '').trim().toLowerCase(),
         activatedAt: item?.activatedAt || null,
         lastSeen: item?.lastSeen || null,
       }))
@@ -70,6 +81,8 @@ function normalizeActivatedDevices(items = [], legacy = {}) {
       hostname: String(legacy.hostname || '').trim(),
       ipAddresses: legacyIps,
       lastIp: String(legacy.lastIp || legacyIps[0] || '').trim(),
+      macAddresses: normalizeMacAddresses(legacy?.macAddresses),
+      lastMac: String(legacy?.lastMac || '').trim().toLowerCase(),
       activatedAt: legacy.activatedAt || null,
       lastSeen: legacy.lastSeen || null,
     })
@@ -148,6 +161,8 @@ async function getDeviceContext() {
     hostname: String(metadata?.hostname || '').trim(),
     ipAddresses: normalizeIpAddresses(metadata?.ipAddresses),
     lastIp: String(metadata?.lastIp || '').trim(),
+    macAddresses: normalizeMacAddresses(metadata?.macAddresses),
+    lastMac: String(metadata?.lastMac || '').trim().toLowerCase(),
   }
 }
 
@@ -213,6 +228,12 @@ export async function validateLicense(key) {
           device.lastIp,
         ]),
         lastIp: device.lastIp || current.lastIp || '',
+        macAddresses: normalizeMacAddresses([
+          ...(current.macAddresses || []),
+          ...(device.macAddresses || []),
+          device.lastMac,
+        ]),
+        lastMac: device.lastMac || current.lastMac || '',
         lastSeen: timestamp,
       }
     } else {
@@ -221,6 +242,8 @@ export async function validateLicense(key) {
         hostname: device.hostname,
         ipAddresses: normalizeIpAddresses([...(device.ipAddresses || []), device.lastIp]),
         lastIp: device.lastIp,
+        macAddresses: normalizeMacAddresses([...(device.macAddresses || []), device.lastMac]),
+        lastMac: device.lastMac,
         activatedAt: timestamp,
         lastSeen: timestamp,
       })
@@ -250,6 +273,7 @@ export async function validateLicense(key) {
     return {
       valid: false,
       error: 'Cannot reach license server. Check your internet connection and try again.',
+      transient: true,
     }
   }
 }
