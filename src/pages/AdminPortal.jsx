@@ -289,17 +289,34 @@ export default function AdminPortal() {
     }
     setSaving(true)
     try {
-      const result = await sendNotificationToBusiness(
-        notificationForm.licenseKey, 
-        notificationForm.message, 
-        notificationForm.type,
-        notificationForm.title
-      )
-      if (result) {
-        toast.success('Notification sent successfully')
-        setNotificationModalOpen(false)
+      if (notificationForm.licenseKey === 'all') {
+        const activeLicenses = licenses.filter(l => l.active)
+        const promises = activeLicenses.map(license => 
+          sendNotificationToBusiness(
+            license.key,
+            notificationForm.message,
+            notificationForm.type,
+            notificationForm.title
+          )
+        )
+        await Promise.all(promises)
+        toast.success(`Broadcast sent to ${activeLicenses.length} active businesses`)
+        if (notificationModalOpen) setNotificationModalOpen(false)
+        else setNotificationForm({ licenseKey: 'all', message: '', type: 'info', title: 'Portal Alert' })
       } else {
-        toast.error('Failed to send notification')
+        const result = await sendNotificationToBusiness(
+          notificationForm.licenseKey, 
+          notificationForm.message, 
+          notificationForm.type,
+          notificationForm.title
+        )
+        if (result) {
+          toast.success('Notification sent successfully')
+          if (notificationModalOpen) setNotificationModalOpen(false)
+          else setNotificationForm({ ...notificationForm, message: '' })
+        } else {
+          toast.error('Failed to send notification')
+        }
       }
     } catch (error) {
       toast.error('Failed to send notification')
@@ -569,6 +586,15 @@ export default function AdminPortal() {
             >
               Portal Admins
             </button>
+            <button
+              onClick={() => {
+                setActiveTab('notifications')
+                setNotificationForm({ licenseKey: 'all', message: '', type: 'info', title: 'Global Alert' })
+              }}
+              className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all ${activeTab === 'notifications' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'}`}
+            >
+              Broadcast
+            </button>
           </div>
 
           {activeTab === 'licenses' && (
@@ -739,6 +765,75 @@ export default function AdminPortal() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {activeTab === 'notifications' && (
+          <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)] animate-slide-up p-8" style={{ animationDelay: '0.1s' }}>
+            <h2 className="text-xl font-bold mb-2 text-emerald-400 flex items-center gap-2">
+              <Bell size={20} />
+              Broadcast Notification
+            </h2>
+            <p className="text-sm text-slate-400 mb-6 max-w-2xl">
+              Send a real-time notification to multiple POS systems at once. Active POS terminals will receive a popup toast immediately.
+            </p>
+            
+            <div className="space-y-5 max-w-3xl">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Target Audience</label>
+                <Select
+                  value={notificationForm.licenseKey}
+                  onChange={(e) => setNotificationForm(prev => ({ ...prev, licenseKey: e.target.value }))}
+                >
+                  <option value="all">All Active Businesses ({licenses.filter(l => l.active).length})</option>
+                  {licenses.filter(l => l.active).map(l => (
+                    <option key={l.key} value={l.key}>{l.businessName || 'Unnamed'} ({l.key})</option>
+                  ))}
+                </Select>
+              </div>
+              <Input 
+                label="Notification Title" 
+                value={notificationForm.title} 
+                onChange={(e) => setNotificationForm(prev => ({ ...prev, title: e.target.value }))} 
+                placeholder="e.g. Important System Update"
+              />
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Message Content</label>
+                <textarea
+                  value={notificationForm.message}
+                  onChange={(e) => setNotificationForm((prev) => ({ ...prev, message: e.target.value }))}
+                  className="input-base w-full min-h-[120px] p-4 rounded-xl border-white/10 bg-white/[0.02] text-sm focus:border-emerald-400/50 transition-all"
+                  placeholder="Type your message here..."
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Severity Level</label>
+                <div className="flex gap-3">
+                  {['info', 'success', 'warning', 'error'].map(type => (
+                    <button
+                      key={type}
+                      onClick={() => setNotificationForm(prev => ({ ...prev, type }))}
+                      className={`flex-1 py-3 px-4 rounded-xl border transition-all text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2
+                        ${notificationForm.type === type 
+                          ? type === 'info' ? 'bg-blue-500/20 border-blue-500/50 text-blue-400'
+                          : type === 'success' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400'
+                          : type === 'warning' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
+                          : 'bg-rose-500/20 border-rose-500/50 text-rose-400'
+                          : 'bg-white/[0.02] border-white/10 text-slate-400 hover:bg-white/[0.05]'
+                        }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="pt-4 flex justify-end">
+                <Button onClick={handleSendNotification} disabled={saving}>
+                  {saving ? <Loader2 className="animate-spin" size={15} /> : <Bell size={15} />}
+                  Send Notification Now
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </div>
