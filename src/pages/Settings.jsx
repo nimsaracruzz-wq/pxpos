@@ -25,6 +25,7 @@ const TABS = [
   { id: 'tax', label: 'Tax & Charges', icon: Percent },
   { id: 'modules', label: 'Modules', icon: ShoppingBag },
   { id: 'receipt', label: 'Receipt', icon: Receipt },
+  { id: 'qr-ordering', label: 'QR Ordering', icon: Utensils },
   { id: 'customer-display', label: 'Customer Display', icon: Monitor },
   { id: 'hardware', label: 'Hardware', icon: Printer },
   { id: 'cloud', label: 'Cloud & Billing', icon: Cloud },
@@ -286,6 +287,60 @@ function StaffTab() {
       </div>
 
       {barcodeUser && <UserBarcodeGenerator user={barcodeUser} onClose={() => setBarcodeUser(null)} />}
+    </div>
+  )
+}
+
+function QrOrderingTab() {
+  const { qrSettings, updateQrSettings } = useAppStore()
+  const { autoAccept, quickReplies } = qrSettings || { autoAccept: true, quickReplies: [] }
+  const [newReply, setNewReply] = React.useState('')
+
+  const handleAddReply = () => {
+    if (newReply.trim()) {
+      updateQrSettings({ quickReplies: [...quickReplies, newReply.trim()] })
+      setNewReply('')
+    }
+  }
+
+  const handleRemoveReply = (index) => {
+    updateQrSettings({ quickReplies: quickReplies.filter((_, i) => i !== index) })
+  }
+
+  return (
+    <div className="flex flex-col gap-4 animate-fade-in">
+      <SettingsSection title="QR Order Acceptance">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-bold text-gray-900">Auto-Accept Web/QR Orders</p>
+            <p className="text-xs text-gray-500 mt-1">If enabled, incoming QR orders instantly print to Kitchen.</p>
+            <p className="text-xs text-amber-600 font-semibold mt-1">If disabled, orders queue up for manual staff approval and customization.</p>
+          </div>
+          <Toggle checked={!(!autoAccept)} onChange={(v) => updateQrSettings({ autoAccept: v })} />
+        </div>
+      </SettingsSection>
+      <SettingsSection title="Pre-added Quick Replies / Customizations">
+        <p className="text-xs text-gray-500 mb-4">Add standard notes or rejection reasons that staff can select with one tap when reviewing QR orders.</p>
+        <div className="flex flex-col gap-2 mb-4">
+          {quickReplies.map((reply, i) => (
+            <div key={i} className="flex items-center justify-between p-3 border border-gray-100 bg-white rounded-xl">
+              <span className="text-sm font-medium text-gray-700">{reply}</span>
+              <button type="button" className="text-red-400 hover:text-red-600" onClick={() => handleRemoveReply(i)}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+          {quickReplies.length === 0 && <p className="text-xs text-gray-400">No quick replies configured.</p>}
+        </div>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <Input label="New Reply / Note" placeholder="e.g. Make it mild" value={newReply} onChange={e => setNewReply(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddReply()} />
+          </div>
+          <button type="button" className="btn-primary whitespace-nowrap mb-1" onClick={handleAddReply}>
+            + Add Note
+          </button>
+        </div>
+      </SettingsSection>
     </div>
   )
 }
@@ -1400,6 +1455,8 @@ export default function Settings() {
       case 'users':
         return <StaffTab />
 
+      case 'qr-ordering':
+        return <QrOrderingTab />
 
       default:
         return null

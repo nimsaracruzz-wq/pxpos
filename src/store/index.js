@@ -228,6 +228,10 @@ export const useAppStore = create(
         payments: [],
       },
       customerDisplaySettings: createCustomerDisplayDefaults(),
+      qrSettings: {
+        autoAccept: true,
+        quickReplies: ['Out of stock', 'Kitchen busy (expect delay)', 'Cannot customize this', 'Extra spicy OK'],
+      },
 
       setActiveModule: (mod) => set({ activeModule: mod }),
       toggleModule: (mod) =>
@@ -246,6 +250,8 @@ export const useAppStore = create(
         set((s) => ({ receiptSettings: { ...s.receiptSettings, ...r } })),
       updateHardwareSettings: (h) =>
         set((s) => ({ hardwareSettings: { ...s.hardwareSettings, ...h } })),
+      updateQrSettings: (q) =>
+        set((s) => ({ qrSettings: { ...s.qrSettings, ...q } })),
       activateLicense: async (key, profile = {}) => {
         const normalizedKey = String(key || '').trim().toUpperCase()
         const previousKey = String(get().licenseKey || '').trim().toUpperCase()
@@ -478,6 +484,13 @@ export const useTableStore = create(
     (set, get) => ({
       tables: SAMPLE_TABLES,
       kots: [],
+      pendingQrOrders: [],
+      addPendingQrOrder: (order) => set((s) => ({ 
+        pendingQrOrders: [...s.pendingQrOrders.filter((o) => o.id !== order.id), order] 
+      })),
+      removePendingQrOrder: (id) => set((s) => ({ 
+        pendingQrOrders: s.pendingQrOrders.filter((o) => o.id !== id) 
+      })),
       addTable: ({ number, seats = 4, status = 'available' }) =>
         set((s) => ({
           tables: [

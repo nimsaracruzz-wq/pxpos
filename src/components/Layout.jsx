@@ -159,6 +159,16 @@ export function Layout({ children }) {
         return
       }
 
+      const appState = useAppStore.getState()
+      const autoAccept = appState.qrSettings?.autoAccept !== false
+
+      if (!autoAccept) {
+        tableStore.addPendingQrOrder(incoming)
+        // Toast is imported near the top, we just need to use `toast` if it's available or window.dispatchEvent
+        // Use useAppStore's state or simply rely on the UI in Tables.jsx to show it
+        return
+      }
+
       tableStore.addKOT({
         tableId: matchingTable?.id || `web-${tableNo || 'na'}-${sessionId}`,
         tableNumber: matchingTable?.number || tableNo || 'WEB',

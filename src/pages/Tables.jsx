@@ -1179,13 +1179,249 @@ function KOTBoard({ kots, updateKOTStatus }) {
   )
 }
 
+function PendingWebOrdersBoard() {
+  const { pendingQrOrders, removePendingQrOrder, addKOT, updateTable, tables } = useTableStore()
+  const { qrSettings, businessInfo, licenseKey, taxSettings, serviceChargeSettings } = useAppStore()
+  const storeId = resolveCloudTenantId(businessInfo, licenseKey)
+  const quickReplies = qrSettings?.quickReplies || []
+  const toast = useToast()
+
+  const [activeNoteOrderId, setActiveNoteOrderId] = useState(null)
+  const [customNote, setCustomNote] = useState('')
+
+  if (!pendingQrOrders?.length) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 p-8 text-center animate-fade-in">
+        <ChefHat size={48} className="mb-4 text-gray-300 dark:text-zinc-700" />
+        <h3 className="text-xl font-bold text-gray-400 dark:text-zinc-500">No Web Orders Pending</h3>
+        <p className="mt-2 text-sm text-gray-400">Incoming web orders will appear here for review.</p>
+      </div>
+    )
+  }
+
+  const taxRate = taxSettings?.enabled ? Number(taxSettings.rate || 0) : 0
+  const serviceRate = serviceChargeSettings?.enabled ? Number(serviceChargeSettings.rate || 0) : 0
+
+  const handleAction = async (order, actionType, replyOverride = '') => {
+    let finalNote = String(order.notes || '').trim()
+    const addedNote = replyOverride || (activeNoteOrderId === order.id ? customNote.trim() : '')
+    
+    if (addedNote) {
+      finalNote = finalNote ? `${finalNote} | ${addedNote}` : addedNote
+    }
+
+    if (actionType === 'decline') {
+      import('@/lib/firebase').then(m => {
+        m.updateQRCodeOrderStatus(storeId, order.id, 'expired', { rejectReason: finalNote || 'Declined by staff' })
+      })
+      removePendingQrOrder(order.id)
+      toast.info('QR Order declined')
+      return
+    }
+
+    // Accept logic
+    const tableNo = String(order.tableNumber || '').trim()
+    const sessionId = String(order.session || `qr-${order.id}`)
+    const qrToken = String(order.token || '').trim()
+    const matchingTable = tables.find((t) => String(t.number) === tableNo)
+    const items = (Array.isArray(order.items) ? order.items : []).map(i => ({...i, qty: Number(i.qty||0)}))
+    
+    // Combine order into active table
+    if (matchingTable) {
+      const existingOrder = matchingTable.order || {}
+      const existingItems = Array.isArray(existingOrder.items) ? existingOrder.items : []
+      const mergeKey = (i) => `${String(i.id || i.name || 'x')}::${JSON.stringify(i.customization || {})}`
+      const mergedMap = new Map()
+
+      existingItems.forEach((i) => {
+        mergedMap.set(mergeKey(i), {
+          ...i, qty: Number(i.qty || 0), price: Number(i.price || i.salePrice || 0), salePrice: Number(i.salePrice || i.price || 0)
+        })
+      })
+
+      items.forEach((item) => {
+        const key = mergeKey(item)
+        const current = mergedMap.get(key)
+        if (current) {
+          mergedMap.set(key, { ...current, qty: Number(current.qty || 0) + Number(item.qty || 0) })
+        } else {
+          mergedMap.set(key, { ...item, qty: Number(item.qty || 0), price: Number(item.price || item.salePrice || 0), salePrice: Number(item.salePrice || item.price || 0) })
+        }
+      })
+
+      const mergedItems = Array.from(mergedMap.values()).filter((i) => Number(i.qty || 0) > 0)
+      const mergedSubtotal = mergedItems.reduce((sum, i) => sum + Number(i.salePrice || i.price || 0) * Number(i.qty || 0), 0)
+      const mergedTax = (mergedSubtotal * taxRate) / 100
+      const mergedServiceCharge = (mergedSubtotal * serviceRate) / 100
+      const mergedTotal = mergedSubtotal + mergedTax + mergedServiceCharge
+      
+      const existingQrIds = Array.isArray(existingOrder.qrOrderIds)
+        ? existingOrder.qrOrderIds.map((id) => String(id)).filter(Boolean)
+        : (existingOrder.qrOrderId ? [String(existingOrder.qrOrderId)] : [])
+      const mergedQrOrderIds = Array.from(new Set([...existingQrIds, String(order.id)]))
+
+      updateTable(matchingTable.id, {
+        status: 'occupied',
+        sessionId,
+        qrToken,
+        waiter: order.customerName || 'Web Customer',
+        order: {
+          items: mergedItems,
+          waiter: order.customerName || 'Web Customer',
+          notes: '',
+          kitchenNotes: finalNote,
+          source: 'web',
+          qrOrderId: order.id,
+          qrOrderIds: mergedQrOrderIds,
+          storeId,
+          token: qrToken,
+          subtotal: mergedSubtotal,
+          tax: mergedTax,
+          serviceCharge: mergedServiceCharge,
+          total: mergedTotal,
+        },
+      })
+    }
+
+    addKOT({
+      tableId: matchingTable?.id || `web-${tableNo || 'na'}-${sessionId}`,
+      tableNumber: matchingTable?.number || tableNo || 'WEB',
+      items,
+      notes: finalNote,
+      waiter: order.customerName || 'Web Customer',
+      source: 'web',
+      receiptNo: Date.now().toString(),
+      session: sessionId,
+      token: qrToken,
+      storeId,
+      qrOrderId: order.id,
+    })
+
+    const receiptNo = Date.now().toString()
+    useSalesStore.getState().addSale({
+      receiptNo,
+      date: new Date(),
+      cartItems: items,
+      items: items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
+      subtotal: Number(order.subtotal || order.total || 0),
+      discount: 0,
+      tax: Number(order.tax || 0),
+      serviceCharge: Number(order.serviceCharge || 0),
+      total: Number(order.total || 0),
+      paymentMethod: 'pending',
+      change: 0,
+      cashier: 'Web QR',
+      source: 'qr',
+      status: 'pending',
+      customerName: order.customerName || 'Guest',
+      tableNumber: tableNo,
+      notes: '',
+      kitchenNotes: finalNote,
+      qrOrderId: order.id,
+      storeId,
+      token: qrToken,
+    })
+
+    import('@/lib/firebase').then(m => {
+      m.markQRCodeOrderProcessed(storeId, order.id)
+    })
+
+    removePendingQrOrder(order.id)
+    toast.success('Order accepted & KOT generated')
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" style={{ gridAutoRows: 'max-content' }}>
+      {pendingQrOrders.map((order) => {
+        const isActiveNote = activeNoteOrderId === order.id
+        return (
+          <div key={order.id} className="bg-white dark:bg-zinc-900 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-4 shadow-sm animate-fade-in relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-amber-400"></div>
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <p className="font-black text-gray-900 dark:text-zinc-100 text-lg">Table {order.tableNumber}</p>
+                <p className="text-xs font-semibold text-amber-600 bg-amber-50 px-2 flex w-fit py-0.5 rounded-md mt-1">Pending Review</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-500">{new Date(Number(order.createdAtMs || Date.now())).toLocaleTimeString()}</p>
+                <p className="text-xs font-bold text-gray-700 mt-1">{formatCurrency(Number(order.total || 0))}</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 dark:bg-zinc-800/50 rounded-xl p-3 mb-4 space-y-1">
+              {(order.items || []).map((item) => (
+                <div key={item.id} className="flex justify-between text-sm">
+                  <span className="font-semibold text-gray-700 dark:text-zinc-300">{item.qty}× <span className="font-normal">{item.name}</span></span>
+                </div>
+              ))}
+              {!!String(order.notes || '').trim() && (
+                <p className="text-xs mt-2 italic text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-100">
+                  Customer Note: "{order.notes}"
+                </p>
+              )}
+            </div>
+
+            {/* Editing Kitchen Note before accept/decline */}
+            <div className="mb-4">
+              {isActiveNote ? (
+                <div className="space-y-2">
+                  <textarea 
+                    className="w-full text-sm border-gray-200 rounded-lg p-2 resize-none bg-white focus:border-green-500 focus:ring-1 focus:ring-green-500" 
+                    rows={2} 
+                    placeholder="Enter custom reply or kitchen note..."
+                    value={customNote}
+                    onChange={e => setCustomNote(e.target.value)}
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {quickReplies.map((reply, i) => (
+                      <button 
+                        key={i} 
+                        className="text-[10px] bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-600 px-2 py-1 rounded-full"
+                        onClick={() => setCustomNote(prev => prev ? `${prev} | ${reply}` : reply)}
+                      >
+                        {reply}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <button 
+                  className="text-xs text-blue-600 font-semibold flex flex-wrap gap-1 hover:text-blue-800"
+                  onClick={() => { setActiveNoteOrderId(order.id); setCustomNote('') }}
+                >
+                  + Add Customization / Decline Reason
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button 
+                onClick={() => handleAction(order, 'decline')}
+                className="flex-1 py-2 text-sm font-semibold rounded-xl border border-red-200 text-red-600 hover:bg-red-50"
+              >
+                Decline
+              </button>
+              <button 
+                onClick={() => handleAction(order, 'accept')}
+                className="flex-[2] py-2 text-sm font-semibold rounded-xl bg-green-600 text-white hover:bg-green-700 shadow-sm"
+              >
+                Accept to KOT
+              </button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Main Tables Page ─────────────────────────────────────────────────────────
 export default function Tables() {
-  const { tables, kots, updateTable, addKOT, updateKOTStatus, clearTable, addTable, editTable, deleteTable } = useTableStore()
+  const { tables, kots, pendingQrOrders, removePendingQrOrder, updateTable, addKOT, updateKOTStatus, clearTable, addTable, editTable, deleteTable } = useTableStore()
   const { addSale } = useSalesStore()
   const { products, adjustStock } = useProductStore()
   const { deductIngredients } = useRecipeStore()
-  const { businessInfo, licenseKey, taxSettings, serviceChargeSettings } = useAppStore()
+  const { businessInfo, licenseKey, taxSettings, serviceChargeSettings, qrSettings } = useAppStore()
   const { currentUser } = useAuthStore()
   const { addLog } = useActivityStore()
   const toast = useToast()
@@ -1470,6 +1706,17 @@ export default function Tables() {
                 )}
               </button>
               <button
+                onClick={() => setView('web-orders')}
+                className={cn('btn-ghost relative dark:text-zinc-200', view === 'web-orders' && 'bg-green-50 dark:bg-green-900/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800')}
+              >
+                <Globe size={14} /> Web Orders
+                {(pendingQrOrders?.length || 0) > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">
+                    {pendingQrOrders.length}
+                  </span>
+                )}
+              </button>
+              <button
                 onClick={() => setShowManageTables(true)}
                 className="btn-ghost dark:text-zinc-200"
               >
@@ -1504,8 +1751,10 @@ export default function Tables() {
               <TableCard key={t.id} table={t} onClick={handleTableClick} />
             ))}
           </div>
-        ) : (
+        ) : view === 'kitchen' ? (
           <KOTBoard kots={kots} updateKOTStatus={updateKOTStatus} />
+        ) : (
+          <PendingWebOrdersBoard />
         )}
       </div>
 
