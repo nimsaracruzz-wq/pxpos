@@ -1,31 +1,42 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { validateLicense } from '@/lib/license'
 import { useAppStore } from '@/store'
 import { BRAND } from '@/lib/brand'
+import { KeyRound, ShieldCheck, Sun, Moon, ArrowRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 
 export default function Activation() {
-  const [key, setKey]         = useState('')
-  const [status, setStatus]   = useState('idle') // idle | loading | error | success
+  const [key, setKey] = useState('')
+  const [status, setStatus] = useState('idle') // idle | loading | error | success
   const [message, setMessage] = useState('')
+  const [mounted, setMounted] = useState(false)
   const activateLicense = useAppStore((s) => s.activateLicense)
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
   const isDark = theme === 'dark'
 
-  // Normalize key input while allowing full-length product keys.
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   function handleInput(e) {
     const normalized = e.target.value
       .toUpperCase()
       .replace(/\s+/g, '')
       .replace(/[^A-Z0-9-]/g, '')
     setKey(normalized)
+    
+    // Auto-clear error when user starts typing again
+    if (status === 'error') {
+      setStatus('idle')
+      setMessage('')
+    }
   }
 
   async function handleActivate(e) {
     e.preventDefault()
     if (key.trim().length < 8) {
       setStatus('error')
-      setMessage('Please enter a valid full license key.')
+      setMessage('Please enter a valid format license key')
       return
     }
     setStatus('loading')
@@ -33,166 +44,177 @@ export default function Activation() {
     const result = await validateLicense(key)
     if (result.valid) {
       setStatus('success')
-      setMessage(`Welcome, ${result.businessName}!`)
-      setTimeout(() => activateLicense(key, result), 1200)
+      setMessage(`Welcome to ${BRAND.name}, ${result.businessName}!`)
+      setTimeout(() => activateLicense(key, result), 1500)
     } else {
       setStatus('error')
       setMessage(result.error)
     }
   }
 
+  if (!mounted) return null
+
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: isDark
-        ? 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)'
-        : 'linear-gradient(135deg, #ecfeff, #d1fae5, #dcfce7)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontFamily: "'Inter', sans-serif",
-      padding: '24px',
-    }}>
+    <div className={`min-h-screen relative flex items-center justify-center overflow-hidden transition-colors duration-500 ${isDark ? 'bg-[#0a0a0a]' : 'bg-[#f4f7f5]'}`}>
+      
+      {/* Decorative Orbs */}
+      <div className="absolute top-[-10%] left-[-5%] w-[500px] h-[500px] rounded-full mix-blend-multiply filter blur-[80px] opacity-70 animate-pulse-slow" 
+           style={{ backgroundColor: isDark ? 'rgba(79, 70, 229, 0.15)' : 'rgba(16, 185, 129, 0.15)', animationDuration: '8s' }} />
+      <div className="absolute bottom-[-10%] right-[-5%] w-[600px] h-[600px] rounded-full mix-blend-multiply filter blur-[100px] opacity-70 animate-pulse-slow" 
+           style={{ backgroundColor: isDark ? 'rgba(168, 85, 247, 0.12)' : 'rgba(52, 211, 153, 0.15)', animationDuration: '12s' }} />
+
+      {/* Theme Toggle Overlay */}
       <button
         type="button"
         onClick={toggleTheme}
+        className="absolute top-6 right-6 p-3 rounded-2xl backdrop-blur-md shadow-sm border transition-all duration-300 hover:scale-105 active:scale-95"
         style={{
-          position: 'fixed',
-          top: 20,
-          right: 20,
-          width: 42,
-          height: 42,
-          borderRadius: 12,
-          border: `1px solid ${isDark ? 'rgba(255,255,255,0.2)' : 'rgba(100,116,139,0.16)'}`,
-          background: isDark ? 'rgba(15,23,42,0.85)' : '#ffffff',
-          color: isDark ? '#facc15' : '#475569',
-          cursor: 'pointer',
-          fontSize: 18,
+          background: isDark ? 'rgba(39,39,42,0.6)' : 'rgba(255,255,255,0.7)',
+          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
         }}
-        title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       >
-        {isDark ? '☀️' : '🌙'}
+        {isDark ? <Sun className="w-5 h-5 text-yellow-400" /> : <Moon className="w-5 h-5 text-gray-500" />}
       </button>
 
-      {/* Glow blobs */}
-      <div style={{ position: 'fixed', top: '-200px', left: '-200px', width: '600px', height: '600px', borderRadius: '50%', background: isDark ? 'radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%)' : 'radial-gradient(circle, rgba(16,185,129,0.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
-      <div style={{ position: 'fixed', bottom: '-200px', right: '-200px', width: '600px', height: '600px', borderRadius: '50%', background: isDark ? 'radial-gradient(circle, rgba(168,85,247,0.12) 0%, transparent 70%)' : 'radial-gradient(circle, rgba(34,197,94,0.16) 0%, transparent 70%)', pointerEvents: 'none' }} />
-
-      <div style={{
-        background: isDark ? 'rgba(15,23,42,0.95)' : '#ffffff',
-        border: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#edf1f5'}`,
-        borderRadius: '24px',
-        padding: '48px 40px',
-        width: '100%',
-        maxWidth: '460px',
-        boxShadow: isDark ? '0 32px 80px rgba(0,0,0,0.5)' : '0 28px 70px rgba(16,185,129,0.18)',
-        textAlign: 'center',
-      }}>
-        {/* Logo */}
-        <div style={{ marginBottom: '32px' }}>
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '72px', height: '72px',
-            borderRadius: '20px',
-            background: 'linear-gradient(135deg, #6366f1, #a855f7)',
-            marginBottom: '20px',
-            boxShadow: '0 8px 32px rgba(99,102,241,0.4)',
-          }}>
-            <span style={{ fontSize: '32px' }}>🔐</span>
-          </div>
-          <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 700, color: isDark ? '#fff' : '#334155', letterSpacing: '-0.5px' }}>
-            {BRAND.name} POS
-          </h1>
-          <p style={{ margin: '8px 0 0', color: isDark ? 'rgba(255,255,255,0.5)' : '#475569', fontSize: '14px' }}>
-            Enter your license key to activate
-          </p>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleActivate}>
-          <div style={{ marginBottom: '16px', textAlign: 'left' }}>
-            <label style={{ display: 'block', color: isDark ? 'rgba(255,255,255,0.6)' : '#64748b', fontSize: '12px', fontWeight: 600, marginBottom: '8px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-              License Key
-            </label>
-            <input
-              type="text"
-              value={key}
-              onChange={handleInput}
-              placeholder="PX-XXXX-XXXX-XXXX"
-              maxLength={64}
-              disabled={status === 'loading' || status === 'success'}
-              style={{
-                width: '100%',
-                padding: '14px 18px',
-                background: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.96)',
-                border: `1.5px solid ${status === 'error' ? '#f87171' : status === 'success' ? '#34d399' : (isDark ? 'rgba(255,255,255,0.15)' : '#cbd5e1')}`,
-                borderRadius: '12px',
-                color: isDark ? '#fff' : '#334155',
-                fontSize: '20px',
-                fontWeight: 700,
-                letterSpacing: '3px',
-                outline: 'none',
-                textAlign: 'center',
-                boxSizing: 'border-box',
-                transition: 'border-color 0.2s',
-                fontFamily: 'monospace',
-              }}
-            />
-          </div>
-
-          {/* Status message */}
-          {message && (
-            <div style={{
-              padding: '12px 16px',
-              borderRadius: '10px',
-              background: status === 'error' ? 'rgba(248,113,113,0.1)' : (isDark ? 'rgba(52,211,153,0.1)' : 'rgba(16,185,129,0.12)'),
-              border: `1px solid ${status === 'error' ? 'rgba(248,113,113,0.3)' : 'rgba(52,211,153,0.3)'}`,
-              color: status === 'error' ? '#f87171' : '#34d399',
-              fontSize: '13px',
-              marginBottom: '16px',
-              textAlign: 'left',
-            }}>
-              {status === 'error' ? '⚠️ ' : '✅ '}{message}
+      {/* Main Activation Card */}
+      <main className="relative z-10 w-full max-w-[480px] p-6 lg:p-0">
+        <div 
+          className="rounded-[32px] overflow-hidden backdrop-blur-2xl transition-all duration-500"
+          style={{
+            background: isDark ? 'rgba(24,24,27,0.65)' : 'rgba(255,255,255,0.85)',
+            boxShadow: isDark 
+              ? '0 0 0 1px rgba(255,255,255,0.05), 0 30px 60px rgba(0,0,0,0.6)' 
+              : '0 0 0 1px rgba(0,0,0,0.02), 0 30px 60px rgba(0,0,0,0.06)',
+          }}
+        >
+          <div className="p-10 sm:p-12">
+            
+            {/* Header Area */}
+            <div className="flex flex-col items-center mb-10 text-center">
+              <div 
+                className="w-20 h-20 rounded-[24px] flex items-center justify-center mb-6 shadow-xl relative"
+                style={{
+                  background: isDark ? 'linear-gradient(135deg, #4f46e5, #9333ea)' : 'linear-gradient(135deg, #10b981, #059669)',
+                  boxShadow: isDark ? '0 12px 30px rgba(79,70,229,0.3)' : '0 12px 30px rgba(16,185,129,0.3)'
+                }}
+              >
+                {/* Embedded subtle glow behind icon */}
+                <div className="absolute inset-0 bg-white opacity-20 rounded-[24px] rounded-br-[48px]" />
+                <ShieldCheck className="w-9 h-9 text-white relative z-10" />
+              </div>
+              
+              <h1 className="text-3xl font-black tracking-tight mb-2" style={{ color: isDark ? '#ffffff' : '#111827' }}>
+                Activate {BRAND.name}
+              </h1>
+              <p className="text-[15px] font-medium" style={{ color: isDark ? '#a1a1aa' : '#6b7280' }}>
+                Securely bind this device to your business.
+              </p>
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={status === 'loading' || status === 'success'}
-            style={{
-              width: '100%',
-              padding: '14px',
-              background: status === 'success'
-                ? 'linear-gradient(135deg, #059669, #34d399)'
-                : isDark
-                  ? 'linear-gradient(135deg, #6366f1, #a855f7)'
-                  : 'linear-gradient(135deg, #0f766e, #10b981)',
-              border: 'none',
-              borderRadius: '12px',
-              color: '#fff',
-              fontSize: '16px',
-              fontWeight: 700,
-              cursor: status === 'loading' || status === 'success' ? 'not-allowed' : 'pointer',
-              opacity: status === 'loading' ? 0.8 : 1,
-              transition: 'all 0.2s',
-              letterSpacing: '0.3px',
-              boxShadow: '0 4px 20px rgba(99,102,241,0.3)',
-            }}
-          >
-            {status === 'loading' ? '⏳ Verifying...' : status === 'success' ? '✅ Activated! Loading...' : '🚀 Activate License'}
-          </button>
-        </form>
+            {/* Input Form */}
+            <form onSubmit={handleActivate} className="flex flex-col gap-6">
+              
+              <div className="flex flex-col gap-2">
+                <label className="text-[11px] font-bold uppercase tracking-widest pl-1" style={{ color: isDark ? '#71717a' : '#9ca3af' }}>
+                  License Key
+                </label>
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <KeyRound className="w-5 h-5 transition-colors duration-200" style={{ color: status === 'error' ? '#ef4444' : status === 'success' ? '#10b981' : isDark ? '#52525b' : '#9ca3af' }} />
+                  </div>
+                  <input
+                    type="text"
+                    value={key}
+                    onChange={handleInput}
+                    placeholder="ENTER-YOUR-KEY-HERE"
+                    maxLength={30}
+                    disabled={status === 'loading' || status === 'success'}
+                    autoFocus
+                    className="w-full pl-12 pr-4 py-4 rounded-2xl outline-none text-center tracking-widest font-mono text-lg font-bold transition-all duration-300"
+                    style={{
+                      background: isDark ? 'rgba(0,0,0,0.3)' : 'rgba(243,244,246,0.6)',
+                      color: isDark ? '#ffffff' : '#111827',
+                      border: `1.5px solid ${
+                        status === 'error' ? 'rgba(239, 68, 68, 0.4)' 
+                        : status === 'success' ? 'rgba(16, 185, 129, 0.4)' 
+                        : isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'
+                      }`,
+                      boxShadow: status === 'error' 
+                        ? '0 0 0 4px rgba(239,68,68,0.08)' 
+                        : status === 'success' ? '0 0 0 4px rgba(16,185,129,0.08)' : 'none'
+                    }}
+                  />
+                </div>
+              </div>
 
-        {/* Footer */}
-        <p style={{ marginTop: '32px', color: isDark ? 'rgba(255,255,255,0.3)' : '#64748b', fontSize: '12px' }}>
-          Don't have a license?{' '}
-          <span style={{ color: isDark ? 'rgba(99,102,241,0.8)' : '#0f766e', cursor: 'pointer' }}>
-            Contact {BRAND.name} Support
-          </span>
-        </p>
-      </div>
+              {/* Dynamic Status / Error Panel */}
+              <div className={`overflow-hidden transition-all duration-300 ease-out flex flex-col gap-3 ${message ? 'max-h-[100px] opacity-100 mt-1' : 'max-h-0 opacity-0'}`}>
+                <div className="flex items-start gap-2.5 p-3.5 rounded-xl border" style={{
+                  background: status === 'error' ? (isDark ? 'rgba(239, 68, 68, 0.08)' : 'rgba(254, 226, 226, 0.5)') : (isDark ? 'rgba(16, 185, 129, 0.08)' : 'rgba(209, 250, 229, 0.5)'),
+                  borderColor: status === 'error' ? (isDark ? 'rgba(239, 68, 68, 0.2)' : 'rgba(252, 165, 165, 0.5)') : (isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(167, 243, 208, 0.5)'),
+                }}>
+                  {status === 'error' ? <AlertCircle className="w-4 h-4 mt-0.5 text-red-500 shrink-0" /> : <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-500 shrink-0" />}
+                  <p className="text-sm font-medium leading-relaxed" style={{ color: status === 'error' ? (isDark ? '#fca5a5' : '#b91c1c') : (isDark ? '#6ee7b7' : '#047857') }}>
+                    {message}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-2">
+                <button
+                  type="submit"
+                  disabled={status === 'loading' || status === 'success' || !key}
+                  className="w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold text-white transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg active:scale-[0.98]"
+                  style={{
+                    background: status === 'success' 
+                      ? (isDark ? '#10b981' : '#059669')
+                      : (isDark ? '#4f46e5' : '#10b981'),
+                  }}
+                >
+                  {status === 'loading' ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Validating Securely...
+                    </>
+                  ) : status === 'success' ? (
+                    <>
+                      <CheckCircle2 className="w-5 h-5" />
+                      System Verified
+                    </>
+                  ) : (
+                    <>
+                      Activate Software
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+            
+          </div>
+          
+          {/* Footer Ribbon */}
+          <div className="py-5 text-center backdrop-blur-md border-t" style={{ 
+            background: isDark ? 'rgba(0,0,0,0.1)' : 'rgba(249,250,251,0.5)',
+            borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'
+          }}>
+            <p className="text-xs font-medium" style={{ color: isDark ? '#71717a' : '#6b7280' }}>
+              Need assistance? <span className="font-bold cursor-pointer transition-colors" style={{ color: isDark ? '#a855f7' : '#059669' }}>Contact Provider</span>
+            </p>
+          </div>
+        </div>
+      </main>
+      
+      {/* Soft CSS Animations */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes pulse-slow {
+          0%, 100% { transform: scale(1); opacity: 0.7; }
+          50% { transform: scale(1.05); opacity: 0.5; }
+        }
+        .animate-pulse-slow {
+          animation: pulse-slow infinite ease-in-out;
+        }
+      `}} />
     </div>
   )
 }

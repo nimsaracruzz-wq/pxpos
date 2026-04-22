@@ -4,7 +4,7 @@ import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Sear
 import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
-import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession } from '@/lib/firebase'
+import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings } from '@/lib/firebase'
 
 const I18N = {
   en: {
@@ -159,7 +159,15 @@ export default function PublicMenu() {
   const effectiveSession = rawSession && rawSession !== 'static' ? rawSession : `table-${tableNo || 'na'}`
 
   const { products } = useProductStore()
-  const { taxSettings, serviceChargeSettings, businessInfo, receiptSettings } = useAppStore()
+  const appStore = useAppStore()
+  const [cloudSettings, setCloudSettings] = useState(null)
+  
+  const isElectron = typeof window !== 'undefined' && Boolean(window?.require)
+  const taxSettings = (!isElectron && cloudSettings?.taxSettings) ? cloudSettings.taxSettings : appStore.taxSettings
+  const serviceChargeSettings = (!isElectron && cloudSettings?.serviceChargeSettings) ? cloudSettings.serviceChargeSettings : appStore.serviceChargeSettings
+  const businessInfo = (!isElectron && cloudSettings?.businessInfo) ? cloudSettings.businessInfo : appStore.businessInfo
+  const receiptSettings = (!isElectron && cloudSettings?.receiptSettings) ? cloudSettings.receiptSettings : appStore.receiptSettings
+
   const [customerName, setCustomerName] = useState('')
   const [notes, setNotes] = useState('')
   const [cart, setCart] = useState([])
@@ -222,10 +230,19 @@ export default function PublicMenu() {
     }
   }, [decodedStoreId])
 
+  useEffect(() => {
+    if (!decodedStoreId) return () => {}
+    const unsubscribe = subscribeToStoreSettings(decodedStoreId, (settings) => {
+      if (settings) {
+        setCloudSettings(settings)
+      }
+    })
+    return () => unsubscribe()
+  }, [decodedStoreId])
+
   // Detect if running inside Electron (POS desktop app) vs mobile browser.
   // In Electron, local products are always fresh from SQLite — use them.
   // In a mobile browser, local IndexedDB products are STALE CACHE — always use cloudProducts.
-  const isElectron = typeof window !== 'undefined' && Boolean(window?.require)
   const productSource = isElectron ? products : cloudProducts
 
   const menuItems = useMemo(() => {

@@ -33,7 +33,7 @@ import { syncWithCloud } from '@/lib/firebase'
 export default function App() {
   const { currentUser, logout }              = useAuthStore()
   const { licenseActive, licenseKey, theme } = useAppStore()
-  const [checking, setChecking]              = useState(true)
+  const [checking, setChecking]              = useState(() => !useAppStore.getState()?.licenseActive)
   const [initialCloudHydration, setInitialCloudHydration] = useState(false)
   const [storeHydrated, setStoreHydrated] = useState(() => useAppStore.persist?.hasHydrated?.() ?? true)
   const hydratedLicenseRef = useRef('')
@@ -142,22 +142,11 @@ export default function App() {
       setChecking(false)
     }
 
+    // Only do a quiet single check on load instead of pinging every 30 seconds
     check()
-    const intervalId = window.setInterval(check, 30000)
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        check()
-      }
-    }
-
-    window.addEventListener('focus', check)
-    document.addEventListener('visibilitychange', handleVisibility)
 
     return () => {
       cancelled = true
-      window.clearInterval(intervalId)
-      window.removeEventListener('focus', check)
-      document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [licenseActive, licenseKey, logout, storeHydrated])
 

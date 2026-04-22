@@ -729,49 +729,39 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
   const { subtotal, tax, serviceCharge, total: grandTotal } = computeTotals(order.items)
 
   const sendKOT = async () => {
-    if (!order.items.length) { toast.error('Add items first'); return }
     const normalizedNotes = (notes || '').trim()
     const latestTableState = useTableStore.getState().tables.find((t) => t.id === table.id)
     const savedItems = Array.isArray(latestTableState?.order?.items) ? latestTableState.order.items : []
     const currentItems = Array.isArray(order.items) ? order.items : []
 
-    const mergeKey = (item) => `${String(item.id || item.name || 'x')}::${JSON.stringify(item.customization || {})}`
-    const mergedMap = new Map()
-
-    savedItems.forEach((item) => {
-      const key = mergeKey(item)
-      mergedMap.set(key, {
-        ...item,
-        qty: Number(item.qty || 0),
-        price: Number(item.price || item.salePrice || 0),
-        salePrice: Number(item.salePrice || item.price || 0),
-      })
-    })
-
-    currentItems.forEach((item) => {
-      const key = mergeKey(item)
-      const normalized = {
-        ...item,
-        qty: Number(item.qty || 0),
-        price: Number(item.price || item.salePrice || 0),
-        salePrice: Number(item.salePrice || item.price || 0),
-      }
-      const existing = mergedMap.get(key)
-      if (!existing) {
-        mergedMap.set(key, normalized)
+    // Trust the staff's edited quantities completely.
+    const mergedItems = currentItems.filter((item) => Number(item.qty || 0) > 0)
+    
+    if (!mergedItems.length) { 
+      if (savedItems.length > 0) {
+        // Staff removed all items. Cancel the order completely.
+        const syncStoreId = tenantStoreId
+        if (syncStoreId && table?.sessionId) {
+            const { overwriteQRCodeHistoryWithPOSKOT } = await import('@/lib/firebase')
+            // Pass empty items map and set status to cancelled
+            await overwriteQRCodeHistoryWithPOSKOT(syncStoreId, table.sessionId, {
+              status: 'cancelled',
+              items: [],
+              total: 0
+            })
+        }
+        clearTable(table.id)
+        toast.info(`Order for Table ${table.number} has been completely cleared.`)
+        onClose()
         return
+      } else {
+        toast.error('Add items first')
+        return 
       }
+    }
 
-      // Keep the higher qty to avoid accidental total drops from stale local state.
-      mergedMap.set(key, {
-        ...existing,
-        ...normalized,
-        qty: Math.max(Number(existing.qty || 0), Number(normalized.qty || 0)),
-      })
-    })
-
-    const mergedItems = Array.from(mergedMap.values()).filter((item) => Number(item.qty || 0) > 0)
     const totals = computeTotals(mergedItems)
+
     const existingQrIds = Array.isArray(order?.qrOrderIds)
       ? order.qrOrderIds.map((id) => String(id)).filter(Boolean)
       : (order?.qrOrderId ? [String(order.qrOrderId)] : [])
@@ -779,7 +769,10 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
     let nextQrIds = existingQrIds
     const syncStoreId = tenantStoreId
     if (syncStoreId && table?.number && table?.sessionId && table?.qrToken) {
-      const publishResult = await publishPOSOrderToQRCodeHistory({
+      // We import overwriteQRCodeHistoryWithPOSKOT below when needed, but first let's replace the publish call
+      // Wait, we need to pass existing qr order logic to Firebase to overwrite session history.
+      const { overwriteQRCodeHistoryWithPOSKOT } = await import('@/lib/firebase')
+      const publishResult = await overwriteQRCodeHistoryWithPOSKOT(syncStoreId, table.sessionId, {
         storeId: syncStoreId,
         tableNumber: table.number,
         session: table.sessionId,
@@ -805,7 +798,7 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
       })
 
       if (publishResult?.success && publishResult.id) {
-        nextQrIds = Array.from(new Set([...existingQrIds, String(publishResult.id)]))
+        nextQrIds = [String(publishResult.id)]
       }
     }
 

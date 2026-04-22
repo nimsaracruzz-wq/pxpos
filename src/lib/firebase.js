@@ -393,6 +393,47 @@ export async function publishPOSOrderToQRCodeHistory(order) {
   }
 }
 
+export async function overwriteQRCodeHistoryWithPOSKOT(storeId, session, order) {
+  try {
+    const key = String(storeId || '').trim()
+    const sessionKey = String(session || '').trim()
+    if (!key || !sessionKey) return { success: false, error: 'Store ID and session are required' }
+
+    const rdb = ensureRealtimeDb()
+    if (!rdb) return { success: false, error: 'Realtime database unavailable' }
+
+    // 1. Fetch all existing qr_orders for this session
+    const q = query(collection(rdb, 'stores', key, 'qr_orders'), where('session', '==', sessionKey))
+    const snapshot = await getDocs(q)
+    
+    // 2. Delete them using a batch
+    const batch = writeBatch(rdb)
+    snapshot.docs.forEach((docSnap) => {
+      batch.delete(docSnap.ref)
+    })
+    
+    // 3. Create the new consolidated one from the POS
+    const newRef = doc(collection(rdb, 'stores', key, 'qr_orders'))
+    batch.set(newRef, {
+      ...order,
+      storeId: key,
+      session: sessionKey,
+      source: 'pos_adjustment',
+      status: 'accepted',
+      createdAt: serverTimestamp(),
+      createdAtMs: Date.now(),
+      processedAt: serverTimestamp(),
+      processedAtMs: Date.now(),
+    })
+    
+    await batch.commit()
+    return { success: true, id: newRef.id }
+  } catch (error) {
+    console.error('[Firebase] overwriteQRCodeHistoryWithPOSKOT failed:', error)
+    return { success: false, error: error?.message || 'Failed to overwrite POS logic' }
+  }
+}
+
 export function subscribeToStoreProducts(storeId, onProducts) {
   try {
     const key = String(storeId || '').trim()
@@ -656,6 +697,24 @@ export function subscribeToTableQrSession(storeId, tableNumber, onSession) {
     })
   } catch (error) {
     console.error('[Firebase] subscribeToTableQrSession failed:', error)
+    return () => {}
+  }
+}
+
+export function subscribeToStoreSettings(storeId, onSettings) {
+  try {
+    const key = String(storeId || '').trim()
+    if (!key) return () => {}
+
+    const rdb = ensureRealtimeDb()
+    if (!rdb) return () => {}
+
+    return onSnapshot(doc(rdb, 'stores', key, 'settings', 'app'), (snap) => {
+      if (!snap.exists()) return
+      onSettings(snap.data())
+    })
+  } catch (error) {
+    console.error('[Firebase] subscribeToStoreSettings failed:', error)
     return () => {}
   }
 }

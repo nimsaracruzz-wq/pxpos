@@ -234,10 +234,14 @@ export const useAppStore = create(
         set((s) => ({ modules: { ...s.modules, [mod]: !s.modules[mod] } })),
       updateBusinessInfo: (info) =>
         set((s) => ({ businessInfo: ensureBusinessStoreId({ ...s.businessInfo, ...info, publicMenuBaseUrl: normalizePublicMenuBaseUrl(info?.publicMenuBaseUrl ?? s.businessInfo.publicMenuBaseUrl) }) })),
-      updateTaxSettings: (t) =>
-        set((s) => ({ taxSettings: { ...s.taxSettings, ...t } })),
-      updateServiceChargeSettings: (sc) =>
-        set((s) => ({ serviceChargeSettings: { ...s.serviceChargeSettings, ...sc } })),
+      updateTaxSettings: (t) => {
+        set((s) => ({ taxSettings: { ...s.taxSettings, ...t } }))
+        import('@/lib/firebase').then(m => m.syncToCloud?.())
+      },
+      updateServiceChargeSettings: (sc) => {
+        set((s) => ({ serviceChargeSettings: { ...s.serviceChargeSettings, ...sc } }))
+        import('@/lib/firebase').then(m => m.syncToCloud?.())
+      },
       updateReceiptSettings: (r) =>
         set((s) => ({ receiptSettings: { ...s.receiptSettings, ...r } })),
       updateHardwareSettings: (h) =>
