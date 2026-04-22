@@ -101,8 +101,8 @@ function emptyForm() {
   }
 }
 
-export default function LicensePortal() {
-  const portalUrl = 'https://ceypos.paxxmo.com/license-portal'
+export default function AdminPortal() {
+  const portalUrl = 'https://ceypos.paxxmo.com/admin-portal'
   const toast = useToast()
   const [portalSession, setPortalSession] = useState(() => getPortalSession())
   const [portalAdmins, setPortalAdmins] = useState([])
@@ -123,6 +123,7 @@ export default function LicensePortal() {
   const [profileForm, setProfileForm] = useState({ fullName: '', email: '', currentPassword: '', newPassword: '' })
   const [notificationModalOpen, setNotificationModalOpen] = useState(false)
   const [notificationForm, setNotificationForm] = useState({ licenseKey: '', message: '', type: 'info', title: 'Portal Alert' })
+  const [activeTab, setActiveTab] = useState('licenses')
 
   const loadPortalAdmins = async () => {
     try {
@@ -428,8 +429,8 @@ export default function LicensePortal() {
         
         <div className="relative w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.02] backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-8 animate-scale-in">
           <div className="text-center mb-6">
-            <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">{BRAND.name} Portal</p>
-            <h1 className="text-3xl font-black mt-2">License Management Login</h1>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">{BRAND.name} Admin</p>
+            <h1 className="text-3xl font-black mt-2">Portal Login</h1>
             <p className="text-sm text-slate-300 mt-2">
               Sign in to manage licenses or create the first super-admin portal account.
             </p>
@@ -523,10 +524,10 @@ export default function LicensePortal() {
         <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl p-8 shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
           <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">Super Admin Portal</p>
-              <h1 className="text-3xl font-black mt-2">License Management</h1>
+              <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">Super Admin</p>
+              <h1 className="text-3xl font-black mt-2">Web Admin Portal</h1>
               <p className="text-sm text-slate-300 mt-2 max-w-2xl">
-                Create, activate, revoke, and transfer licenses for {BRAND.name}. Data is stored in your Firebase <span className="font-mono">licenses</span> collection.
+                Global overview and management for {BRAND.name}.
               </p>
               <p className="text-xs text-slate-400 mt-2">
                 Direct link: <span className="font-mono text-emerald-300">{portalUrl}</span>
@@ -542,50 +543,74 @@ export default function LicensePortal() {
               <Button variant="ghost" onClick={handleLogout} disabled={saving}>
                 <LogOut size={15} /> Logout
               </Button>
-              <Button variant="secondary" onClick={loadLicenses} disabled={loading || saving}>
-                <RefreshCcw size={15} /> Refresh
-              </Button>
-              <Button onClick={openCreate} disabled={saving}>
-                <Plus size={15} /> New License
-              </Button>
+              {activeTab === 'licenses' && (
+                <>
+                  <Button variant="secondary" onClick={loadLicenses} disabled={loading || saving}>
+                    <RefreshCcw size={15} /> Refresh
+                  </Button>
+                  <Button onClick={openCreate} disabled={saving}>
+                    <Plus size={15} /> New License
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 stagger">
-            {[
-              { label: 'Total', value: stats.total, color: 'text-white' },
-              { label: 'Active', value: stats.active, color: 'text-emerald-400' },
-              { label: 'Inactive', value: stats.inactive, color: 'text-rose-400' },
-              { label: 'Expiring 30d', value: stats.expiringSoon, color: 'text-amber-400' },
-            ].map((stat) => (
-              <div key={stat.label} className="group relative overflow-hidden rounded-2xl border border-white/5 bg-white/[0.01] p-5 transition-all duration-300 hover:bg-white/[0.03] hover:-translate-y-1 hover:border-white/10 hover:shadow-xl">
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400 font-bold">{stat.label}</p>
-                <p className={`text-4xl font-black mt-3 ${stat.color}`}>{stat.value}</p>
+          <div className="flex items-center gap-4 mt-8 border-b border-white/10 pb-4">
+            <button
+              onClick={() => setActiveTab('licenses')}
+              className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all ${activeTab === 'licenses' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'}`}
+            >
+              Licenses
+            </button>
+            <button
+              onClick={() => setActiveTab('admins')}
+              className={`text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition-all ${activeTab === 'admins' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'}`}
+            >
+              Portal Admins
+            </button>
+          </div>
+
+          {activeTab === 'licenses' && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 stagger">
+                {[
+                  { label: 'Total', value: stats.total, color: 'text-white' },
+                  { label: 'Active', value: stats.active, color: 'text-emerald-400' },
+                  { label: 'Inactive', value: stats.inactive, color: 'text-rose-400' },
+                  { label: 'Expiring 30d', value: stats.expiringSoon, color: 'text-amber-400' },
+                ].map((stat) => (
+                  <div key={stat.label} className="group relative overflow-hidden rounded-2xl border border-white/5 bg-white/[0.01] p-5 transition-all duration-300 hover:bg-white/[0.03] hover:-translate-y-1 hover:border-white/10 hover:shadow-xl">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400 font-bold">{stat.label}</p>
+                    <p className={`text-4xl font-black mt-3 ${stat.color}`}>{stat.value}</p>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-4 mt-8">
-            <div className="relative group">
-              <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-400 transition-colors" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by key, business, email, owner, plan"
-                className="w-full relative rounded-2xl border border-white/5 bg-white/[0.02] py-3.5 pl-11 pr-4 text-sm outline-none focus:border-emerald-400/50 focus:bg-white/[0.04] transition-all duration-300"
-              />
-            </div>
-            <Select value={activeOnly} onChange={(e) => setActiveOnly(e.target.value)}>
-              <option value="all">All Status</option>
-              <option value="true">Active</option>
-              <option value="false">Inactive</option>
-            </Select>
-          </div>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-4 mt-8">
+                <div className="relative group">
+                  <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                  <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-400 transition-colors" />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search by key, business, email, owner, plan"
+                    className="w-full relative rounded-2xl border border-white/5 bg-white/[0.02] py-3.5 pl-11 pr-4 text-sm outline-none focus:border-emerald-400/50 focus:bg-white/[0.04] transition-all duration-300"
+                  />
+                </div>
+                <Select value={activeOnly} onChange={(e) => setActiveOnly(e.target.value)}>
+                  <option value="all">All Status</option>
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </Select>
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)] animate-slide-up" style={{ animationDelay: '0.1s' }}>
+        {activeTab === 'licenses' && (
+          <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)] animate-slide-up" style={{ animationDelay: '0.1s' }}>
           {loading ? (
             <div className="p-16 flex flex-col items-center justify-center text-slate-300 gap-3">
               <Loader2 className="animate-spin text-emerald-400" size={24} />
@@ -691,6 +716,31 @@ export default function LicensePortal() {
             </div>
           )}
         </div>
+        )}
+
+        {activeTab === 'admins' && (
+          <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)] animate-slide-up p-8" style={{ animationDelay: '0.1s' }}>
+            <h2 className="text-xl font-bold mb-4">Portal Administrators</h2>
+            <table className="w-full text-sm">
+              <thead className="bg-white/[0.03] text-slate-400 uppercase tracking-[0.14em] text-[11px] border-b border-white/5">
+                <tr>
+                  <th className="text-left px-4 py-3">Username</th>
+                  <th className="text-left px-4 py-3">Name</th>
+                  <th className="text-left px-4 py-3">Role</th>
+                </tr>
+              </thead>
+              <tbody>
+                {portalAdmins.map((admin) => (
+                  <tr key={admin.username} className="border-b border-white/5">
+                    <td className="px-4 py-4">{admin.username}</td>
+                    <td className="px-4 py-4">{admin.fullName || '-'}</td>
+                    <td className="px-4 py-4"><Badge variant="blue">{admin.role}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <Modal

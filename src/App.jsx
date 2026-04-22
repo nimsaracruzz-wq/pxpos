@@ -23,7 +23,7 @@ import WebOrders from '@/pages/WebOrders'
 import Refunds from '@/pages/Refunds'
 import PublicMenu from '@/pages/PublicMenu'
 import CustomerScreen from '@/pages/CustomerScreen'
-import LicensePortal from '@/pages/LicensePortal'
+import AdminPortal from '@/pages/AdminPortal'
 import Login from '@/pages/Login'
 import Activation from '@/pages/Activation'
 import { useAuthStore, useAppStore } from '@/store'
@@ -58,11 +58,11 @@ export default function App() {
   })()
   const isHashPublicMenuRoute = hashPath.startsWith('/menu/') || hashPath.includes('/menu/')
   const isHashCustomerRoute = hashPath.startsWith('/customer-screen')
-  const isHashLicensePortalRoute = hashPath.startsWith('/license-portal')
+  const isHashAdminPortalRoute = hashPath.startsWith('/admin-portal')
   const hasQrQueryMarkers = /(?:\?|&)(table|session|token|guests)=/i.test(decodedHref)
   const hasMenuMarker = /(?:\/|#|%2f)menu(?:\/|%2f)/i.test(decodedHref)
   const forcePublicMenuFromHref = hasMenuMarker || (hasQrQueryMarkers && /menu/i.test(decodedHref))
-  const Router = isFileProtocol || isHashPublicMenuRoute || isHashCustomerRoute || isHashLicensePortalRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
+  const Router = isFileProtocol || isHashPublicMenuRoute || isHashCustomerRoute || isHashAdminPortalRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
   const currentPath = (() => {
     if (typeof window === 'undefined') return '/'
     if (isFileProtocol) {
@@ -74,7 +74,7 @@ export default function App() {
     if (isHashCustomerRoute) {
       return hashPath || '/'
     }
-    if (isHashLicensePortalRoute) {
+    if (isHashAdminPortalRoute) {
       return hashPath || '/'
     }
     return window.location.pathname || '/'
@@ -87,10 +87,10 @@ export default function App() {
     currentPath.startsWith('/customer-screen') ||
     /customer-screen/i.test(decodedHref) ||
     isHashCustomerRoute
-  const isLicensePortalRoute =
-    currentPath.startsWith('/license-portal') ||
-    /license-portal/i.test(decodedHref) ||
-    isHashLicensePortalRoute
+  const isAdminPortalRoute =
+    currentPath.startsWith('/admin-portal') ||
+    /admin-portal/i.test(decodedHref) ||
+    isHashAdminPortalRoute
 
   useEffect(() => {
     const isDark = theme === 'dark'
@@ -239,13 +239,13 @@ export default function App() {
     )
   }
 
-  // Standalone super-admin license portal (separate from POS login flow)
-  if (isLicensePortalRoute) {
+  // Standalone super-admin web portal (separate from POS login flow)
+  if (isAdminPortalRoute) {
     return (
       <Router>
         <Routes>
-          <Route path="/license-portal" element={<LicensePortal />} />
-          <Route path="*" element={<LicensePortal />} />
+          <Route path="/admin-portal" element={<AdminPortal />} />
+          <Route path="*" element={<AdminPortal />} />
         </Routes>
         <ToastContainer />
       </Router>
@@ -304,8 +304,8 @@ export default function App() {
           {/* Settings — owner and above */}
           <Route path="/settings" element={<AccessGuard permission="manage_settings"><Settings /></AccessGuard>} />
 
-          {/* Super Admin License Portal */}
-          <Route path="/license-portal" element={<AccessGuard permission="manage_license"><LicensePortal /></AccessGuard>} />
+          {/* Super Admin Web Portal */}
+          <Route path="/admin-portal" element={<AccessGuard permission="manage_license"><AdminPortal /></AccessGuard>} />
         </Routes>
       </Layout>
       <ToastContainer />
