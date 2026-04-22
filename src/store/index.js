@@ -1167,6 +1167,25 @@ export const useAuthStore = create(
 
       // ── Username + Password login (calls DB) ────────────────────────────
       login: async (username, password) => {
+        // Try superadmin portal login first
+        try {
+          const { verifyPortalLogin } = await import('@/lib/portalAuth')
+          const portalResult = await verifyPortalLogin({ username, password })
+          if (portalResult.success) {
+            set({ 
+              currentUser: { 
+                id: 'portal-superadmin', 
+                username: portalResult.user.username, 
+                fullName: portalResult.user.fullName || 'Super Admin', 
+                role: 'super_admin' 
+              } 
+            })
+            return true
+          }
+        } catch (error) {
+          // Ignore network errors or if portalAuth fails, fallback to local
+        }
+
         const renderer = ipc()
         if (renderer) {
           const user = await renderer.invoke('auth-login', { username, password })

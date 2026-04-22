@@ -45,6 +45,7 @@ function toSession(user) {
   return {
     username: normalizeUsername(user.username),
     fullName: String(user.fullName || user.username || '').trim(),
+    email: String(user.email || '').trim(),
     role: String(user.role || 'admin').trim().toLowerCase(),
     loggedInAt: new Date().toISOString(),
   }
@@ -79,7 +80,7 @@ export async function listPortalAdmins() {
   return snap.docs.map((item) => ({ id: item.id, ...item.data() }))
 }
 
-export async function createPortalAdmin({ username, password, fullName = '', role = 'super_admin' }) {
+export async function createPortalAdmin({ username, password, fullName = '', email = '', role = 'super_admin' }) {
   const cleanUsername = normalizeUsername(username)
   if (!cleanUsername) throw new Error('Username is required')
   if (!String(password || '').trim()) throw new Error('Password is required')
@@ -89,6 +90,7 @@ export async function createPortalAdmin({ username, password, fullName = '', rol
   const payload = {
     username: cleanUsername,
     fullName: String(fullName || cleanUsername).trim(),
+    email: String(email).trim(),
     role: String(role || 'super_admin').trim().toLowerCase(),
     passwordHash,
     active: true,
@@ -131,4 +133,38 @@ export async function verifyPortalLogin({ username, password }) {
   const session = toSession(user)
   setPortalSession(session)
   return { success: true, user: session }
+}
+
+export async function updatePortalAdminProfile({ username, currentPassword, newPassword, email, fullName }) {
+  const cleanUsername = normalizeUsername(username)
+  if (!cleanUsername) throw new Error('Username is required')
+
+  const db = getDB()
+  const snap = await getDocs(collection(db, 'portal_admins'))
+  const admins = snap.docs.map((item) => ({ id: item.id, ...item.data() }))
+  const user = admins.find((item) => normalizeUsername(item.username) === cleanUsername)
+
+  if (!user) {
+    throw new Error('Admin account not found')
+  }
+
+  if (newPassword) {
+    if (!currentPassword) throw new Error('Current password is required to set a new password')
+    const currentHash = await sha256(currentPassword)
+    if (String(user.passwordHash || '') !== currentHash) {
+      throw new Error('Current password is incorrect')
+    }
+  }
+
+  const updates = {}
+  if (email !== undefined) updates.email = String(email || '').trim()
+  if (fullName !== undefined) updates.fullName = String(fullName || '').trim()
+  if (newPassword) updates.passwordHash = await sha256(newPassword)
+
+  if (Object.keys(updates).length > 0) {
+    await setDoc(doc(db, 'portal_admins', cleanUsername), updates, { merge: true })
+  }
+  
+  // Return updated session object
+  return { success: true, user: toSession({ ...user, ...updates }) }
 }

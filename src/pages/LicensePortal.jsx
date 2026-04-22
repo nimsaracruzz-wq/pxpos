@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Copy, KeyRound, Plus, RefreshCcw, Search, ShieldCheck, ShieldOff, Trash2, Pencil, RotateCcw, Loader2, LogOut, Lock, UserPlus, Eye, EyeOff } from 'lucide-react'
+import { Copy, KeyRound, Plus, RefreshCcw, Search, ShieldCheck, ShieldOff, Trash2, Pencil, RotateCcw, Loader2, LogOut, Lock, UserPlus, Eye, EyeOff, User, Bell } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { Button, Input, Modal, Select, Badge } from '@/components/ui'
 import { BRAND } from '@/lib/brand'
 import { deleteLicense, generateLicenseKey, listLicenses, resetLicenseDevice, setLicenseStatus, upsertLicense } from '@/lib/license'
-import { clearPortalSession, createPortalAdmin, getPortalSession, listPortalAdmins, verifyPortalLogin } from '@/lib/portalAuth'
+import { clearPortalSession, createPortalAdmin, getPortalSession, listPortalAdmins, verifyPortalLogin, updatePortalAdminProfile } from '@/lib/portalAuth'
+import { sendNotificationToBusiness } from '@/lib/firebase'
 
 const PLAN_OPTIONS = [
   { value: 'basic', label: 'Basic' },
@@ -118,6 +119,10 @@ export default function LicensePortal() {
   const [activeOnly, setActiveOnly] = useState('all')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(emptyForm())
+  const [profileModalOpen, setProfileModalOpen] = useState(false)
+  const [profileForm, setProfileForm] = useState({ fullName: '', email: '', currentPassword: '', newPassword: '' })
+  const [notificationModalOpen, setNotificationModalOpen] = useState(false)
+  const [notificationForm, setNotificationForm] = useState({ licenseKey: '', message: '', type: 'info', title: 'Portal Alert' })
 
   const loadPortalAdmins = async () => {
     try {
@@ -237,6 +242,71 @@ export default function LicensePortal() {
     })
   }, [licenses, search, activeOnly])
 
+  const openProfile = () => {
+    setProfileForm({
+      fullName: portalSession?.fullName || '',
+      email: portalSession?.email || '',
+      currentPassword: '',
+      newPassword: '',
+    })
+    setProfileModalOpen(true)
+  }
+
+  const handleSaveProfile = async () => {
+    setSaving(true)
+    try {
+      const result = await updatePortalAdminProfile({
+        username: portalSession.username,
+        ...profileForm
+      })
+      if (result.success) {
+        toast.success('Profile updated successfully')
+        setPortalSession(result.user)
+        setProfileModalOpen(false)
+      }
+    } catch (error) {
+      toast.error(error?.message || 'Unable to update profile')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const openNotification = (license) => {
+    setNotificationForm({
+      licenseKey: license.key,
+      message: '',
+      type: 'info',
+      title: 'Portal Alert'
+    })
+    setNotificationModalOpen(true)
+  }
+
+  const handleSendNotification = async () => {
+    if (!notificationForm.message.trim()) {
+      toast.error('Message cannot be empty')
+      return
+    }
+    setSaving(true)
+    try {
+      const result = await sendNotificationToBusiness(
+        notificationForm.licenseKey, 
+        notificationForm.message, 
+        notificationForm.type,
+        notificationForm.title
+      )
+      if (result) {
+        toast.success('Notification sent successfully')
+        setNotificationModalOpen(false)
+      } else {
+        toast.error('Failed to send notification')
+      }
+    } catch (error) {
+      toast.error('Failed to send notification')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const openCreate = () => {
     setEditing(emptyForm())
     setModalOpen(true)
@@ -351,8 +421,12 @@ export default function LicensePortal() {
     const hasAdmins = portalAdmins.length > 0
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 text-white flex items-center justify-center p-6">
-        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl p-6">
+      <div className="relative min-h-screen bg-[#030712] text-white flex items-center justify-center p-6 overflow-hidden">
+        {/* Animated Background Elements */}
+        <div className="absolute top-1/4 -left-64 w-96 h-96 bg-emerald-600/20 rounded-full blur-[128px] pointer-events-none" />
+        <div className="absolute bottom-1/4 -right-64 w-96 h-96 bg-blue-600/20 rounded-full blur-[128px] pointer-events-none" />
+        
+        <div className="relative w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.02] backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-8 animate-scale-in">
           <div className="text-center mb-6">
             <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">{BRAND.name} Portal</p>
             <h1 className="text-3xl font-black mt-2">License Management Login</h1>
@@ -440,9 +514,13 @@ export default function LicensePortal() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 text-white">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 shadow-2xl">
+    <div className="relative h-full overflow-y-auto bg-[#030712] text-white selection:bg-emerald-500/30">
+      {/* Dynamic Background */}
+      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-emerald-600/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
+      
+      <div className="relative max-w-7xl mx-auto space-y-6 p-6 animate-fade-in">
+        <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl p-8 shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
           <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
             <div>
               <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">Super Admin Portal</p>
@@ -458,6 +536,9 @@ export default function LicensePortal() {
               </p>
             </div>
             <div className="flex gap-2 flex-wrap">
+              <Button variant="ghost" onClick={openProfile} disabled={saving}>
+                <User size={15} /> Profile
+              </Button>
               <Button variant="ghost" onClick={handleLogout} disabled={saving}>
                 <LogOut size={15} /> Logout
               </Button>
@@ -470,28 +551,30 @@ export default function LicensePortal() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 stagger">
             {[
-              { label: 'Total', value: stats.total },
-              { label: 'Active', value: stats.active },
-              { label: 'Inactive', value: stats.inactive },
-              { label: 'Expiring 30d', value: stats.expiringSoon },
+              { label: 'Total', value: stats.total, color: 'text-white' },
+              { label: 'Active', value: stats.active, color: 'text-emerald-400' },
+              { label: 'Inactive', value: stats.inactive, color: 'text-rose-400' },
+              { label: 'Expiring 30d', value: stats.expiringSoon, color: 'text-amber-400' },
             ].map((stat) => (
-              <div key={stat.label} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+              <div key={stat.label} className="group relative overflow-hidden rounded-2xl border border-white/5 bg-white/[0.01] p-5 transition-all duration-300 hover:bg-white/[0.03] hover:-translate-y-1 hover:border-white/10 hover:shadow-xl">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400 font-bold">{stat.label}</p>
-                <p className="text-3xl font-black mt-2">{stat.value}</p>
+                <p className={`text-4xl font-black mt-3 ${stat.color}`}>{stat.value}</p>
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-3 mt-6">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-4 mt-8">
+            <div className="relative group">
+              <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-400 transition-colors" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by key, business, email, owner, plan"
-                className="w-full rounded-2xl border border-white/10 bg-slate-950/70 py-3 pl-10 pr-4 text-sm outline-none focus:border-emerald-400"
+                className="w-full relative rounded-2xl border border-white/5 bg-white/[0.02] py-3.5 pl-11 pr-4 text-sm outline-none focus:border-emerald-400/50 focus:bg-white/[0.04] transition-all duration-300"
               />
             </div>
             <Select value={activeOnly} onChange={(e) => setActiveOnly(e.target.value)}>
@@ -502,10 +585,11 @@ export default function LicensePortal() {
           </div>
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl overflow-hidden shadow-2xl">
+        <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.3)] animate-slide-up" style={{ animationDelay: '0.1s' }}>
           {loading ? (
-            <div className="p-10 flex items-center justify-center text-slate-300 gap-2">
-              <Loader2 className="animate-spin" size={18} /> Loading licenses...
+            <div className="p-16 flex flex-col items-center justify-center text-slate-300 gap-3">
+              <Loader2 className="animate-spin text-emerald-400" size={24} />
+              <span className="text-sm font-medium tracking-wide">Loading licenses...</span>
             </div>
           ) : filteredLicenses.length === 0 ? (
             <div className="p-10 text-center text-slate-300">
@@ -515,7 +599,7 @@ export default function LicensePortal() {
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-[0.14em] text-[11px]">
+                <thead className="bg-white/[0.03] text-slate-400 uppercase tracking-[0.14em] text-[11px] border-b border-white/5">
                   <tr>
                     <th className="text-left px-4 py-3">License</th>
                     <th className="text-left px-4 py-3">Business</th>
@@ -532,7 +616,7 @@ export default function LicensePortal() {
                     const devices = normalizeActivatedDevices(license)
                     const maxDevices = Math.max(1, Number(license.maxDevices || 1))
                     return (
-                    <tr key={license.key} className="border-t border-white/10 hover:bg-white/5">
+                    <tr key={license.key} className="group border-b border-white/5 hover:bg-white/[0.03] transition-colors duration-200">
                       <td className="px-4 py-4 align-top">
                         <div className="font-mono font-bold text-white flex items-center gap-2">
                           {license.key}
@@ -584,6 +668,9 @@ export default function LicensePortal() {
                         <div className="flex justify-end gap-2 flex-wrap">
                           <Button variant="ghost" size="sm" onClick={() => openEdit(license)}>
                             <Pencil size={13} /> Edit
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => openNotification(license)}>
+                            <Bell size={13} /> Notify
                           </Button>
                           <Button variant="ghost" size="sm" onClick={() => handleToggle(license)} disabled={saving}>
                             {license.active ? <ShieldOff size={13} /> : <ShieldCheck size={13} />}
@@ -638,11 +725,11 @@ export default function LicensePortal() {
             <option value="true">Active</option>
             <option value="false">Inactive</option>
           </Select>
-          <div className="md:col-span-2 rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+          <div className="md:col-span-2 rounded-2xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-300">POS Modules</p>
             <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2">
               {MODULE_OPTIONS.map((item) => (
-                <label key={item.key} className="flex items-center gap-2 rounded-lg border border-white/10 bg-slate-950/50 px-3 py-2 text-xs text-slate-200">
+                <label key={item.key} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-sm text-slate-200 transition-colors hover:bg-white/[0.04]">
                   <input
                     type="checkbox"
                     checked={editing.modules?.[item.key] !== false}
@@ -659,12 +746,12 @@ export default function LicensePortal() {
               ))}
             </div>
           </div>
-          <div className="md:col-span-2 rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+          <div className="md:col-span-2 rounded-2xl border border-white/5 bg-white/[0.02] p-5 shadow-inner">
             <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Activated Devices & IPs</p>
             {editing.activatedDevices?.length ? (
               <div className="mt-3 space-y-2">
                 {editing.activatedDevices.map((device) => (
-                  <div key={device.deviceId} className="rounded-xl border border-white/10 bg-slate-950/70 p-3">
+                  <div key={device.deviceId} className="rounded-xl border border-white/5 bg-white/[0.01] p-4 transition-colors hover:bg-white/[0.03]">
                     <p className="font-mono text-xs text-white break-all">{device.deviceId}</p>
                     <p className="text-xs text-slate-400 mt-1">Host: {device.hostname || '-'}</p>
                     <p className="text-xs text-slate-400 mt-1">IP: {deviceIps(device)}</p>
@@ -681,7 +768,7 @@ export default function LicensePortal() {
             <textarea
               value={editing.notes}
               onChange={(e) => setEditing((prev) => ({ ...prev, notes: e.target.value }))}
-              className="input-base w-full min-h-[100px] p-3"
+              className="input-base w-full min-h-[100px] p-4 rounded-xl border-white/10 bg-white/[0.02] text-sm focus:border-emerald-400/50 transition-all"
               placeholder="Internal license notes"
             />
           </div>
@@ -692,6 +779,102 @@ export default function LicensePortal() {
           <Button onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="animate-spin" size={15} /> : <ShieldCheck size={15} />}
             Save License
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={profileModalOpen}
+        onClose={() => setProfileModalOpen(false)}
+        title="Super Admin Profile"
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4">
+          <Input 
+            label="Full Name" 
+            value={profileForm.fullName} 
+            onChange={(e) => setProfileForm(prev => ({ ...prev, fullName: e.target.value }))} 
+          />
+          <Input 
+            label="Email Address" 
+            type="email"
+            value={profileForm.email} 
+            onChange={(e) => setProfileForm(prev => ({ ...prev, email: e.target.value }))} 
+          />
+          
+          <div className="pt-4 pb-2 border-t border-white/10 mt-4">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Change Password</p>
+            <p className="text-[11px] text-slate-400 mb-4 mt-1">Leave blank if you do not wish to change your password.</p>
+            
+            <div className="space-y-4">
+              <Input 
+                label="Current Password" 
+                type="password"
+                value={profileForm.currentPassword} 
+                onChange={(e) => setProfileForm(prev => ({ ...prev, currentPassword: e.target.value }))} 
+              />
+              <Input 
+                label="New Password" 
+                type="password"
+                value={profileForm.newPassword} 
+                onChange={(e) => setProfileForm(prev => ({ ...prev, newPassword: e.target.value }))} 
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 mt-6">
+          <Button variant="ghost" onClick={() => setProfileModalOpen(false)}>Cancel</Button>
+          <Button onClick={handleSaveProfile} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" size={15} /> : <ShieldCheck size={15} />}
+            Save Profile
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={notificationModalOpen}
+        onClose={() => setNotificationModalOpen(false)}
+        title="Send Notification"
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Target Business</label>
+            <p className="font-mono text-sm text-emerald-400 bg-white/5 px-3 py-2 rounded-lg border border-white/10">{notificationForm.licenseKey}</p>
+          </div>
+          <Input 
+            label="Title" 
+            value={notificationForm.title} 
+            onChange={(e) => setNotificationForm(prev => ({ ...prev, title: e.target.value }))} 
+            placeholder="e.g. System Alert"
+          />
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Message</label>
+            <textarea
+              value={notificationForm.message}
+              onChange={(e) => setNotificationForm((prev) => ({ ...prev, message: e.target.value }))}
+              className="input-base w-full min-h-[100px] p-4 rounded-xl border-white/10 bg-white/[0.02] text-sm focus:border-emerald-400/50 transition-all"
+              placeholder="Enter message for the POS users..."
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Alert Type</label>
+            <Select
+              value={notificationForm.type}
+              onChange={(e) => setNotificationForm(prev => ({ ...prev, type: e.target.value }))}
+            >
+              <option value="info">Info (Blue)</option>
+              <option value="success">Success (Green)</option>
+              <option value="warning">Warning (Yellow)</option>
+              <option value="error">Error (Red)</option>
+            </Select>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 mt-6">
+          <Button variant="ghost" onClick={() => setNotificationModalOpen(false)}>Cancel</Button>
+          <Button onClick={handleSendNotification} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" size={15} /> : <Bell size={15} />}
+            Send Notification
           </Button>
         </div>
       </Modal>

@@ -9,7 +9,7 @@ import {
 import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStore } from '@/store'
 import { cn, generateReceiptNumber } from '@/lib/utils'
 import { format } from 'date-fns'
-import { markQRCodeOrderProcessed, resolveCloudTenantId, subscribeToQRCodeOrders, syncWithCloud, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { markQRCodeOrderProcessed, resolveCloudTenantId, subscribeToQRCodeOrders, syncWithCloud, updateQRCodeOrderStatus, subscribeToStoreNotifications, markNotificationRead } from '@/lib/firebase'
 import { useToast } from '@/components/Toast'
 import { useI18n } from '@/lib/i18n'
 import { checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
@@ -98,6 +98,21 @@ export function Layout({ children }) {
   useEffect(() => {
     const storeId = resolveCloudTenantId(businessInfo, licenseKey)
     if (!storeId) return () => {}
+
+    const unsubNotifications = subscribeToStoreNotifications(storeId, (unreads) => {
+      unreads.forEach(notif => {
+        if (notif.type === 'error') {
+          toast.error(notif.message, { title: notif.title || 'System Alert' })
+        } else if (notif.type === 'warning') {
+          toast.warning(notif.message, { title: notif.title || 'System Alert' })
+        } else if (notif.type === 'success') {
+          toast.success(notif.message, { title: notif.title || 'System Alert' })
+        } else {
+          toast.info(notif.message, { title: notif.title || 'System Alert' })
+        }
+        markNotificationRead(storeId, notif.id)
+      })
+    })
 
     const unsubscribe = subscribeToQRCodeOrders(storeId, async (incoming) => {
       if (!incoming?.id || ingestedQrOrderIdsRef.current.has(incoming.id)) return
@@ -283,7 +298,10 @@ export function Layout({ children }) {
       await markQRCodeOrderProcessed(storeId, incoming.id)
     })
 
-    return () => unsubscribe()
+    return () => {
+      unsubscribe()
+      unsubNotifications()
+    }
   }, [businessInfo?.storeId, businessInfo?.taxId, licenseKey])
 
   useEffect(() => {

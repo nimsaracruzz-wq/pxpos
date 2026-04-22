@@ -718,3 +718,75 @@ export function subscribeToStoreSettings(storeId, onSettings) {
     return () => {}
   }
 }
+
+export function subscribeToStoreNotifications(storeId, onNotification) {
+  try {
+    const key = String(storeId || '').trim()
+    if (!key) return () => {}
+
+    const rdb = ensureRealtimeDb()
+    if (!rdb) return () => {}
+
+    const q = query(
+      collection(rdb, 'stores', key, 'notifications'),
+      where('read', '==', false),
+      limit(20)
+    )
+
+    return onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0))
+      
+      if (docs.length > 0) {
+        onNotification(docs)
+      }
+    })
+  } catch (error) {
+    console.error('[Firebase] subscribeToStoreNotifications failed:', error)
+    return () => {}
+  }
+}
+
+export async function markNotificationRead(storeId, notificationId) {
+  try {
+    const key = String(storeId || '').trim()
+    if (!key || !notificationId) return
+
+    const rdb = ensureRealtimeDb()
+    if (!rdb) return
+
+    await updateDoc(doc(rdb, 'stores', key, 'notifications', notificationId), {
+      read: true,
+      readAt: serverTimestamp(),
+      readAtMs: Date.now(),
+    })
+  } catch (error) {
+    console.error('[Firebase] markNotificationRead failed:', error)
+  }
+}
+
+export async function sendNotificationToBusiness(storeId, message, type = 'info', title = 'Portal Alert') {
+  try {
+    const key = String(storeId || '').trim()
+    if (!key || !message) return false
+
+    const activeDb = typeof getApps === 'function' && getApps().length > 0 ? getApp() : null
+    const rdb = activeDb ? getFirestore(activeDb) : getDb()
+    if (!rdb) return false
+
+    await addDoc(collection(rdb, 'stores', key, 'notifications'), {
+      message,
+      type,
+      title,
+      read: false,
+      createdAt: serverTimestamp(),
+      createdAtMs: Date.now(),
+    })
+    return true
+  } catch (error) {
+    console.error('[Firebase] sendNotificationToBusiness failed:', error)
+    return false
+  }
+}
+
