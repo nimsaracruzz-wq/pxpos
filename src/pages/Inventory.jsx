@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
-import { Package, AlertTriangle, TrendingDown, RefreshCw, Download, Filter, Barcode } from 'lucide-react'
-import { useProductStore, useAppStore, useActivityStore, useAuthStore } from '@/store'
+import { Package, AlertTriangle, TrendingDown, RefreshCw, Download, Filter, Barcode, Sparkles, Loader2 } from 'lucide-react'
+import { useProductStore, useAppStore, useActivityStore, useAuthStore, useSalesStore } from '@/store'
+import { generateInventoryForecast } from '@/lib/ai'
 import { useToast } from '@/components/Toast'
 import { StatCard, Badge, Modal, Input, SectionHeader, SearchInput } from '@/components/ui'
 import { formatCurrency } from '@/lib/utils'
@@ -11,6 +12,7 @@ export default function Inventory() {
   const { activeModule } = useAppStore()
   const { addLog } = useActivityStore()
   const { currentUser } = useAuthStore()
+  const { sales } = useSalesStore()
   const toast = useToast()
   const [search, setSearch] = useState('')
   const [barcodeInput, setBarcodeInput] = useState('')
@@ -18,6 +20,10 @@ export default function Inventory() {
   const [adjQty, setAdjQty] = useState('')
   const [adjType, setAdjType] = useState('add')
   const [filterMode, setFilterMode] = useState('all')
+
+  const [aiModal, setAiModal] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiForecast, setAiForecast] = useState(null)
 
   const scopedProducts = useMemo(() => 
     products.filter(p => p.module === activeModule || (!p.module && activeModule === 'grocery')),
@@ -81,15 +87,36 @@ export default function Inventory() {
     }
   }
 
+  const handleGenerateForecast = async () => {
+    setAiModal(true)
+    setAiLoading(true)
+    setAiForecast(null)
+    try {
+      const forecast = await generateInventoryForecast(scopedProducts, sales)
+      setAiForecast(forecast)
+      addLog('Generated CeyAI Forecast', 'Analyzed inventory using CeyAI', currentUser?.name)
+    } catch (err) {
+      toast.error(err.message || 'Failed to generate forecast')
+      setAiModal(false)
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
   return (
     <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
       <SectionHeader
         title={`${activeModule ? activeModule.charAt(0).toUpperCase() + activeModule.slice(1) : ''} Inventory`}
         subtitle="Track stock levels and manage adjustments"
         action={
-          <button className="btn-ghost" onClick={exportInventory}>
-            <Download size={14} /> Export Inventory
-          </button>
+          <div className="flex gap-2">
+            <button className="btn-secondary font-bold gap-1.5" onClick={handleGenerateForecast}>
+              <Sparkles size={14} className="text-purple-500" /> CeyAI Forecast
+            </button>
+            <button className="btn-ghost gap-1.5" onClick={exportInventory}>
+              <Download size={14} /> Export Inventory
+            </button>
+          </div>
         }
       />
 
@@ -277,6 +304,99 @@ export default function Inventory() {
             <button className="btn-ghost" onClick={() => setAdjustModal(null)}>Cancel</button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={aiModal}
+        onClose={() => setAiModal(false)}
+        title={
+          <div className="flex items-center gap-2 text-purple-600">
+            <Sparkles size={20} /> CeyAI Demand Forecast
+          </div>
+        }
+        maxWidth="max-w-5xl"
+      >
+        {aiLoading ? (
+          <div className="py-20 flex flex-col items-center justify-center gap-4 text-purple-600">
+            <Loader2 size={40} className="animate-spin" />
+            <p className="font-semibold text-lg animate-pulse">CeyAI is analyzing your sales velocity...</p>
+            <p className="text-sm text-gray-500 max-w-sm text-center">
+              Our model is processing historical trends and current stock levels to predict what you'll run out of next.
+            </p>
+          </div>
+        ) : aiForecast ? (
+          <div className="space-y-4">
+            <div className="bg-purple-50 border border-purple-100 p-4 rounded-xl text-sm text-purple-800">
+              <span className="font-bold">CeyAI Insight:</span> Found {aiForecast.length} items at risk of stocking out within the next 30 days based on recent sales trends.
+            </div>
+            
+            <div className="overflow-x-auto max-h-[500px] border border-gray-100 rounded-xl shadow-inner">
+              <table className="table-modern w-full">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="py-3 px-4 text-left">Product Name</th>
+                    <th className="py-3 px-4 text-left">Current Stock</th>
+                    <th className="py-3 px-4 text-left">Stockout Risk</th>
+                    <th className="py-3 px-4 text-left">Recommended Order</th>
+                    <th className="py-3 px-4 text-left">CeyAI Reasoning</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {aiForecast.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-purple-50/30 transition-colors">
+                      <td className="py-3 px-4 font-semibold text-gray-900">{item.productName || item.name}</td>
+                      <td className="py-3 px-4 font-bold text-red-500">{item.currentStock}</td>
+                      <td className="py-3 px-4">
+                        <Badge variant={item.predictedDaysUntilStockout < 7 ? 'red' : 'yellow'}>
+                          ~{item.predictedDaysUntilStockout} days left
+                        </Badge>
+                      </td>
+                      <td className="py-3 px-4 font-black text-green-600 text-lg">+{item.recommendedOrderQty}</td>
+                      <td className="py-3 px-4 text-xs text-gray-600 max-w-[280px] leading-relaxed whitespace-normal">
+                        {item.reason}
+                      </td>
+                    </tr>
+                  ))}
+                  {(!aiForecast || aiForecast.length === 0) && (
+                    <tr>
+                      <td colSpan={5} className="text-center py-12 text-gray-500">
+                        <div className="text-4xl mb-3">✅</div>
+                        No critical stockouts predicted! Your inventory is healthy.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end pt-4 gap-3 border-t border-gray-100">
+              <button className="btn-ghost" onClick={() => setAiModal(false)}>Close</button>
+              {aiForecast.length > 0 && (
+                <button 
+                  className="btn-primary gap-2 bg-purple-600 hover:bg-purple-700 border-purple-700 shadow-lg shadow-purple-500/30"
+                  onClick={() => {
+                    const rows = [['Product Name', 'Current Stock', 'Recommended Order Qty', 'Reason']]
+                    aiForecast.forEach(i => rows.push([
+                      `"${i.productName || i.name || ''}"`, 
+                      i.currentStock, 
+                      i.recommendedOrderQty, 
+                      `"${i.reason || ''}"`
+                    ]))
+                    const csv = rows.map((r) => r.join(',')).join('\n')
+                    const a = Object.assign(document.createElement('a'), {
+                      href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+                      download: `ai-purchase-order-${new Date().toISOString().split('T')[0]}.csv`,
+                    })
+                    a.click()
+                    toast.success('Purchase Order Draft Downloaded!')
+                  }}
+                >
+                  <Download size={15} /> Download Purchase Order (CSV)
+                </button>
+              )}
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   )

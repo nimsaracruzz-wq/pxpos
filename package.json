@@ -20,6 +20,7 @@
   "build": {
     "appId": "com.paxxmo.pos",
     "productName": "CeyPos POS",
+    "icon": "dist/icon.png",
     "directories": {
       "output": "dist-electron"
     },
@@ -28,7 +29,14 @@
       "electron/**/*"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "dist/icon.png"
+    },
+    "mac": {
+      "icon": "dist/icon.png"
+    },
+    "linux": {
+      "icon": "dist/icon.png"
     },
     "publish": {
       "provider": "github",

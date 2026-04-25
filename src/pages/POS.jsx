@@ -13,7 +13,8 @@ import ReceiptModal from '@/components/Receipt'
 import CustomerDisplay from '@/components/CustomerDisplay'
 import { useI18n } from '@/lib/i18n'
 import { v4 as uuidv4 } from 'uuid'
-import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
+import { generateHelaQRPayment, checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
+import { QRCodeSVG } from 'qrcode.react'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
@@ -59,24 +60,157 @@ const playTone = (type = 'tick') => {
 }
 
 // ─── Payment Modal ───────────────────────────────────────────────────────────
-const PaymentModal = ({ open, onClose, total, onCheckout, onComplete }) => {
-  const [method, setMethod] = useState('cash')
+const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishCustomerDisplay, cartItems, initialMethod }) => {
+  const [method, setMethod] = useState(initialMethod || 'cash')
   const [cashGiven, setCashGiven] = useState('')
   const [processing, setProcessing] = useState(false)
+
+  // HelaQR flow state
+  const [qrState, setQrState]   = useState('idle') // idle | generating | scanning | error
+  const [qrData,  setQrData]    = useState('')
+  const [qrRef,   setQrRef]     = useState('')
+  const [qrPayRef, setQrPayRef] = useState('')
+  const [qrReceiptNo, setQrReceiptNo] = useState('')
+  const [qrError, setQrError]   = useState('')
+  const [qrTimeLeft, setQrTimeLeft] = useState(0)
+  const pollRef      = useRef(null)
+  const countdownRef = useRef(null)
+  const QR_TIMEOUT   = 300 // 5 minutes in seconds
+
   const cashNum = parseFloat(cashGiven) || 0
-  const change = method === 'cash' ? Math.max(0, cashNum - total) : 0
-  const canPay = method !== 'cash' || cashNum >= total
+  const change  = method === 'cash' ? Math.max(0, cashNum - total) : 0
+  const canPay  = method !== 'cash' || cashNum >= total
 
   const roundedTotal = Math.ceil(total / 100) * 100
   const quickAmounts = [...new Set([roundedTotal, Math.ceil(total / 500) * 500, Math.ceil(total / 1000) * 1000])]
-    .filter((v) => v >= total)
-    .slice(0, 4)
+    .filter((v) => v >= total).slice(0, 4)
+
+  const stopQrTimers = () => {
+    clearInterval(pollRef.current)
+    clearInterval(countdownRef.current)
+  }
+
+  // Reset everything when modal closes or method changes away from helaqr
+  useEffect(() => {
+    if (!open) {
+      setCashGiven('')
+      setMethod(initialMethod || 'cash')
+      stopQrTimers()
+      setQrState('idle')
+      setQrData('')
+    }
+    return stopQrTimers
+  }, [open])
+
+  // Sync initial method when modal opens with different selection
+  useEffect(() => {
+    if (open && initialMethod) {
+      setMethod(initialMethod)
+    }
+  }, [open, initialMethod])
+
+  useEffect(() => {
+    if (method !== 'helaqr') {
+      stopQrTimers()
+      setQrState('idle')
+      setQrData('')
+    }
+  }, [method])
+
+  // ── Generate QR and start polling ─────────────────────────────────────────
+  const handleGenerateQR = async () => {
+    const cfg = getHelaQRConfigStatus()
+    if (!cfg.enabled || !cfg.configured) {
+      setQrState('error')
+      setQrError('Configure HelaQR in Settings before using this method')
+      return
+    }
+    setQrState('generating')
+    setQrError('')
+
+    const receiptNo  = generateReceiptNumber()
+    let result;
+    try {
+      result = await generateHelaQRPayment({ amount: total, reference: receiptNo })
+    } catch (e) {
+      setQrState('error')
+      setQrError(e.message || 'Failed to generate QR code')
+      return
+    }
+
+    if (!result?.success) {
+      setQrState('error')
+      setQrError(result?.error || 'Failed to generate QR code')
+      return
+    }
+
+    setQrData(result.qrData)
+    setQrRef(result.qrReference || '')
+    setQrPayRef(result.reference || receiptNo)
+    setQrReceiptNo(receiptNo)
+    setQrState('scanning')
+    setQrTimeLeft(QR_TIMEOUT)
+
+    // Push the QR code to the Customer Display so they can scan it
+    if (typeof onPublishCustomerDisplay === 'function') {
+      onPublishCustomerDisplay({
+        amount: total,
+        qrData: result.qrData,
+        paymentMethod: 'helaqr',
+        status: 'paying',
+        cashGiven: 0,
+        change: 0,
+        items: (cartItems || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          qty: Number(item.qty || 0),
+          price: Number(item.salePrice || item.price || 0),
+          lineTotal: Number(item.salePrice || item.price || 0) * Number(item.qty || 0),
+        })),
+        reference: result.reference || receiptNo,
+        title: 'HelaQR Payment',
+        subtitle: 'Please scan this code and complete payment from your banking app.',
+      })
+    }
+
+    // Countdown timer
+    countdownRef.current = setInterval(() => {
+      setQrTimeLeft((t) => {
+        if (t <= 1) { stopQrTimers(); setQrState('idle'); return 0 }
+        return t - 1
+      })
+    }, 1000)
+
+    // Payment confirmation poll — every 15 seconds to avoid API rate limits
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await checkHelaQRPaymentStatus({
+          reference: receiptNo,
+          qrReference: result.qrReference || '',
+        })
+        if (status?.isPaid) {
+          stopQrTimers()
+          setQrState('idle')
+          // ✅ Only now complete the sale
+          onComplete('helaqr', 0, 0, {
+            qrData:      result.qrData,
+            qrReference: result.qrReference || '',
+            paymentRef:  result.reference || receiptNo,
+            receiptNo,
+          })
+        } else if (status?.isFailed) {
+          stopQrTimers()
+          setQrState('error')
+          setQrError('Payment failed, expired, or was cancelled.')
+        }
+      } catch { /* network hiccup — try again next tick */ }
+    }, 15000)
+  }
 
   const handlePay = () => {
+    if (method === 'helaqr') { handleGenerateQR(); return }
     if (!canPay) return
-    if (typeof onCheckout === 'function') {
-      onCheckout(method)
-    }
+    if (typeof onCheckout === 'function') onCheckout(method)
     setProcessing(true)
     setTimeout(() => {
       onComplete(method, cashNum, change)
@@ -86,20 +220,18 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete }) => {
     }, 500)
   }
 
-  useEffect(() => {
-    if (!open) { setCashGiven(''); setMethod('cash') }
-  }, [open])
-
   const methodButtons = [
-    { id: 'cash',  label: 'Cash',  icon: Banknote,  color: { active: '#16a34a', bg: '#f0fdf4', border: '#86efac', light: '#dcfce7' } },
-    { id: 'card',  label: 'Card',  icon: CreditCard, color: { active: '#2563eb', bg: '#eff6ff', border: '#93c5fd', light: '#dbeafe' } },
-    { id: 'split', label: 'Split', icon: Split,       color: { active: '#7c3aed', bg: '#faf5ff', border: '#c4b5fd', light: '#ede9fe' } },
-    { id: 'helaqr', label: 'HelaQR', icon: Zap,       color: { active: '#f59e0b', bg: '#fffbeb', border: '#fcd34d', light: '#fef3c7' } },
+    { id: 'cash',   label: 'Cash',   icon: Banknote,   color: { active: '#16a34a', light: '#dcfce7' } },
+    { id: 'card',   label: 'Card',   icon: CreditCard,  color: { active: '#2563eb', light: '#dbeafe' } },
+    { id: 'split',  label: 'Split',  icon: Split,        color: { active: '#7c3aed', light: '#ede9fe' } },
+    { id: 'helaqr', label: 'HelaQR', icon: Zap,          color: { active: '#f59e0b', light: '#fef3c7' } },
   ]
+
+  const fmtTime = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
   return (
     <Modal open={open} onClose={onClose} title="Process Payment" maxWidth="max-w-md">
-      {/* Amount Due hero */}
+      {/* Amount Due */}
       <div className="mb-5 p-5 rounded-2xl text-center" style={{ background: 'linear-gradient(135deg,#f0fdf4,#dcfce7)', border: '1px solid #bbf7d0' }}>
         <p className="text-xs font-semibold text-green-700 uppercase tracking-widest mb-1">Amount Due</p>
         <p className="text-5xl font-black text-green-700 leading-tight mt-1">{formatCurrency(total)}</p>
@@ -111,6 +243,7 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete }) => {
           <button
             key={id}
             onClick={() => setMethod(id)}
+            disabled={qrState === 'scanning' || qrState === 'generating'}
             className="flex-1 flex flex-col items-center gap-2 py-3.5 rounded-2xl border-2 transition-all text-sm font-semibold"
             style={method === id
               ? { borderColor: color.active, background: color.light, color: color.active, boxShadow: `0 4px 14px ${color.active}22` }
@@ -126,33 +259,23 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete }) => {
       {method === 'cash' && (
         <div className="mb-5 animate-slide-up">
           <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Cash Received</label>
-          <input
-            autoFocus
-            type="number"
-            value={cashGiven}
+          <input autoFocus type="number" value={cashGiven}
             onChange={(e) => setCashGiven(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && canPay && handlePay()}
-            placeholder={total.toFixed(2)}
-            className="input-base mt-2 font-bold"
+            placeholder={total.toFixed(2)} className="input-base mt-2 font-bold"
             style={{ height: 60, fontSize: 26 }}
           />
           <div className="flex gap-2 mt-3 flex-wrap">
             {quickAmounts.map((v) => (
-              <button
-                key={v}
-                onClick={() => setCashGiven(String(v))}
-                className="flex-1 text-sm px-3 py-2.5 rounded-xl border-2 border-green-200 bg-green-50 text-green-700 font-bold hover:bg-green-100 hover:border-green-400 transition-all active:scale-95 min-h-[44px]"
-              >
+              <button key={v} onClick={() => setCashGiven(String(v))}
+                className="flex-1 text-sm px-3 py-2.5 rounded-xl border-2 border-green-200 bg-green-50 text-green-700 font-bold hover:bg-green-100 hover:border-green-400 transition-all active:scale-95 min-h-[44px]">
                 Rs. {v.toLocaleString()}
               </button>
             ))}
           </div>
           {cashNum >= total && cashNum > 0 && (
             <div className="mt-4 p-4 rounded-2xl flex items-center justify-between animate-pop-in" style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
-              <div className="flex items-center gap-2">
-                <span className="text-xl">💵</span>
-                <span className="text-sm font-semibold text-blue-700">Change to Return</span>
-              </div>
+              <div className="flex items-center gap-2"><span className="text-xl">💵</span><span className="text-sm font-semibold text-blue-700">Change to Return</span></div>
               <span className="text-2xl font-black text-blue-700">{formatCurrency(change)}</span>
             </div>
           )}
@@ -161,9 +284,7 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete }) => {
 
       {method === 'card' && (
         <div className="mb-5 p-6 rounded-2xl bg-blue-50 text-center border border-blue-100 animate-slide-up">
-          <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center mx-auto mb-3">
-            <CreditCard size={28} className="text-blue-500" />
-          </div>
+          <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center mx-auto mb-3"><CreditCard size={28} className="text-blue-500" /></div>
           <p className="text-sm font-semibold text-blue-700">Tap or swipe the card to complete</p>
           <p className="text-xs text-blue-500 mt-1">Supported: Visa, Mastercard, Amex</p>
         </div>
@@ -171,41 +292,71 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete }) => {
 
       {method === 'split' && (
         <div className="mb-5 p-6 rounded-2xl bg-purple-50 text-center border border-purple-100 animate-slide-up">
-          <div className="w-14 h-14 rounded-2xl bg-purple-100 flex items-center justify-center mx-auto mb-3">
-            <Split size={28} className="text-purple-500" />
-          </div>
+          <div className="w-14 h-14 rounded-2xl bg-purple-100 flex items-center justify-center mx-auto mb-3"><Split size={28} className="text-purple-500" /></div>
           <p className="text-sm font-semibold text-purple-700">Split payment between cash and card</p>
           <p className="text-xs text-purple-500 mt-1">Ask customer for split amounts</p>
         </div>
       )}
 
+      {/* ── HelaQR flow ─────────────────────────────────────────────────────── */}
       {method === 'helaqr' && (
-        <div className="mb-5 p-6 rounded-2xl bg-amber-50 text-center border border-amber-100 animate-slide-up">
-          <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center mx-auto mb-3">
-            <Zap size={28} className="text-amber-500" />
-          </div>
-          <p className="text-sm font-semibold text-amber-700">HelaQR payment pending</p>
-          <p className="text-xs text-amber-600 mt-1">Payment will be confirmed by server callback.</p>
+        <div className="mb-5 animate-slide-up">
+          {qrState === 'idle' && (
+            <div className="p-6 rounded-2xl bg-amber-50 text-center border border-amber-100">
+              <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center mx-auto mb-3"><Zap size={28} className="text-amber-500" /></div>
+              <p className="text-sm font-semibold text-amber-700">Click below to generate QR code</p>
+              <p className="text-xs text-amber-600 mt-1">Sale will only be recorded after payment is confirmed.</p>
+            </div>
+          )}
+          {qrState === 'generating' && (
+            <div className="p-6 rounded-2xl bg-amber-50 text-center border border-amber-100">
+              <div className="text-3xl mb-2 animate-spin inline-block">⏳</div>
+              <p className="text-sm font-semibold text-amber-700">Generating QR Code…</p>
+            </div>
+          )}
+          {qrState === 'scanning' && qrData && (
+            <div className="p-4 rounded-2xl border-2 border-amber-300 bg-amber-50 flex flex-col items-center">
+              <p className="text-xs font-bold text-amber-700 uppercase tracking-widest mb-3">Scan to Pay</p>
+              <div className="bg-white p-3 rounded-xl shadow-md">
+                <QRCodeSVG value={qrData} size={180} level="H" includeMargin />
+              </div>
+              <p className="text-2xl font-black text-green-700 mt-3">{formatCurrency(total)}</p>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <p className="text-xs text-amber-600 font-semibold">Waiting for payment… expires in {fmtTime(qrTimeLeft)}</p>
+              </div>
+              <button onClick={() => { stopQrTimers(); setQrState('idle'); setQrData('') }}
+                className="mt-3 text-xs text-red-500 hover:underline">Cancel & go back</button>
+            </div>
+          )}
+          {qrState === 'error' && (
+            <div className="p-5 rounded-2xl bg-red-50 border border-red-200 text-center">
+              <p className="text-sm font-semibold text-red-700 mb-1">⚠ {qrError}</p>
+              <button onClick={() => setQrState('idle')} className="text-xs text-red-500 hover:underline">Try again</button>
+            </div>
+          )}
         </div>
       )}
 
-      <button
-        onClick={handlePay}
-        disabled={!canPay || processing}
-        className="btn-primary w-full justify-center text-base"
-        style={{
-          borderRadius: 16,
-          height: 56,
-          fontSize: 16,
-          opacity: !canPay && method === 'cash' ? 0.45 : 1,
-          background: processing ? '#9ca3af' : 'linear-gradient(135deg,#16a34a,#22c55e)',
-        }}
-      >
-        {processing
-          ? <><span className="animate-spin inline-block mr-2">⏳</span> Processing...</>
-          : <><CheckCircle2 size={20} /> Confirm {method === 'cash' ? 'Cash ' : method === 'card' ? 'Card ' : method === 'helaqr' ? 'HelaQR ' : 'Split '}Payment</>
-        }
-      </button>
+      {/* Action button */}
+      {(method !== 'helaqr' || qrState === 'idle' || qrState === 'error') && (
+        <button
+          onClick={handlePay}
+          disabled={(!canPay && method === 'cash') || processing || qrState === 'generating'}
+          className="btn-primary w-full justify-center text-base"
+          style={{ borderRadius: 16, height: 56, fontSize: 16,
+            opacity: (!canPay && method === 'cash') ? 0.45 : 1,
+            background: processing ? '#9ca3af' : 'linear-gradient(135deg,#16a34a,#22c55e)',
+          }}
+        >
+          {processing
+            ? <><span className="animate-spin inline-block mr-2">⏳</span> Processing...</>
+            : method === 'helaqr'
+              ? <><Zap size={20} /> Generate QR Code</>
+              : <><CheckCircle2 size={20} /> Confirm {method === 'cash' ? 'Cash' : method === 'card' ? 'Card' : 'Split'} Payment</>
+          }
+        </button>
+      )}
     </Modal>
   )
 }
@@ -226,6 +377,7 @@ export default function POS() {
   const [cashierBarcode, setCashierBarcode] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
   const [showPayment, setShowPayment] = useState(false)
+  const [paymentInitMethod, setPaymentInitMethod] = useState('cash')
   const [lastSale, setLastSale] = useState(null)
   const [showReceipt, setShowReceipt] = useState(false)
   const [customerDisplay, setCustomerDisplay] = useState(null)
@@ -287,6 +439,16 @@ export default function POS() {
     // Simulate brief load for skeleton
     const t = setTimeout(() => setIsLoading(false), 350)
     return () => clearTimeout(t)
+  }, [])
+
+  // Debug: show HelaQR raw API response as toast so we can see field names
+  useEffect(() => {
+    const handler = (e) => {
+      const raw = JSON.stringify(e.detail?.raw || {})
+      toast.info(`HelaQR RAW: ${raw.slice(0, 300)}`, { duration: 15000 })
+    }
+    window.addEventListener('helaqr:debug', handler)
+    return () => window.removeEventListener('helaqr:debug', handler)
   }, [])
 
   // Keyboard shortcuts
@@ -363,32 +525,16 @@ export default function POS() {
     toast.error(result?.error || 'Unable to switch cashier')
   }
 
-  const handleCompleteSale = async (method, cashGiven = 0, change = 0) => {
-    previewCheckoutState(method)
-
-    const receiptNo = generateReceiptNumber()
+  const handleCompleteSale = async (method, cashGiven = 0, change = 0, helaQRResult = null) => {
+    const receiptNo = helaQRResult?.receiptNo || generateReceiptNumber()
     const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
-    let paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
-    let qrReference = ''
-    let qrData = ''
+    const paymentRef   = isHelaQR ? (helaQRResult?.paymentRef  || receiptNo) : ''
+    const qrReference  = isHelaQR ? (helaQRResult?.qrReference || '')        : ''
+    const qrData       = isHelaQR ? (helaQRResult?.qrData      || '')        : ''
 
-    if (isHelaQR) {
-      const cfg = getHelaQRConfigStatus()
-      if (!cfg.enabled || !cfg.configured) {
-        toast.error('Configure HelaQR in Settings before using this method')
-        return
-      }
-
-      const qrResult = await generateHelaQRPayment({ amount: total, reference: receiptNo })
-      if (!qrResult?.success) {
-        toast.error(qrResult?.error || 'Failed to generate HelaQR')
-        return
-      }
-
-      paymentRef = String(qrResult.reference || receiptNo)
-      qrReference = String(qrResult.qrReference || '')
-      qrData = String(qrResult.qrData || '')
-    }
+    // HelaQR: the modal already confirmed payment — no need to re-check
+    // Non-HelaQR: proceed as normal
+    previewCheckoutState(method)
 
     const saleData = {
       receiptNo,
@@ -404,41 +550,39 @@ export default function POS() {
       paymentRef,
       qrReference,
       qrData,
-      paymentStatus: isHelaQR ? 'pending' : 'paid',
+      paymentStatus: 'paid',
       change,
       cashier: currentUser?.name || 'Unknown',
       source: activeModule === 'restaurant' ? 'takeout' : activeModule || 'grocery',
-      status: isHelaQR ? 'pending' : 'completed',
+      status: 'completed',
     }
     addSale({ ...saleData, items: cart.length })
     useActivityStore.getState().addLog('Completed Sale', `Sale Total: ${formatCurrency(total)} (${cart.length} items)`, currentUser?.name || 'Unknown')
 
-    if (!isHelaQR) {
-      // Reduce dish stock
-      cart.forEach((item) => adjustStock(item.id, -item.qty))
+    // Reduce dish stock
+    cart.forEach((item) => adjustStock(item.id, -item.qty))
 
-      // If restaurant mode, also deduct ingredients from recipe
-      if (activeModule === 'restaurant') {
-        const deductIngredients = useRecipeStore.getState().deductIngredients
-        cart.forEach((item) => {
-          const result = deductIngredients(item.id, item.qty)
-          if (!result.success) {
-            console.warn(`Failed to deduct ingredients for ${item.name}:`, result.message)
-          }
-        })
-      }
+    // If restaurant mode, also deduct ingredients from recipe
+    if (activeModule === 'restaurant') {
+      const deductIngredients = useRecipeStore.getState().deductIngredients
+      cart.forEach((item) => {
+        const result = deductIngredients(item.id, item.qty)
+        if (!result.success) {
+          console.warn(`Failed to deduct ingredients for ${item.name}:`, result.message)
+        }
+      })
     }
 
     setLastSale(saleData)
     setShowPayment(false)
     clearCart()
     setSelectedCartItem(null)
-    setShowReceipt(!isHelaQR)
+    setShowReceipt(true)
     openCustomerScreen({
       amount: total,
       qrData,
       paymentMethod: method,
-      status: isHelaQR ? 'paying' : 'paid',
+      status: 'paid',
       cashGiven,
       change,
       items: cart.map((item) => ({
@@ -449,13 +593,13 @@ export default function POS() {
         lineTotal: Number(item.salePrice || item.price || 0) * Number(item.qty || 0),
       })),
       reference: paymentRef,
-      title: isHelaQR ? 'HelaQR Payment' : 'Customer Payment View',
+      title: isHelaQR ? 'HelaQR Payment Successful' : 'Customer Payment View',
       subtitle: isHelaQR
-        ? 'Please scan this code and complete payment from your banking app.'
+        ? 'Payment has been successfully completed.'
         : `Please confirm this amount for ${String(method || '').toUpperCase()} payment.`,
     })
-    if (!isHelaQR) playTone('success')
-    toast.success(isHelaQR ? `HelaQR created: ${paymentRef}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
+    playTone('success')
+    toast.success(isHelaQR ? `HelaQR Paid: Rs. ${total.toFixed(2)}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
   }
 
   useEffect(() => {
@@ -832,7 +976,7 @@ export default function POS() {
             ].map(({ id, label, icon: Icon, style }) => (
               <button
                 key={id}
-                onClick={() => { if (!cart.length) return; id === 'cash' ? setShowPayment(true) : handleCompleteSale(id) }}
+                onClick={() => { if (!cart.length) return; setPaymentInitMethod(id); setShowPayment(true) }}
                 disabled={!cart.length}
                 className={cn(
                   'flex flex-col items-center gap-1 py-2.5 rounded-xl border-2 text-xs font-bold transition-all active:scale-95',
@@ -848,7 +992,7 @@ export default function POS() {
 
           {/* Main charge button */}
           <button
-            onClick={() => cart.length > 0 && setShowPayment(true)}
+            onClick={() => { if (cart.length > 0) { setPaymentInitMethod('cash'); setShowPayment(true) } }}
             disabled={!cart.length}
             className="btn-primary w-full justify-center text-base"
             style={{ borderRadius: 14, height: 52, fontSize: 15, opacity: cart.length ? 1 : 0.4 }}
@@ -864,8 +1008,11 @@ export default function POS() {
         open={showPayment}
         onClose={() => setShowPayment(false)}
         total={total}
+        initialMethod={paymentInitMethod}
         onCheckout={previewCheckoutState}
         onComplete={handleCompleteSale}
+        onPublishCustomerDisplay={openCustomerScreen}
+        cartItems={cart}
       />
       {showReceipt && lastSale && (
         <ReceiptModal

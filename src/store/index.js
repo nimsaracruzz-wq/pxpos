@@ -345,8 +345,10 @@ export const useAppStore = create(
         })),
       updateCloudSettings: (c) =>
         set((s) => ({ cloudSettings: { ...s.cloudSettings, ...c } })),
-      updateHelaQRSettings: (settings) =>
-        set((s) => ({ helaQRSettings: { ...s.helaQRSettings, ...settings } })),
+      updateHelaQRSettings: (settings) => {
+        set((s) => ({ helaQRSettings: { ...s.helaQRSettings, ...settings } }))
+        import('@/lib/firebase').then(m => m.syncToCloud?.())
+      },
       updateCustomerDisplaySettings: (updates) =>
         set((state) => {
           const nextSettings = normalizeCustomerDisplaySettings({
@@ -692,13 +694,12 @@ export const useProductStore = create(
         const p = get().products.find(x => x.id === id);
         if(!p) return;
         const newStock = Math.max(0, p.stock + qty);
-        const updatedAt = new Date().toISOString();
         if (typeof window !== 'undefined' && window.require) {
-          window.require('electron').ipcRenderer.invoke('update-product', id, { stock: newStock, updatedAt });
+          window.require('electron').ipcRenderer.invoke('update-product', id, { stock: newStock });
         }
         set((s) => ({
           products: s.products.map((prd) =>
-            prd.id === id ? { ...prd, stock: newStock, updatedAt } : prd
+            prd.id === id ? { ...prd, stock: newStock } : prd
           ),
         }));
       },

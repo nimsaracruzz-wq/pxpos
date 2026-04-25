@@ -57,6 +57,7 @@ export function Layout({ children }) {
   const [collapsed, setCollapsed] = useState(false)
   const [time, setTime] = useState(new Date())
   const [showNotif, setShowNotif] = useState(false)
+  const [adminNotifications, setAdminNotifications] = useState([])
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [isSyncing, setIsSyncing] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState(new Date())
@@ -99,19 +100,8 @@ export function Layout({ children }) {
     const storeId = resolveCloudTenantId(businessInfo, licenseKey)
     if (!storeId) return () => {}
 
-    const unsubNotifications = subscribeToStoreNotifications(storeId, (unreads) => {
-      unreads.forEach(notif => {
-        if (notif.type === 'error') {
-          toast.error(notif.message, { title: notif.title || 'System Alert' })
-        } else if (notif.type === 'warning') {
-          toast.warning(notif.message, { title: notif.title || 'System Alert' })
-        } else if (notif.type === 'success') {
-          toast.success(notif.message, { title: notif.title || 'System Alert' })
-        } else {
-          toast.info(notif.message, { title: notif.title || 'System Alert' })
-        }
-        markNotificationRead(storeId, notif.id)
-      })
+    const unsubNotifications = subscribeToStoreNotifications(storeId, (docs) => {
+      setAdminNotifications(docs)
     })
 
     const unsubscribe = subscribeToQRCodeOrders(storeId, async (incoming) => {
@@ -304,37 +294,65 @@ export function Layout({ children }) {
     }
   }, [businessInfo?.storeId, businessInfo?.taxId, licenseKey])
 
+  // ─── HelaQR Payment Status Poller ─────────────────────────────────────────
+  // Polls at most once per 30 seconds per sale and stops when paid/failed.
+  // Uses a shared token so we only call requestToken once per session.
   useEffect(() => {
+    const POLL_INTERVAL_MS   = 30_000   // 30 s between full cycles
+    const PER_SALE_COOLDOWN  = 60_000   // don't re-check same sale within 60 s
+    const lastChecked = {}              // receiptNo → timestamp
+
     const checker = async () => {
       const cfg = getHelaQRConfigStatus()
       if (!cfg.enabled || !cfg.configured) return
 
       const salesStore = useSalesStore.getState()
+      const now = Date.now()
+
       const pendingSales = (salesStore.sales || [])
-        .filter((sale) => String(sale.paymentMethod || '').toLowerCase() === 'helaqr' && String(sale.status || '').toLowerCase() === 'pending')
-        .slice(0, 20)
+        .filter(
+          (s) =>
+            String(s.paymentMethod || '').toLowerCase() === 'helaqr' &&
+            String(s.status || '').toLowerCase() === 'pending' &&
+            (s.paymentRef || s.receiptNo) &&
+            (now - (lastChecked[s.receiptNo] || 0)) >= PER_SALE_COOLDOWN
+        )
+        .slice(0, 3)   // max 3 at a time
 
       for (const sale of pendingSales) {
-        const status = await checkHelaQRPaymentStatus({
-          reference: sale.paymentRef || sale.receiptNo,
-          qrReference: sale.qrReference || '',
-        })
-
-        if (!status?.success) continue
-
-        if (status.isPaid) {
-          salesStore.finalizePendingSale({
-            receiptNo: sale.receiptNo,
-            paymentRef: sale.paymentRef,
+        lastChecked[sale.receiptNo] = now
+        try {
+          const status = await checkHelaQRPaymentStatus({
+            reference: sale.paymentRef || sale.receiptNo,
+            qrReference: sale.qrReference || '',
           })
+
+          if (!status?.success) {
+            // Back off this sale extra if rate-limited
+            if (String(status?.error || '').toLowerCase().includes('rate')) {
+              lastChecked[sale.receiptNo] = now + 5 * 60_000  // skip for 5 more min
+            }
+            continue
+          }
+
+          if (status.isPaid) {
+            salesStore.finalizePendingSale?.({
+              receiptNo: sale.receiptNo,
+              paymentRef: sale.paymentRef,
+            })
+          }
+        } catch {
+          // network error — just wait for next cycle
         }
       }
     }
 
-    const timer = setInterval(checker, 8000)
-    checker()
-    return () => clearInterval(timer)
+    const timer = setInterval(checker, POLL_INTERVAL_MS)
+    // Delay first check by 10 s to let the app fully settle
+    const startup = setTimeout(checker, 10_000)
+    return () => { clearInterval(timer); clearTimeout(startup) }
   }, [])
+
 
   // Role badge colours
   const ROLE_COLORS = {
@@ -448,27 +466,38 @@ export function Layout({ children }) {
 
       if (daysRemaining < 0) {
         pushAlert({
-          id: `expired:${product.id}`,
+          id: `exp:${product.id}`,
           type: 'error',
-          msg: `${product.name} expired on ${product.expiry}`,
-          details: 'Remove or restock this item to clear the alert.',
-          expiresAt: expiryAt + notificationTtlMs.expired,
+          msg: `${product.name} EXPIRED`,
+          details: 'Please remove from shelves.',
+          expiresAt: expiryAt + notificationTtlMs.exp,
           priority: 5,
         })
       } else {
         pushAlert({
-          id: `expiring:${product.id}`,
+          id: `exp:${product.id}`,
           type: 'warning',
-          msg: `${product.name} expires in ${Math.max(1, Math.ceil(daysRemaining))} day${Math.ceil(daysRemaining) === 1 ? '' : 's'}`,
-          details: `Expiry date: ${product.expiry}`,
-          expiresAt: expiryAt + notificationTtlMs.expiring,
+          msg: `${product.name} expires in ${Math.ceil(daysRemaining)} days`,
+          details: 'Discount or return to supplier.',
+          expiresAt: expiryAt + notificationTtlMs.exp,
           priority: 2,
         })
       }
     })
 
-    return alerts.sort((a, b) => b.priority - a.priority || a.expiresAt - b.expiresAt)
-  }, [getLowStock, getOutOfStock, products, time])
+    adminNotifications.forEach((notif) => {
+      pushAlert({
+        id: `admin:${notif.id}`,
+        type: notif.type || 'info',
+        msg: notif.title || 'System Alert',
+        details: notif.message,
+        expiresAt: (notif.createdAtMs || now) + (3 * 24 * 60 * 60 * 1000),
+        priority: notif.type === 'error' ? 6 : notif.type === 'warning' ? 5 : 4,
+      })
+    })
+
+    return alerts.sort((a, b) => b.priority - a.priority)
+  }, [products, adminNotifications])
 
   // Build nav: base + ONLY the currently ACTIVE module — filtered by permission
   const rawModuleNavs = []
@@ -522,16 +551,8 @@ export function Layout({ children }) {
           className="flex items-center gap-3 px-4 border-b border-gray-100 dark:border-zinc-800"
           style={{ height: 64 }}
         >
-          <div
-            className="flex items-center justify-center shrink-0 rounded-xl transition-transform hover:scale-105"
-            style={{
-              width: 40,
-              height: 40,
-              background: 'linear-gradient(135deg, #16a34a, #22c55e)',
-              boxShadow: '0 4px 14px rgba(22,163,74,0.32)',
-            }}
-          >
-            <Zap size={18} color="white" fill="white" />
+          <div className="flex items-center justify-center shrink-0 transition-transform hover:scale-105 h-8">
+            <img src="/ceypos_logo_png.png" alt="CeyPos" className="h-full w-auto object-contain" />
           </div>
           {!collapsed && (
             <div className="overflow-hidden">
@@ -761,7 +782,7 @@ export function Layout({ children }) {
                           key={n.id}
                           className="flex items-start gap-3 px-4 py-3.5 border-b border-gray-50 dark:border-zinc-800/50 last:border-0 hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors"
                         >
-                          <span className="text-base mt-0.5">{n.type === 'error' ? '🔴' : '🟡'}</span>
+                          <span className="text-base mt-0.5">{n.type === 'error' ? '🔴' : n.type === 'success' ? '🟢' : n.type === 'info' ? '🔵' : '🟡'}</span>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs text-gray-700 font-medium leading-relaxed">{n.msg}</p>
                             <p className="text-[10px] text-gray-400 mt-0.5">

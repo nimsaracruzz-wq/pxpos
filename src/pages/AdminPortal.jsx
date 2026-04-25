@@ -445,7 +445,8 @@ export default function AdminPortal() {
         <div className="absolute bottom-1/4 -right-64 w-96 h-96 bg-blue-600/20 rounded-full blur-[128px] pointer-events-none" />
         
         <div className="relative w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.02] backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] p-8 animate-scale-in">
-          <div className="text-center mb-6">
+          <div className="text-center mb-6 flex flex-col items-center">
+            <img src="/ceypos_logo_png.png" alt="CeyPos" className="h-12 w-auto object-contain mb-3 drop-shadow-md" />
             <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">{BRAND.name} Admin</p>
             <h1 className="text-3xl font-black mt-2">Portal Login</h1>
             <p className="text-sm text-slate-300 mt-2">
@@ -541,8 +542,11 @@ export default function AdminPortal() {
         <div className="rounded-3xl border border-white/5 bg-white/[0.02] backdrop-blur-2xl p-8 shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
           <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">Super Admin</p>
-              <h1 className="text-3xl font-black mt-2">Web Admin Portal</h1>
+              <div className="flex items-center gap-3 mb-2">
+                <img src="/ceypos_logo_png.png" alt="CeyPos" className="h-10 w-auto object-contain" />
+                <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-300/80 font-bold">Super Admin</p>
+              </div>
+              <h1 className="text-3xl font-black">Web Admin Portal</h1>
               <p className="text-sm text-slate-300 mt-2 max-w-2xl">
                 Global overview and management for {BRAND.name}.
               </p>

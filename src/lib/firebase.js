@@ -29,13 +29,16 @@ function getDb() {
   if (db && configStr === _lastConfigStr) return db
 
   try {
-    // Tear down only if config actually changed
-    if (getApps().length > 0 && configStr !== _lastConfigStr) {
-      // deleteApp is async but we call it fire-and-forget here, then reinit
-      const oldApp = getApp()
-      deleteApp(oldApp).catch(() => {})
+    const apps = getApps()
+    let app = apps.length > 0 ? apps[0] : null
+
+    // Tear down only if config actually changed during runtime (not just HMR)
+    if (app && _lastConfigStr !== null && configStr !== _lastConfigStr) {
+      app = initializeApp(config, `paxxmo-${Date.now()}`)
+    } else if (!app) {
+      app = initializeApp(config)
     }
-    const app = getApps().length > 0 ? getApp() : initializeApp(config)
+
     db = getFirestore(app)
     _lastConfigStr = configStr
     return db
@@ -727,9 +730,11 @@ export function subscribeToStoreNotifications(storeId, onNotification) {
     const rdb = ensureRealtimeDb()
     if (!rdb) return () => {}
 
+    const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000)
+
     const q = query(
       collection(rdb, 'stores', key, 'notifications'),
-      where('read', '==', false),
+      where('createdAtMs', '>=', threeDaysAgo),
       limit(20)
     )
 
@@ -738,9 +743,7 @@ export function subscribeToStoreNotifications(storeId, onNotification) {
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0))
       
-      if (docs.length > 0) {
-        onNotification(docs)
-      }
+      onNotification(docs)
     })
   } catch (error) {
     console.error('[Firebase] subscribeToStoreNotifications failed:', error)

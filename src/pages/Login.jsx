@@ -14,6 +14,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const { login, loginByBarcode } = useAuthStore()
   const toast = useToast()
+  const passwordRef = React.useRef(null)
 
   // Background barcode scanner listener
   useEffect(() => {
@@ -66,131 +67,127 @@ export default function Login() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#0f1a12] p-4">
-      <div className="pointer-events-none absolute inset-0 z-0 opacity-30" style={{
-        backgroundImage: 'linear-gradient(rgba(34,197,94,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(34,197,94,0.04) 1px, transparent 1px)',
-        backgroundSize: '48px 48px',
+    <div className="min-h-screen w-full flex items-center justify-center bg-[#2F3E46] p-6 relative overflow-hidden font-sans">
+      {/* Premium Background Ambient Glows */}
+      <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-gradient-to-br from-[#52BF90]/20 to-[#317256]/10 blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-gradient-to-tl from-[#52BF90]/20 to-[#317256]/10 blur-[120px] pointer-events-none" />
+      
+      {/* Subtle grid pattern for depth */}
+      <div className="absolute inset-0 opacity-[0.03]" style={{
+        backgroundImage: 'radial-gradient(#ffffff 1.5px, transparent 1.5px)',
+        backgroundSize: '36px 36px'
       }} />
 
-      <div className="pointer-events-none absolute -left-28 -top-28 z-0 h-[500px] w-[500px] rounded-full bg-[radial-gradient(circle,#16a34a,transparent)] blur-[80px]" />
-      <div className="pointer-events-none absolute -bottom-20 -right-20 z-0 h-[400px] w-[400px] rounded-full bg-[radial-gradient(circle,#15803d,transparent)] blur-[80px]" />
-      <div className="pointer-events-none absolute left-[58%] top-[48%] z-0 h-[300px] w-[300px] rounded-full bg-[radial-gradient(circle,#166534,transparent)] blur-[80px]" />
+      <div className="w-full max-w-[420px] bg-white rounded-[24px] shadow-[0_32px_64px_rgba(0,0,0,0.3)] border border-white/20 p-8 sm:p-10 relative z-10">
+        {/* Logo */}
+        <div className="flex justify-center mb-8">
+          <img src="/ceypos_logo_png.png" alt="CeyPos Logo" className="h-16 w-auto object-contain drop-shadow-sm" />
+        </div>
 
-      <div className="relative z-10 flex min-h-screen items-center justify-center">
-        <div className="w-full max-w-[420px] rounded-[24px] border border-[rgba(34,197,94,0.12)] bg-[#131f16] px-6 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.6),0_0_60px_rgba(34,197,94,0.06)] sm:px-10 sm:py-10">
-          <div className="mx-auto mb-8 h-[2px] w-[80%] rounded bg-gradient-to-r from-transparent via-[#22c55e] to-transparent" />
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-black text-[#2F3E46] tracking-tight">Sign In</h2>
+          <p className="text-[14px] text-gray-500 mt-2 font-medium">Access your point of sale system</p>
+        </div>
 
-          <div className="mb-8 flex flex-col items-center text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-[18px] bg-gradient-to-br from-[#16a34a] to-[#15803d] shadow-[0_8px_32px_rgba(22,163,74,0.4)]">
-              <Zap size={30} color="white" />
-            </div>
-            <h1 className="text-[30px] font-extrabold leading-none text-[#f0fdf4]" style={{ fontFamily: 'Syne, DM Sans, sans-serif' }}>{BRAND.name} <span className="text-[#22c55e]">POS</span></h1>
-            <p className="mt-2 text-[13px] text-[#6b8f72]">Secure staff login</p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="mb-2 block text-[10.5px] font-bold uppercase tracking-[1.2px] text-[#6b8f72]">Username</label>
-              <div className="relative">
-                <User size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#6b8f72]" />
-                <input
-                  autoFocus
-                  className="w-full rounded-xl border border-[#1f3325] bg-[#0a1209] py-3.5 pl-11 pr-3 text-sm text-[#f0fdf4] outline-none transition focus:border-[#16a34a] focus:shadow-[0_0_0_3px_rgba(34,197,94,0.35)]"
-                  value={username}
-                  onChange={e => setUsername(e.target.value)}
-                  placeholder="e.g. admin"
-                  autoComplete="username"
-                  spellCheck={false}
-                  disabled={loading}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-[10.5px] font-bold uppercase tracking-[1.2px] text-[#6b8f72]">Password</label>
-              <div className="relative">
-                <Lock size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#6b8f72]" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="w-full rounded-xl border border-[#1f3325] bg-[#0a1209] py-3.5 pl-11 pr-10 text-sm text-[#f0fdf4] outline-none transition focus:border-[#16a34a] focus:shadow-[0_0_0_3px_rgba(34,197,94,0.35)]"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  disabled={loading}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((s) => !s)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-[#6b8f72] transition hover:text-[#22c55e]"
-                  tabIndex={-1}
-                >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-              {errorText && (
-                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-400">
-                  <AlertCircle size={12} /> {errorText}
-                </p>
-              )}
-            </div>
-
-            <label className="mt-1 inline-flex cursor-pointer items-center gap-2">
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-gray-400 ml-1">Username</label>
+            <div className="relative group">
+              <User size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-[#52BF90] transition-colors pointer-events-none" />
               <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="sr-only"
+                autoFocus
+                className="w-full rounded-[16px] border border-gray-200 bg-gray-50/50 py-3.5 pl-11 pr-4 text-[15px] font-bold text-[#2F3E46] outline-none transition-all placeholder:text-gray-300 focus:bg-white focus:border-[#52BF90] focus:ring-4 focus:ring-[#52BF90]/10"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    passwordRef.current?.focus()
+                  }
+                }}
+                placeholder="Enter username"
+                autoComplete="username"
+                spellCheck={false}
+                disabled={loading}
               />
-              <span className={`flex h-[18px] w-[18px] items-center justify-center rounded-[5px] border transition ${rememberMe ? 'border-[#16a34a] bg-[#16a34a]' : 'border-[#1f3325] bg-[#0a1209]'}`}>
-                {rememberMe && <Check size={11} color="white" />}
-              </span>
-              <span className="text-[13px] text-[#6b8f72]">Keep me signed in on this device</span>
-            </label>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-1 flex w-full items-center justify-center gap-2 rounded-[13px] bg-gradient-to-br from-[#16a34a] to-[#15803d] py-3.5 text-sm font-bold tracking-[0.4px] text-white shadow-[0_4px_20px_rgba(22,163,74,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_6px_28px_rgba(22,163,74,0.45)] disabled:cursor-not-allowed disabled:opacity-70"
-              style={{ fontFamily: 'Syne, DM Sans, sans-serif' }}
-            >
-              {loading ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" /> Verifying...
-                </>
-              ) : (
-                <>
-                  <Lock size={15} /> Secure Login
-                </>
-              )}
-            </button>
-          </form>
-
-          <div className="my-5 flex items-center gap-3">
-            <div className="h-px flex-1 bg-[#1f3325]" />
-            <span className="text-[11px] tracking-[0.5px] text-[#6b8f72]">OR USE ID BADGE</span>
-            <div className="h-px flex-1 bg-[#1f3325]" />
+            </div>
           </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 ml-1">Password</label>
+              <button type="button" className="text-[11px] font-bold text-[#52BF90] hover:text-[#317256] transition-colors pr-1">Forgot?</button>
+            </div>
+            <div className="relative group">
+              <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-[#52BF90] transition-colors pointer-events-none" />
+              <input
+                ref={passwordRef}
+                type={showPassword ? 'text' : 'password'}
+                className="w-full rounded-[16px] border border-gray-200 bg-gray-50/50 py-3.5 pl-11 pr-12 text-[15px] font-bold text-[#2F3E46] outline-none transition-all placeholder:text-gray-300 focus:bg-white focus:border-[#52BF90] focus:ring-4 focus:ring-[#52BF90]/10"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                disabled={loading}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((s) => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+            
+            {errorText && (
+              <div className="mt-3 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-600 border border-red-100 animate-slide-up">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" /> 
+                <p>{errorText}</p>
+              </div>
+            )}
+          </div>
+
+          <label className="mt-4 flex items-center gap-2.5 group cursor-pointer w-max pl-1">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="sr-only"
+            />
+            <span className={`flex h-[20px] w-[20px] items-center justify-center rounded-[6px] border-[1.5px] transition-all ${rememberMe ? 'border-[#52BF90] bg-[#52BF90]' : 'border-gray-300 bg-white group-hover:border-gray-400'}`}>
+              {rememberMe && <Check size={13} color="white" strokeWidth={3.5} />}
+            </span>
+            <span className="text-[13px] font-semibold text-gray-500 select-none">Remember me</span>
+          </label>
 
           <button
-            type="button"
-            onClick={simulateScan}
-            className={`mb-6 flex w-full items-center justify-center gap-2 rounded-[13px] border py-3 text-[13px] font-medium transition ${scanPulse ? 'border-[#16a34a] bg-[rgba(34,197,94,0.18)] text-[#22c55e]' : 'border-[#1f3325] bg-transparent text-[#6b8f72] hover:border-[#16a34a] hover:bg-[rgba(34,197,94,0.18)] hover:text-[#22c55e]'}`}
+            type="submit"
+            disabled={loading}
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-[16px] py-4 text-[15px] font-bold text-white transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(82,191,144,0.25)] active:translate-y-0 active:scale-[0.98] disabled:opacity-70 disabled:pointer-events-none"
+            style={{ background: 'linear-gradient(to right, #52BF90, #317256)', height: 54 }}
           >
-            <span className="h-[7px] w-[7px] rounded-full bg-[#22c55e]" />
-            <ScanBarcode size={17} />
-            {scanPulse ? 'Scanning... hold badge steady' : 'Scan ID Badge to Login'}
+            {loading ? <Loader2 size={18} className="animate-spin" /> : 'Sign In'}
           </button>
+        </form>
 
-          <div className="flex items-center justify-center gap-2 border-t border-[#1f3325] pt-4 text-[11px] text-[#2d4a35]">
-            <span>{BRAND.name}</span>
-            <span className="h-1 w-1 rounded-full bg-[#2d4a35]" />
-            <span>{BRAND.website}</span>
-            <span className="h-1 w-1 rounded-full bg-[#2d4a35]" />
-            <span>Secure Login</span>
-            <span className="h-1 w-1 rounded-full bg-[#2d4a35]" />
-            <span>© 2026</span>
-          </div>
+        <div className="my-6 flex items-center gap-4">
+          <div className="h-[1px] flex-1 bg-gray-100" />
+          <span className="text-[10px] font-bold uppercase tracking-widest text-gray-300">or</span>
+          <div className="h-[1px] flex-1 bg-gray-100" />
+        </div>
+
+        <button
+          type="button"
+          onClick={simulateScan}
+          className={`flex w-full items-center justify-center gap-2.5 rounded-[16px] border py-3.5 text-[14px] font-bold transition-all ${scanPulse ? 'border-[#52BF90] bg-[#52BF90]/5 text-[#317256]' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:bg-gray-50'} active:scale-[0.98]`}
+        >
+          <ScanBarcode size={18} className={scanPulse ? 'text-[#52BF90]' : 'text-gray-400'} />
+          {scanPulse ? 'Scanning...' : 'Scan ID Badge'}
+        </button>
+        
+        <div className="mt-8 pt-6 border-t border-gray-50 flex justify-center text-[12px] font-semibold text-gray-400">
+          <p>© {new Date().getFullYear()} {BRAND.name}. All rights reserved.</p>
         </div>
       </div>
     </div>

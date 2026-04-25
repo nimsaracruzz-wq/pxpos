@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react'
 import {
   TrendingUp, ShoppingCart, Package, AlertTriangle,
   ArrowUpRight, Users, DollarSign, Activity, RefreshCw, User,
-  Sparkles, Clock
+  Sparkles, Clock, Loader2, Zap, ArrowDownRight, Info
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -10,8 +10,10 @@ import {
 } from 'recharts'
 import { useSalesStore, useProductStore, useAppStore } from '@/store'
 import { StatCard, Badge } from '@/components/ui'
+import { useToast } from '@/components/Toast'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { format, subDays } from 'date-fns'
+import { generateDashboardInsights } from '@/lib/ai'
 
 const COLORS = ['#16a34a', '#22c55e', '#4ade80', '#86efac', '#bbf7d0']
 
@@ -44,6 +46,9 @@ export default function Dashboard() {
   const { products } = useProductStore()
   const { activeModule } = useAppStore()
   const [loaded, setLoaded] = useState(false)
+  const [aiInsights, setAiInsights] = useState([])
+  const [loadingInsights, setLoadingInsights] = useState(false)
+  const toast = useToast()
 
   useEffect(() => {
     const t = setTimeout(() => setLoaded(true), 200)
@@ -108,6 +113,19 @@ export default function Dashboard() {
     ? activeModule.charAt(0).toUpperCase() + activeModule.slice(1)
     : 'System'
 
+  const handleGenerateInsights = async () => {
+    setLoadingInsights(true)
+    setAiInsights([])
+    try {
+      const insights = await generateDashboardInsights(scopedSales, scopedProducts)
+      setAiInsights(insights)
+    } catch (err) {
+      toast.error(err.message || 'Failed to generate insights')
+    } finally {
+      setLoadingInsights(false)
+    }
+  }
+
   return (
     <div className="h-full overflow-y-auto p-5">
 
@@ -126,9 +144,19 @@ export default function Dashboard() {
             Welcome back! Here's what's happening in your <span className="font-semibold text-gray-700">{activeModule}</span> operations today.
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-400 bg-white rounded-xl px-3 py-2 border border-gray-100 shadow-sm">
-          <Clock size={13} className="text-green-500" />
-          <span className="font-medium">{format(new Date(), 'EEE, MMM d yyyy')}</span>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleGenerateInsights}
+            disabled={loadingInsights}
+            className="btn-secondary gap-1.5 font-bold shadow-sm"
+          >
+            {loadingInsights ? <Loader2 size={14} className="animate-spin text-purple-500" /> : <Sparkles size={14} className="text-purple-500" />}
+            Analyze Performance
+          </button>
+          <div className="flex items-center gap-2 text-xs text-gray-400 bg-white rounded-xl px-3 py-2 border border-gray-100 shadow-sm hidden sm:flex">
+            <Clock size={13} className="text-green-500" />
+            <span className="font-medium">{format(new Date(), 'EEE, MMM d yyyy')}</span>
+          </div>
         </div>
       </div>
 
@@ -258,6 +286,48 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* ─── CeyAI Insights row ─── */}
+      {(aiInsights.length > 0 || loadingInsights) && (
+        <div className="mb-6 card p-5 border border-purple-100 bg-gradient-to-br from-purple-50/50 to-white animate-fade-in">
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles size={18} className="text-purple-500" />
+            <h3 className="font-bold text-gray-900 text-sm">CeyAI Business Insights</h3>
+          </div>
+          {loadingInsights ? (
+            <div className="flex items-center gap-3 text-purple-600 py-4">
+              <Loader2 size={18} className="animate-spin" />
+              <p className="text-sm font-medium animate-pulse">CeyAI is analyzing your sales patterns...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              {aiInsights.map((insight, idx) => {
+                const isPos = insight.type === 'positive'
+                const isNeg = insight.type === 'negative'
+                const isAct = insight.type === 'action'
+                const Icon = isPos ? ArrowUpRight : isNeg ? ArrowDownRight : isAct ? Zap : Info
+                const color = isPos ? 'text-green-600' : isNeg ? 'text-red-500' : isAct ? 'text-amber-500' : 'text-blue-500'
+                const bg = isPos ? 'bg-green-50' : isNeg ? 'bg-red-50' : isAct ? 'bg-amber-50' : 'bg-blue-50'
+                return (
+                  <div key={idx} className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm flex flex-col gap-2 hover:shadow-md transition-shadow">
+                    <div className={`w-8 h-8 rounded-lg ${bg} ${color} flex items-center justify-center shrink-0 mb-1`}>
+                      <Icon size={16} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-800 text-sm">{insight.title}</h4>
+                      {insight.titleSi && <h4 className="font-bold text-gray-700 text-[13px] mt-0.5">{insight.titleSi}</h4>}
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 leading-relaxed">{insight.description}</p>
+                      {insight.descriptionSi && <p className="text-[11px] text-gray-400 leading-relaxed mt-1">{insight.descriptionSi}</p>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─── Bottom row ─── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

@@ -7,9 +7,17 @@ import { cn } from '@/lib/utils'
 export const useToastStore = create((set, get) => ({
   toasts: [],
   add: (toast) => {
-    const id = Date.now()
-    set((s) => ({ toasts: [...s.toasts, { id, ...toast }] }))
-    setTimeout(() => get().remove(id), toast.duration || 3000)
+    const id = toast.id || Date.now()
+    set((s) => {
+      const exists = s.toasts.some(t => t.id === id)
+      if (exists) {
+        return { toasts: s.toasts.map(t => t.id === id ? { ...t, ...toast, id } : t) }
+      }
+      return { toasts: [...s.toasts, { id, ...toast }] }
+    })
+    if (toast.duration !== Infinity) {
+      setTimeout(() => get().remove(id), toast.duration || 3000)
+    }
     return id
   },
   remove: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
@@ -17,12 +25,14 @@ export const useToastStore = create((set, get) => ({
 
 // ─── Toast helper hooks ───────────────────────────────────────────────────────
 export const useToast = () => {
-  const { add } = useToastStore()
+  const { add, remove } = useToastStore()
   return {
     success: (message, opts) => add({ type: 'success', message, ...opts }),
     error: (message, opts) => add({ type: 'error', message, ...opts }),
     warning: (message, opts) => add({ type: 'warning', message, ...opts }),
     info: (message, opts) => add({ type: 'info', message, ...opts }),
+    loading: (message, opts) => add({ type: 'info', message, duration: Infinity, ...opts }),
+    dismiss: (id) => remove(id),
   }
 }
 

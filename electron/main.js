@@ -409,16 +409,20 @@ ipcMain.handle('restore-sqlite-backup', async () => {
       // Close the DB connection before overwriting
       db.close();
 
+      ['', '-wal', '-shm', '-journal'].forEach(ext => {
+        if (fs.existsSync(dbPath + ext)) fs.unlinkSync(dbPath + ext);
+      });
+
       // Overwrite the actual db file
       fs.copyFileSync(sourceFile, dbPath);
 
       // Re-initialize the db connection in memory without exiting the app
       db = new Database(dbPath);
 
-      // Reload all front-end windows so they fetch the fresh database data
-      BrowserWindow.getAllWindows().forEach((w) => w.reload());
+      // Re-initialize the db connection in memory
+      db = new Database(dbPath);
 
-      return { success: true };
+      return { success: true, requiresReload: true };
     }
     return { success: false, error: 'Cancelled' };
   } catch (error) {
@@ -466,20 +470,24 @@ ipcMain.handle('restore-sql-dump', async () => {
 
     const sourceFile = filePaths[0];
     if (!fs.existsSync(sourceFile)) return { success: false, error: 'Selected SQL file not found' };
-    const sqlContent = fs.readFileSync(sourceFile, 'utf8');
+    
+    let sqlContent = fs.readFileSync(sourceFile, 'utf8');
+    // Strip BOM if present
+    sqlContent = sqlContent.replace(/^\uFEFF/, '');
     if (!sqlContent || !sqlContent.trim()) return { success: false, error: 'SQL file is empty' };
 
     const safetyBackup = `${dbPath}.bak`;
     if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, safetyBackup);
 
     db.close();
-    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    ['', '-wal', '-shm', '-journal'].forEach(ext => {
+      if (fs.existsSync(dbPath + ext)) fs.unlinkSync(dbPath + ext);
+    });
     db = new Database(dbPath);
 
     db.exec(sqlContent);
 
-    BrowserWindow.getAllWindows().forEach((w) => w.reload());
-    return { success: true };
+    return { success: true, requiresReload: true };
   } catch (error) {
     try {
       if (fs.existsSync(`${dbPath}.bak`)) {
@@ -519,6 +527,23 @@ ipcMain.handle('update-product-batch', (event, id, updates) => {
 
 ipcMain.handle('delete-product-batch', (event, id) => {
   db.prepare(`DELETE FROM product_batches WHERE id = @id`).run({ id });
+});
+
+// ─── HelaQR API Proxy (bypasses CORS in renderer) ───────────────────────────
+// All HelaQR HTTP calls are routed through the main process (Node.js)
+// so they are never subject to browser CORS policy.
+ipcMain.handle('helaqr-fetch', async (event, { url, method = 'POST', headers = {}, body }) => {
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    return { ok: false, status: 0, data: {}, error: String(err?.message || err) };
+  }
 });
 
 // ─── Silent Receipt Printing (no pop-up windows) ───────────────────────────
@@ -600,6 +625,7 @@ function createWindow() {
     width: 1280,
     height: 800,
     title: 'CeyPos POS',
+    icon: path.join(__dirname, '../dist/icon.png'),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false

@@ -1091,10 +1091,13 @@ export default function Settings() {
                       try {
                         const ipc = window.require('electron').ipcRenderer;
                         const res = await ipc.invoke('restore-sqlite-backup');
-                        // App will likely restart before this returns if successful
-                        if (res && !res.success) {
-                          if (res.error === 'Cancelled') toast.dismiss(toastId);
-                          else toast.error(res.error || 'Failed to restore', { id: toastId });
+                        if (res?.success) {
+                          toast.success('Database restored successfully', { id: toastId });
+                          setTimeout(() => window.location.reload(), 1500);
+                        } else if (res?.error === 'Cancelled') {
+                          toast.dismiss(toastId);
+                        } else {
+                          toast.error(res?.error || 'Failed to restore', { id: toastId });
                         }
                       } catch (e) {
                         toast.error(e.message, { id: toastId });
@@ -1120,9 +1123,14 @@ export default function Settings() {
                       try {
                         const ipc = window.require('electron').ipcRenderer;
                         const res = await ipc.invoke('restore-sql-dump');
-                        if (res?.success) toast.success('SQL dump restored successfully', { id: toastId });
-                        else if (res?.error === 'Cancelled') toast.dismiss(toastId);
-                        else toast.error(res?.error || 'Failed to restore SQL dump', { id: toastId });
+                        if (res?.success) {
+                          toast.success('SQL dump restored successfully', { id: toastId });
+                          setTimeout(() => window.location.reload(), 1500);
+                        } else if (res?.error === 'Cancelled') {
+                          toast.dismiss(toastId);
+                        } else {
+                          toast.error(res?.error || 'Failed to restore SQL dump', { id: toastId });
+                        }
                       } catch (e) {
                         toast.error(e.message, { id: toastId });
                       }

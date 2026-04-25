@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useState, useRef, useEffect } from 'react'
 import { Utensils, ChefHat, X, Banknote, CreditCard, Split, Receipt as ReceiptIcon, ShoppingBag, Clock, CheckCircle2, QrCode, Settings2, Plus, Minus, Pencil, Trash2 } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { useSalesStore, useAppStore, useProductStore, useTableStore, useActivityStore, useAuthStore, useRecipeStore } from '@/store'
@@ -12,7 +12,7 @@ import { ArrowRightLeft } from 'lucide-react'
 import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, resolveCloudTenantId, updateQRCodeOrderStatus } from '@/lib/firebase'
 import { BRAND } from '@/lib/brand'
 import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
-import { generateHelaQRPayment, getHelaQRConfigStatus } from '@/lib/helaqr'
+import { generateHelaQRPayment, getHelaQRConfigStatus, checkHelaQRPaymentStatus } from '@/lib/helaqr'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
 const STATUS_CONFIG = {
@@ -55,7 +55,119 @@ function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
     Math.ceil(total / 1000) * 1000,
   ])].filter((v) => v >= total).slice(0, 3)
 
+  const [qrState, setQrState] = useState('idle')
+  const [qrData, setQrData] = useState('')
+  const [qrError, setQrError] = useState('')
+  const [qrTimeLeft, setQrTimeLeft] = useState(0)
+  const pollRef = useRef(null)
+  const countdownRef = useRef(null)
+
+  const stopQrTimers = () => {
+    clearInterval(pollRef.current)
+    clearInterval(countdownRef.current)
+  }
+
+  // Clear timers on unmount
+  useEffect(() => stopQrTimers, [])
+
+  const handleGenerateQR = async () => {
+    const cfg = getHelaQRConfigStatus()
+    if (!cfg.enabled || !cfg.configured) {
+      setQrState('error')
+      setQrError('Configure HelaQR in Settings first')
+      return
+    }
+
+    setQrState('generating')
+    setQrError('')
+
+    const receiptNo = generateReceiptNumber()
+    let result
+    try {
+      result = await generateHelaQRPayment({ amount: total, reference: receiptNo })
+    } catch (e) {
+      setQrState('error')
+      setQrError(e.message || 'Failed to generate QR')
+      return
+    }
+
+    if (!result?.success) {
+      setQrState('error')
+      setQrError(result?.error || 'Failed to generate QR')
+      return
+    }
+
+    setQrData(result.qrData)
+    setQrState('scanning')
+    setQrTimeLeft(300) // 5 minutes
+
+    publishCustomerDisplay({
+      amount: total,
+      qrData: result.qrData,
+      paymentMethod: 'helaqr',
+      status: 'paying',
+      cashGiven: 0,
+      change: 0,
+      items: (order.items || []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        qty: Number(item.qty || 0),
+        price: Number(item.price || 0),
+        lineTotal: Number(item.price || 0) * Number(item.qty || 0),
+      })),
+      reference: result.reference || receiptNo,
+      title: `Table ${table.number || ''} - HelaQR Payment`,
+      subtitle: 'Please scan this code and complete payment from your banking app.',
+    })
+
+    countdownRef.current = setInterval(() => {
+      setQrTimeLeft((t) => {
+        if (t <= 1) { stopQrTimers(); setQrState('idle'); return 0 }
+        return t - 1
+      })
+    }, 1000)
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await checkHelaQRPaymentStatus({
+          reference: receiptNo,
+          qrReference: result.qrReference || '',
+        })
+        if (status?.isPaid) {
+          stopQrTimers()
+          setQrState('idle')
+          onPaid({ 
+            method: 'helaqr', cashGiven: 0, change: 0, subtotal, tax, serviceCharge: serviceChargeAmount, total,
+            qrData: result.qrData, qrReference: result.qrReference || '', paymentRef: result.reference || receiptNo, receiptNo 
+          })
+        } else if (status?.isFailed) {
+          stopQrTimers()
+          setQrState('error')
+          setQrError('Payment failed, expired, or was cancelled.')
+          publishCustomerDisplay({
+            amount: total,
+            qrData: '',
+            paymentMethod: 'helaqr',
+            status: 'checkout',
+            cashGiven: 0,
+            change: 0,
+            items: (order.items || []).map((item) => ({
+              id: item.id,
+              name: item.name,
+              qty: Number(item.qty || 0),
+              price: Number(item.price || 0),
+              lineTotal: Number(item.price || 0) * Number(item.qty || 0),
+            })),
+            title: `Table ${table.number || ''} - Payment Failed`,
+            subtitle: 'Payment failed or expired. Please try again.',
+          })
+        }
+      } catch { /* ignore network hiccups */ }
+    }, 15000)
+  }
+
   const handlePay = () => {
+    if (method === 'helaqr') { handleGenerateQR(); return }
     if (!canPay) return
     if (typeof onCheckout === 'function') {
       onCheckout({
@@ -212,23 +324,59 @@ function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
         )}
 
         {method === 'helaqr' && (
-          <div className="mb-4 p-5 rounded-xl bg-amber-50 text-center border border-amber-100">
-            <QrCode size={36} className="mx-auto text-amber-500 mb-2" />
-            <p className="text-sm font-medium text-amber-700">HelaQR payment pending</p>
-            <p className="text-xs text-amber-600 mt-1">Will be confirmed by server callback.</p>
+          <div className="mb-4">
+            {qrState === 'idle' && (
+              <div className="p-5 rounded-xl bg-amber-50 text-center border border-amber-100">
+                <QrCode size={36} className="mx-auto text-amber-500 mb-2" />
+                <p className="text-sm font-medium text-amber-700">Ready to accept HelaQR</p>
+                <p className="text-xs text-amber-600 mt-1">Click confirm below to generate code.</p>
+              </div>
+            )}
+            {qrState === 'generating' && (
+              <div className="p-5 rounded-xl bg-amber-50 text-center border border-amber-100">
+                <div className="text-3xl mb-2 animate-spin inline-block">⏳</div>
+                <p className="text-sm font-semibold text-amber-700">Generating QR Code…</p>
+              </div>
+            )}
+            {qrState === 'scanning' && qrData && (
+              <div className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 flex flex-col items-center">
+                <p className="text-xs font-bold text-amber-700 uppercase tracking-widest mb-3">Scan to Pay</p>
+                <div className="bg-white p-3 rounded-xl shadow-md">
+                  <QRCodeSVG value={qrData} size={160} level="H" includeMargin />
+                </div>
+                <div className="flex items-center gap-2 mt-4">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <p className="text-xs text-amber-600 font-semibold">
+                    Waiting for payment… {Math.floor(qrTimeLeft / 60)}:{String(qrTimeLeft % 60).padStart(2, '0')}
+                  </p>
+                </div>
+                <button onClick={() => { stopQrTimers(); setQrState('idle'); setQrData('') }}
+                  className="mt-3 text-xs text-red-500 hover:underline">Cancel & go back</button>
+              </div>
+            )}
+            {qrState === 'error' && (
+              <div className="p-5 rounded-xl bg-red-50 border border-red-200 text-center">
+                <p className="text-sm font-semibold text-red-700 mb-1">⚠ {qrError}</p>
+                <button onClick={() => setQrState('idle')} className="text-xs text-red-500 hover:underline">Try again</button>
+              </div>
+            )}
           </div>
         )}
 
-        <button
-          onClick={handlePay}
-          disabled={!canPay || processing}
-          className="btn-primary w-full justify-center py-4 text-base"
-          style={{ borderRadius: 14, opacity: (!canPay && method === 'cash') ? 0.5 : 1 }}
-        >
-          {processing
-            ? '⏳ Processing…'
-            : `✓ Confirm & Settle — ${formatCurrency(total)}`}
-        </button>
+        {(method !== 'helaqr' || qrState === 'idle' || qrState === 'error') && (
+          <button
+            onClick={handlePay}
+            disabled={(!canPay && method === 'cash') || processing || qrState === 'generating'}
+            className="btn-primary w-full justify-center py-4 text-base"
+            style={{ borderRadius: 14, opacity: (!canPay && method === 'cash') ? 0.5 : 1 }}
+          >
+            {processing
+              ? '⏳ Processing…'
+              : method === 'helaqr'
+                ? `⚡ Generate QR — ${formatCurrency(total)}`
+                : `✓ Confirm & Settle — ${formatCurrency(total)}`}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -1465,28 +1613,12 @@ export default function Tables() {
 
     const { method, cashGiven, change, subtotal, tax, serviceCharge, total } = paymentInfo
     const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
-    const receiptNo = generateReceiptNumber()
-    let paymentRef = isHelaQR ? `HQR-${uuidv4().slice(0, 8).toUpperCase()}` : ''
-    let qrReference = ''
-    let qrData = ''
-
-    if (isHelaQR) {
-      const cfg = getHelaQRConfigStatus()
-      if (!cfg.enabled || !cfg.configured) {
-        toast.error('Configure HelaQR in Settings before using this method')
-        return
-      }
-
-      const qrResult = await generateHelaQRPayment({ amount: total, reference: receiptNo })
-      if (!qrResult?.success) {
-        toast.error(qrResult?.error || 'Failed to generate HelaQR')
-        return
-      }
-
-      paymentRef = String(qrResult.reference || receiptNo)
-      qrReference = String(qrResult.qrReference || '')
-      qrData = String(qrResult.qrData || '')
-    }
+    
+    // For HelaQR, these fields are pre-populated by SettleModal's generator
+    const receiptNo = paymentInfo.receiptNo || generateReceiptNumber()
+    const paymentRef = isHelaQR ? (paymentInfo.paymentRef || receiptNo) : ''
+    const qrReference = isHelaQR ? (paymentInfo.qrReference || '') : ''
+    const qrData = isHelaQR ? (paymentInfo.qrData || '') : ''
 
     const receiptNotes = order?.source === 'web' || order?.source === 'qr' || order?.qrOrderId ? '' : (order.notes || '')
 
@@ -1505,32 +1637,30 @@ export default function Tables() {
       paymentRef,
       qrReference,
       qrData,
-      paymentStatus: isHelaQR ? 'pending' : 'paid',
+      paymentStatus: 'paid',
       change,
       cashier: order.waiter || 'Waiter',
       tableNumber: selectedTable?.number,
       source: 'restaurant',
-      status: isHelaQR ? 'pending' : 'completed',
+      status: 'completed',
       notes: receiptNotes,
     }
 
     // Record in central sales store
     addSale(saleData)
 
-    if (!isHelaQR) {
-      // Always deduct menu item stock for restaurant table sales.
-      order.items.forEach((item) => {
-        adjustStock(item.id, -Number(item.qty || 0))
-      })
+    // Always deduct menu item stock for restaurant table sales.
+    order.items.forEach((item) => {
+      adjustStock(item.id, -Number(item.qty || 0))
+    })
 
-      // Also deduct ingredient stock when recipes are configured.
-      order.items.forEach((item) => {
-        const result = deductIngredients(item.id, Number(item.qty || 0))
-        if (!result?.success) {
-          console.warn(`Failed to deduct ingredients for ${item.name}:`, result?.message)
-        }
-      })
-    }
+    // Also deduct ingredient stock when recipes are configured.
+    order.items.forEach((item) => {
+      const result = deductIngredients(item.id, Number(item.qty || 0))
+      if (!result?.success) {
+        console.warn(`Failed to deduct ingredients for ${item.name}:`, result?.message)
+      }
+    })
 
     const qrOrderIds = Array.isArray(order?.qrOrderIds)
       ? order.qrOrderIds.map((id) => String(id)).filter(Boolean)
@@ -1555,12 +1685,12 @@ export default function Tables() {
     setSelectedTable(null)
 
     // Show receipt for immediate-settled methods only.
-    setCompletedSale(isHelaQR ? null : { ...saleData, waiter: order.waiter, tableNumber: selectedTable?.number })
+    setCompletedSale({ ...saleData, waiter: order.waiter, tableNumber: selectedTable?.number })
     openCustomerScreen({
       amount: total,
       qrData,
       paymentMethod: method,
-      status: isHelaQR ? 'paying' : 'paid',
+      status: 'paid',
       cashGiven,
       change,
       items: (order.items || []).map((item) => ({
@@ -1572,10 +1702,10 @@ export default function Tables() {
       })),
       reference: paymentRef,
       title: isHelaQR
-        ? `Table ${selectedTable?.number || ''} - HelaQR Payment`
+        ? `Table ${selectedTable?.number || ''} - HelaQR Payment Successful`
         : `Table ${selectedTable?.number || ''} - Customer Payment View`,
       subtitle: isHelaQR
-        ? 'Please scan this code and complete payment from your banking app.'
+        ? 'Payment has been successfully completed.'
         : `Please confirm this amount for ${String(method || '').toUpperCase()} payment.`,
     })
 
@@ -1587,9 +1717,9 @@ export default function Tables() {
 
     toast.success(
       isHelaQR
-        ? `HelaQR pending: ${paymentRef}`
+        ? `HelaQR Paid: Rs. ${total.toFixed(2)}`
         : `Table ${selectedTable?.number} settled! ${formatCurrency(total)} via ${method}`,
-      { duration: 4000, title: isHelaQR ? '⏳ QR Payment Pending' : '🎉 Sale Recorded' }
+      { duration: 4000, title: isHelaQR ? '🎉 QR Payment Success' : '🎉 Sale Recorded' }
     )
   }
 

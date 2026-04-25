@@ -91,16 +91,8 @@ export default function Activation() {
             
             {/* Header Area */}
             <div className="flex flex-col items-center mb-10 text-center">
-              <div 
-                className="w-20 h-20 rounded-[24px] flex items-center justify-center mb-6 shadow-xl relative"
-                style={{
-                  background: isDark ? 'linear-gradient(135deg, #4f46e5, #9333ea)' : 'linear-gradient(135deg, #10b981, #059669)',
-                  boxShadow: isDark ? '0 12px 30px rgba(79,70,229,0.3)' : '0 12px 30px rgba(16,185,129,0.3)'
-                }}
-              >
-                {/* Embedded subtle glow behind icon */}
-                <div className="absolute inset-0 bg-white opacity-20 rounded-[24px] rounded-br-[48px]" />
-                <ShieldCheck className="w-9 h-9 text-white relative z-10" />
+              <div className="flex items-center justify-center mb-6">
+                <img src="/ceypos_logo_png.png" alt="CeyPos Logo" className="h-16 w-auto object-contain drop-shadow-md" />
               </div>
               
               <h1 className="text-3xl font-black tracking-tight mb-2" style={{ color: isDark ? '#ffffff' : '#111827' }}>

@@ -27,6 +27,23 @@ function buildBasicAuth(appId, appSecret) {
   return Buffer.from(raw).toString('base64')
 }
 
+// ─── Transport layer: uses Electron IPC (no CORS) when available ─────────────
+async function ipcFetch(url, { method = 'POST', headers = {}, body } = {}) {
+  if (typeof window !== 'undefined' && window.require) {
+    // Electron renderer → proxy through main process (Node.js, no CORS)
+    const ipcRenderer = window.require('electron').ipcRenderer
+    return ipcRenderer.invoke('helaqr-fetch', { url, method, headers, body })
+  }
+  // Plain browser fallback (works only if server has CORS enabled)
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const data = await res.json().catch(() => ({}))
+  return { ok: res.ok, status: res.status, data }
+}
+
 async function requestToken() {
   const settings = getSettings()
   const baseUrl = trimSlash(settings.baseUrl)
@@ -35,18 +52,18 @@ async function requestToken() {
     throw new Error('HelaQR settings are incomplete')
   }
 
-  const res = await fetch(`${baseUrl}/merchant/api/v1/getToken`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Basic ${buildBasicAuth(settings.appId, settings.appSecret)}`,
-    },
-    body: JSON.stringify({ grant_type: 'client_credentials' }),
+  const url = `${baseUrl}/merchant/api/v1/getToken`
+  console.log('[HelaQR] requestToken →', url)
+  const result = await ipcFetch(url, {
+    body: { grant_type: 'client_credentials' },
+    headers: { Authorization: `Basic ${buildBasicAuth(settings.appId, settings.appSecret)}` },
   })
 
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok || Number(data?.code || 0) !== 200 || !data?.accessToken) {
-    throw new Error(data?.message || 'Failed to get HelaQR access token')
+  const data = result.data
+  console.log('[HelaQR] requestToken response', result.status, JSON.stringify(data))
+
+  if (!result.ok || Number(data?.code || 0) !== 200 || !data?.accessToken) {
+    throw new Error(data?.message || result.error || 'Failed to get HelaQR access token')
   }
 
   cachedAccessToken = String(data.accessToken || '')
@@ -62,19 +79,13 @@ async function refreshToken() {
     return requestToken()
   }
 
-  const res = await fetch(`${baseUrl}/merchant/api/v1/merchant/auth/refresh`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ refreshToken: cachedRefreshToken }),
-  })
-
-  const data = await res.json().catch(() => ({}))
+  const url = `${baseUrl}/merchant/api/v1/merchant/auth/refresh`
+  const result = await ipcFetch(url, { body: { refreshToken: cachedRefreshToken } })
+  const data = result.data
   const row = Array.isArray(data?.data) ? data.data[0] : null
   const nextToken = String(row?.accessToken || '').trim()
 
-  if (!res.ok || Number(data?.code || 0) !== 200 || !nextToken) {
+  if (!result.ok || Number(data?.code || 0) !== 200 || !nextToken) {
     return requestToken()
   }
 
@@ -91,30 +102,32 @@ async function withBearer(path, payload = {}) {
     throw new Error('HelaQR settings are incomplete')
   }
 
+  const url = `${baseUrl}${path}`
+
   const doRequest = async (token) => {
-    const res = await fetch(`${baseUrl}${path}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
+    console.log('[HelaQR] withBearer →', url, JSON.stringify(payload))
+    const result = await ipcFetch(url, {
+      body: payload,
+      headers: { Authorization: `Bearer ${token}` },
     })
-    const data = await res.json().catch(() => ({}))
-    return { res, data }
+    console.log('[HelaQR] withBearer response', result.status, JSON.stringify(result.data))
+    return result
   }
 
   const token = cachedAccessToken || (await requestToken())
-  let { res, data } = await doRequest(token)
+  let result = await doRequest(token)
 
-  if (res.status === 401) {
+  const isUnauthorized =
+    result.status === 401 ||
+    String(result.data?.statusCode || '') === '401' ||
+    String(result.data?.code || '') === '401'
+
+  if (isUnauthorized) {
     const next = await refreshToken()
-    const retry = await doRequest(next)
-    res = retry.res
-    data = retry.data
+    result = await doRequest(next)
   }
 
-  return { ok: res.ok, status: res.status, data }
+  return { ok: result.ok, status: result.status, data: result.data }
 }
 
 export function getHelaQRConfigStatus() {
@@ -126,30 +139,95 @@ export function getHelaQRConfigStatus() {
   }
 }
 
+// Deep-scan an object for any string value that looks like QR payload data
+// (long alphanumeric/URL string — typical for QR codes)
+function deepFindQrString(obj, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 5) return ''
+  for (const [key, val] of Object.entries(obj)) {
+    if (typeof val === 'string' && val.length > 10) {
+      const lk = key.toLowerCase()
+      // Prefer keys with "qr" in the name
+      if (lk.includes('qr') || lk.includes('data') || lk.includes('code') || lk.includes('payload')) {
+        return val
+      }
+    }
+    if (val && typeof val === 'object') {
+      const found = deepFindQrString(val, depth + 1)
+      if (found) return found
+    }
+  }
+  // Second pass: any long string
+  for (const val of Object.values(obj)) {
+    if (typeof val === 'string' && val.length > 20) return val
+    if (val && typeof val === 'object') {
+      const found = deepFindQrString(val, depth + 1)
+      if (found) return found
+    }
+  }
+  return ''
+}
+
 export async function generateHelaQRPayment({ amount, reference }) {
   const settings = getSettings()
   const payload = {
     b: String(settings.businessId || '').trim(),
     r: String(reference || '').trim(),
-    am: Number(amount || 0),
+    am: Number(Number(amount || 0).toFixed(2)),
   }
 
   const { ok, data } = await withBearer('/merchant/api/helapos/qr/generate', payload)
-  const success = ok && String(data?.statusCode || '') === '200'
+
+  // ── Emit debug event so the UI can show the raw response ──────────────────
+  const rawJson = JSON.stringify(data)
+  console.log('[HelaQR] generateHelaQRPayment RAW:', rawJson)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('helaqr:debug', { detail: { ok, raw: data } }))
+  }
+
+  // ── Flexible field extraction ─────────────────────────────────────────────
+  const nestedData = Array.isArray(data?.data) ? data?.data[0] : (data?.data || {})
+
+  // Try every known field name first, then deep-scan as last resort
+  const qrDataStr = String(
+    data?.qr_data        || nestedData?.qr_data        ||
+    data?.qrData         || nestedData?.qrData         ||
+    data?.qr_string      || nestedData?.qr_string      ||
+    data?.qrString       || nestedData?.qrString       ||
+    data?.qr_code        || nestedData?.qr_code        ||
+    data?.qrCode         || nestedData?.qrCode         ||
+    data?.qr             || nestedData?.qr             ||
+    data?.qr_payload     || nestedData?.qr_payload     ||
+    data?.payload        || nestedData?.payload        ||
+    deepFindQrString(data) ||
+    ''
+  )
+
+  const qrRefStr = String(
+    data?.qr_reference   || nestedData?.qr_reference   ||
+    data?.qrReference    || nestedData?.qrReference    ||
+    data?.reference_id   || nestedData?.reference_id   ||
+    ''
+  )
+
+  // Success: HTTP ok + statusCode 200 OR HTTP ok + we got qr data
+  const statusOk = ok && (String(data?.statusCode || '') === '200' || Number(data?.statusCode) === 200 || String(data?.code || '') === '200' || Number(data?.code) === 200)
+  const success = statusOk || (ok && !!qrDataStr)
+
+  console.log('[HelaQR] success:', success, '| qrData length:', qrDataStr.length, '| qrRef:', qrRefStr)
 
   if (!success) {
     return {
       success: false,
-      error: data?.statusMessage || data?.message || 'Failed to generate HelaQR',
+      error: data?.statusMessage || data?.message || data?.error || `HelaQR API error (HTTP ${ok ? 'ok' : 'fail'}) — check console`,
       raw: data,
     }
   }
 
   return {
     success: true,
-    qrData: String(data?.qr_data || ''),
-    qrReference: String(data?.qr_reference || ''),
-    reference: String(data?.reference || payload.r),
+    qrData: qrDataStr,
+    qrReference: qrRefStr,
+    reference: String(data?.reference || nestedData?.reference || payload.r),
     raw: data,
   }
 }
@@ -174,14 +252,40 @@ export async function checkHelaQRPaymentStatus({ reference, qrReference }) {
     }
   }
 
-  const paymentStatus = Number(data?.sale?.payment_status)
+  const nestedData = Array.isArray(data?.data) ? data?.data[0] : (data?.data || {})
+  const saleObj = data?.sale || nestedData?.sale || data || nestedData
+
+  // Look for different common field names for payment status
+  const rawStatus = saleObj?.payment_status ?? saleObj?.paymentStatus ?? saleObj?.status ?? saleObj?.state
+
+  // Determine if paid based on common API patterns
+  const strStatus = String(rawStatus || '').toUpperCase().trim()
+  const numStatus = Number(rawStatus)
+
+  const isPaid = 
+    numStatus === 2 || 
+    numStatus === 1 || 
+    strStatus === 'PAID' || 
+    strStatus === 'COMPLETED' || 
+    strStatus === 'SUCCESS' || 
+    strStatus === 'DONE'
+
+  const isFailed = 
+    numStatus === -1 || 
+    numStatus === 3 || 
+    numStatus === 4 || 
+    strStatus === 'FAILED' || 
+    strStatus === 'EXPIRED' || 
+    strStatus === 'CANCELLED' || 
+    strStatus === 'REJECTED'
+
   return {
     success: true,
-    paymentStatus,
-    isPaid: paymentStatus === 2,
-    isFailed: paymentStatus === -1,
-    isPending: paymentStatus === 0,
-    sale: data?.sale || null,
+    paymentStatus: rawStatus,
+    isPaid,
+    isPending: numStatus === 0 || strStatus === 'PENDING',
+    isFailed,
+    sale: saleObj,
     raw: data,
   }
 }
