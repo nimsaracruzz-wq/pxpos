@@ -241,6 +241,40 @@ export async function checkHelaQRPaymentStatus({ reference, qrReference }) {
     return { success: false, error: 'reference or qr_reference is required' }
   }
 
+  // ── Step 1: Check Firestore for webhook-confirmed payment (instant) ────────
+  // The Vercel webhook writes to helaqr_payments/{reference} when HelaQR POSTs
+  // a payment notification. Checking here avoids waiting for the poll interval.
+  if (reference) {
+    try {
+      const { getApps, getApp, initializeApp } = await import('firebase/app')
+      const { getFirestore, doc, getDoc } = await import('firebase/firestore')
+      const apps = getApps()
+      const app = apps.length > 0 ? apps[0] : null
+      if (app) {
+        const db = getFirestore(app)
+        const snap = await getDoc(doc(db, 'helaqr_payments', String(reference)))
+        if (snap.exists()) {
+          const data = snap.data() || {}
+          console.log('[HelaQR] Webhook Firestore hit —', reference, 'isPaid:', data.isPaid)
+          return {
+            success: true,
+            paymentStatus: data.paymentStatus ?? null,
+            isPaid: Boolean(data.isPaid),
+            isPending: !data.isPaid,
+            isFailed: false,
+            sale: data,
+            raw: data,
+            source: 'webhook',
+          }
+        }
+      }
+    } catch (fsErr) {
+      // Firestore unavailable — fall through to API polling
+      console.warn('[HelaQR] Firestore webhook check failed, using API poll:', fsErr?.message)
+    }
+  }
+
+  // ── Step 2: Fallback — poll the HelaQR API directly ───────────────────────
   const { ok, data } = await withBearer('/merchant/api/helapos/sales/getSaleStatus', payload)
   const success = ok && String(data?.statusCode || '') === '200'
 
@@ -287,5 +321,6 @@ export async function checkHelaQRPaymentStatus({ reference, qrReference }) {
     isFailed,
     sale: saleObj,
     raw: data,
+    source: 'api',
   }
 }
