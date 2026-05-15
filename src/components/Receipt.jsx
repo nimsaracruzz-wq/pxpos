@@ -4,86 +4,29 @@ import Barcode from 'react-barcode'
 import { formatCurrency } from '@/lib/utils'
 import { tr } from '@/lib/i18n'
 import { BRAND } from '@/lib/brand'
+import { printReceiptHTML } from '@/lib/printReceipt'
+import { buildThermalProfile } from '@/lib/thermalPrinter'
+import { useAppStore } from '@/store'
 
-const PRINT_STYLES = `
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Courier New', Courier, monospace; background: white; color: #111; }
-  .receipt { font-size: 12px; width: 280px; background: #fff; color: #111; padding: 18px 16px 24px; margin: 0 auto; }
-  .sep { border: none; border-top: 1px dashed #aaa; margin: 8px 0; }
-  .sep-solid { border: none; border-top: 1.5px solid #111; margin: 6px 0; }
-  .receipt-top { border-bottom: 1px dashed #aaa; margin-bottom: 10px; padding-bottom: 10px; text-align: center; }
-  .store { font-size: 17px; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 2px; }
-  .addr { font-size: 10px; color: #555; line-height: 1.5; }
-  .taxid { font-size: 10px; color: #555; margin-top: 2px; }
-  .table-badge { border: 1px solid #444; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; padding: 2px 10px; display: inline-block; margin: 8px 0 2px; }
-  .meta { width: 100%; font-size: 10.5px; border-collapse: collapse; margin-bottom: 2px; }
-  .meta td { padding: 1px 0; }
-  .meta td:last-child { text-align: right; }
-  .barcode-area { text-align: center; margin: 8px 0 4px; }
-  .barcode-num { font-size: 9px; color: #555; letter-spacing: 0.05em; margin-top: 2px; }
-  .items { width: 100%; border-collapse: collapse; margin: 4px 0; }
-  .item-name { font-size: 12px; font-weight: 700; }
-  .item-qty { font-size: 10.5px; color: #444; }
-  .items td:last-child { text-align: right; white-space: nowrap; }
-  .totals { width: 100%; border-collapse: collapse; font-size: 11px; }
-  .totals td { padding: 1.5px 0; }
-  .totals td:last-child { text-align: right; }
-  .total-row td { font-size: 14px; font-weight: 700; padding: 4px 0 2px; }
-  .change-box { border: 1.5px solid #111; border-radius: 3px; padding: 5px 8px; margin: 8px 0 4px; display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 13px; }
-  .footer { text-align: center; font-size: 10px; color: #555; margin-top: 10px; line-height: 1.6; }
-  .footer .thank { font-size: 12px; font-weight: 700; color: #111; }
-  .powered { font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: #aaa; margin-top: 6px; }
-  @media print {
-    body { width: 80mm; }
-    .no-print { display: none; }
-  }
-`
-
-// ─── Print Helper ─────────────────────────────────────────────────────────────
-export async function printReceiptHTML(title, bodyHtml, options = {}) {
-  const htmlDoc = `<!DOCTYPE html><html><head>
-    <meta charset="utf-8"><title>${title}</title>
-    <style>${PRINT_STYLES}</style>
-  </head><body><div class="receipt">${bodyHtml}</div></body></html>`
-
-  const isElectron =
-    typeof window !== 'undefined' &&
-    typeof window.require === 'function' &&
-    typeof window.process !== 'undefined' &&
-    !!window.process?.versions?.electron
-
-  try {
-    if (isElectron) {
-      const ipcRenderer = window.require('electron').ipcRenderer
-      const result = await ipcRenderer.invoke('print-html', {
-        title,
-        html: htmlDoc,
-        silent: true,
-        deviceName: options?.deviceName || '',
-      })
-      if (result?.success) return true
-      throw new Error(result?.error || 'Silent print failed')
-    }
-  } catch (err) {
-    console.error('[Receipt] Silent print failed:', err)
-    if (isElectron) return false
-  }
-
-  const w = window.open('', '_blank', 'width=400,height=720')
-  if (!w) return false
-  w.document.write(htmlDoc)
-  w.document.close()
-  w.focus()
-  setTimeout(() => { w.print(); w.close() }, 400)
-  return true
+// ─── Thermal profile helper (mirrors main.js logic, client-side) ──────────────
+// Returns barcode bar width scaled to fill the usable receipt column.
+function barcodeBarWidth(paperWidth = '80mm') {
+  const { hardwareSettings } = useAppStore()
+  const profile = buildThermalProfile({
+    paperWidth,
+    printerMode: hardwareSettings?.printerType || 'Raster',
+    printerProfile: hardwareSettings?.printerProfile || '',
+  })
+  return profile.barcodeModuleWidth || (profile.is58 ? 1.1 : 1.55)
 }
 
+// ─── Copy header block (2-copy receipts for card payments) ───────────────────
 function buildCopyHeader(label) {
-  return `<div style="text-align:center;border:1px dashed #666;padding:4px 6px;margin:0 0 8px 0;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">${label}</div>`
+  return `<div style="text-align:center;font-family:'Courier New',monospace;font-size:11px;font-weight:700;border:1px solid #000;padding:3px 8px;display:inline-block;margin-bottom:6px;letter-spacing:0.08em;text-transform:uppercase">${label}</div>`
 }
 
 // ─── Receipt Content (rendered both on screen + for print) ───────────────────
-export function ReceiptContent({ sale, businessInfo, receiptSettings, compact = false }) {
+export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth = '80mm', compact = false }) {
   const {
     receiptNo, date, cartItems = [], items, subtotal,
     discount = 0, tax = 0, total, paymentMethod, change = 0,
@@ -92,6 +35,8 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, compact = 
 
   const isTable = source === 'restaurant'
   const isTakeOut = source === 'takeout'
+  const { hardwareSettings } = useAppStore()
+  const profile = buildThermalProfile({ paperWidth })
   const paymentLabel = String(paymentMethod || 'cash').toLowerCase() === 'card'
     ? 'Card paid'
     : String(paymentMethod || 'cash').toLowerCase() === 'split'
@@ -100,77 +45,102 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, compact = 
         ? 'HelaQR pending'
         : 'Cash paid'
 
+  const showBarcode = receiptSettings?.showBarcode !== false
+  const showCashier = receiptSettings?.showCashier !== false
+  const receiptFooter = receiptSettings?.footer || `Powered by ${BRAND.fullName}`
+
   return (
-    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: 12, lineHeight: 1.5 }}>
+    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: 13, fontWeight: 700, lineHeight: 1.45, color: '#000', textAlign: 'center', width: '100%' }}>
       {/* Logo area */}
       {receiptSettings?.logoUrl && (
-        <div style={{ textAlign: 'center', marginBottom: 10 }}>
-          <img src={receiptSettings.logoUrl} alt="Store Logo" style={{ maxWidth: 120, maxHeight: 60, objectFit: 'contain' }} />
+        <div style={{ textAlign: 'center', marginBottom: 8 }}>
+          <img
+            src={receiptSettings.logoUrl}
+            alt="Store Logo"
+            className="receipt-logo"
+            style={{ maxWidth: 92, maxHeight: 42, objectFit: 'contain', display: 'block', margin: '0 auto' }}
+          />
         </div>
       )}
 
       {/* Header */}
-      <div style={{ borderBottom: '1px dashed #aaa', marginBottom: 10, paddingBottom: 10, textAlign: 'center' }}>
-        <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '0.03em', marginBottom: 2 }}>
+      <div style={{ borderBottom: '1px dashed #000', marginBottom: 8, paddingBottom: 8, textAlign: 'center' }}>
+        <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: '0.04em', marginBottom: 2, textTransform: 'uppercase' }}>
           {businessInfo.name}
         </div>
-        <div style={{ fontSize: 10, color: '#555', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#000', lineHeight: 1.5 }}>
           {businessInfo.address}
         </div>
-        {businessInfo.phone && <div style={{ fontSize: 10, color: '#555' }}>{businessInfo.phone}{businessInfo.email ? ` | ${businessInfo.email}` : ''}</div>}
+        {receiptSettings?.header && (
+          <div style={{ fontSize: 10, fontWeight: 700, marginTop: 3, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            {receiptSettings.header}
+          </div>
+        )}
+        {businessInfo.phone && <div style={{ fontSize: 11, fontWeight: 700 }}>{businessInfo.phone}{businessInfo.email ? ` | ${businessInfo.email}` : ''}</div>}
         {businessInfo.taxId && (
-          <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, marginTop: 2 }}>
             TAX ID: {businessInfo.taxId}
           </div>
         )}
         {isTable && (
-          <div style={{ border: '1px solid #444', borderRadius: 3, fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', padding: '2px 10px', display: 'inline-block', margin: '8px 0 2px', textTransform: 'uppercase' }}>
+          <div style={{ border: '2px solid #000', borderRadius: 2, fontSize: 12, fontWeight: 900, letterSpacing: '0.08em', padding: '2px 10px', display: 'inline-block', margin: '6px 0 2px', textTransform: 'uppercase' }}>
             TABLE {tableNumber} — DINE IN
           </div>
         )}
       </div>
 
       {/* Meta info table */}
-      <table style={{ width: '100%', fontSize: '10.5px', borderCollapse: 'collapse', marginBottom: 2 }}>
+      <table style={{ width: '100%', fontSize: '11px', fontWeight: 700, borderCollapse: 'collapse', marginBottom: 2, textAlign: 'left' }}>
         <tbody>
-          <tr><td style={{ padding: '1px 0' }}>Receipt #</td><td style={{ padding: '1px 0', textAlign: 'right' }}>{receiptNo}</td></tr>
-          <tr><td style={{ padding: '1px 0' }}>Date</td><td style={{ padding: '1px 0', textAlign: 'right' }}>{new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td></tr>
-          <tr><td style={{ padding: '1px 0' }}>Time</td><td style={{ padding: '1px 0', textAlign: 'right' }}>{new Date(date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</td></tr>
-          {cashier && <tr><td style={{ padding: '1px 0' }}>Cashier</td><td style={{ padding: '1px 0', textAlign: 'right' }}>{cashier}</td></tr>}
-          {(waiter || customerName) && !isTakeOut && <tr><td style={{ padding: '1px 0' }}>Waiter</td><td style={{ padding: '1px 0', textAlign: 'right' }}>{waiter || cashier}</td></tr>}
-          {isTakeOut && customerName && customerName !== 'Walk-in' && <tr><td style={{ padding: '1px 0' }}>Customer</td><td style={{ padding: '1px 0', textAlign: 'right' }}>{customerName}</td></tr>}
+          <tr><td style={{ padding: '1.5px 0' }}>Receipt #</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{receiptNo}</td></tr>
+          <tr><td style={{ padding: '1.5px 0' }}>Date</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td></tr>
+          <tr><td style={{ padding: '1.5px 0' }}>Time</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{new Date(date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</td></tr>
+          {showCashier && cashier && <tr><td style={{ padding: '1.5px 0' }}>Cashier</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{cashier}</td></tr>}
+          {(waiter || customerName) && !isTakeOut && <tr><td style={{ padding: '1.5px 0' }}>Waiter</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{waiter || cashier}</td></tr>}
+          {isTakeOut && customerName && customerName !== 'Walk-in' && <tr><td style={{ padding: '1.5px 0' }}>Customer</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{customerName}</td></tr>}
         </tbody>
       </table>
 
-      {/* Barcode */}
-      {receiptNo && (
-        <div style={{ textAlign: 'center', margin: '8px 0 4px' }}>
-          <Barcode
-            value={String(receiptNo)}
-            format="CODE128"
-            width={1.2}
-            height={36}
-            margin={0}
-            fontSize={10}
-            textMargin={2}
-            background="transparent"
-          />
-          <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.05em', marginTop: 2 }}>{receiptNo}</div>
+      {/* Barcode — bar width scales with paper size; container forces centre-align */}
+      {showBarcode && receiptNo && (
+        <div style={{ textAlign: 'center', width: '100%', overflow: 'hidden', margin: '8px 0 4px', paddingLeft: `${hardwareSettings?.barcodeEdgePaddingMm ?? profile.edgePaddingMm}mm`, paddingRight: `${hardwareSettings?.barcodeEdgePaddingMm ?? profile.edgePaddingMm}mm` }}>
+          <div style={{ display: 'inline-block', maxWidth: '100%', boxSizing: 'border-box' }}>
+            <Barcode
+              value={String(receiptNo)}
+              format={(receiptSettings?.barcodeType) || (hardwareSettings?.barcodeType) || 'CODE128'}
+              width={Number(hardwareSettings?.barcodeModuleWidth || profile.barcodeModuleWidth)}
+              height={Number(hardwareSettings?.barcodeHeight || profile.barcodeHeight)}
+              margin={Number(hardwareSettings?.barcodeQuietZone || profile.barcodeQuietZone)}
+              fontSize={0}
+              displayValue={false}
+              background="#fff"
+              lineColor="#000"
+              svgProps={{ style: { shapeRendering: 'crispEdges' } }}
+            />
+          </div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', marginTop: 3 }}>{receiptNo}</div>
         </div>
       )}
 
       <hr style={{ border: 'none', borderTop: '1px dashed #aaa', margin: '8px 0' }} />
 
       {/* Items table */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', margin: '4px 0' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', margin: '4px 0', textAlign: 'left' }}>
         <tbody>
           {(cartItems || []).map((item, i) => (
             <tr key={i}>
-              <td style={{ padding: 0, fontWeight: 700, fontSize: 12 }}>
+              <td style={{ padding: '2px 0', fontWeight: 900, fontSize: 13, verticalAlign: 'top' }}>
                 <div>{item.name}</div>
-                <div style={{ fontSize: '10.5px', color: '#444' }}>{item.qty} x {formatCurrency(item.salePrice || item.price)}</div>
+                {(item.serial || item.imei || item.warrantyMonths) && (
+                  <div style={{ fontSize: '10px', fontWeight: 700, marginTop: 1 }}>
+                    {item.serial && `S/N: ${item.serial} `}
+                    {item.imei && `IMEI: ${item.imei} `}
+                    {item.warrantyMonths ? `Warranty: ${item.warrantyMonths}m` : ''}
+                  </div>
+                )}
+                <div style={{ fontSize: '11px', fontWeight: 700 }}>{item.qty} x {formatCurrency(item.salePrice || item.price)}</div>
               </td>
-              <td style={{ padding: 0, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700 }}>{formatCurrency((item.salePrice || item.price) * item.qty)}</td>
+              <td style={{ padding: '2px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 900, fontSize: 13, verticalAlign: 'top' }}>{formatCurrency((item.salePrice || item.price) * item.qty)}</td>
             </tr>
           ))}
         </tbody>
@@ -185,23 +155,23 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, compact = 
       <hr style={{ border: 'none', borderTop: '1px dashed #aaa', margin: '8px 0' }} />
 
       {/* Totals table */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginBottom: 0 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontWeight: 700, marginBottom: 0, textAlign: 'left' }}>
         <tbody>
-          <tr><td style={{ padding: '1.5px 0' }}>Subtotal</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{formatCurrency(subtotal)}</td></tr>
-          {tax > 0 && <tr><td style={{ padding: '1.5px 0' }}>VAT (15%)</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{formatCurrency(tax)}</td></tr>}
-          {discount > 0 && <tr><td style={{ padding: '1.5px 0' }}>Discount</td><td style={{ padding: '1.5px 0', textAlign: 'right', color: '#dc2626' }}>-{formatCurrency(discount)}</td></tr>}
-          <tr><td colSpan="2" style={{ padding: 0 }}><hr style={{ border: 'none', borderTop: '1.5px solid #111', margin: '6px 0' }} /></td></tr>
-          <tr style={{ fontSize: 14, fontWeight: 700 }}>
+          <tr><td style={{ padding: '2px 0' }}>Subtotal</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{formatCurrency(subtotal)}</td></tr>
+          {tax > 0 && <tr><td style={{ padding: '2px 0' }}>VAT</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{formatCurrency(tax)}</td></tr>}
+          {discount > 0 && <tr><td style={{ padding: '2px 0' }}>Discount</td><td style={{ padding: '2px 0', textAlign: 'right' }}>-{formatCurrency(discount)}</td></tr>}
+          <tr><td colSpan="2" style={{ padding: 0 }}><hr style={{ border: 'none', borderTop: '2px solid #000', margin: '5px 0' }} /></td></tr>
+          <tr style={{ fontSize: 16, fontWeight: 900 }}>
             <td style={{ padding: '4px 0 2px' }}>TOTAL</td>
             <td style={{ padding: '4px 0 2px', textAlign: 'right' }}>{formatCurrency(total)}</td>
           </tr>
-          <tr><td style={{ padding: '1.5px 0' }}>{paymentLabel}</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{formatCurrency(total)}</td></tr>
+          <tr><td style={{ padding: '2px 0' }}>{paymentLabel}</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{formatCurrency(total)}</td></tr>
         </tbody>
       </table>
 
       {/* Change box */}
       {change > 0 && (
-        <div style={{ border: '1.5px solid #111', borderRadius: 3, padding: '5px 8px', margin: '8px 0 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700, fontSize: 13 }}>
+        <div style={{ border: '2px solid #000', borderRadius: 2, padding: '5px 8px', margin: '8px 0 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 900, fontSize: 15 }}>
           <span>CHANGE</span>
           <span>{formatCurrency(change)}</span>
         </div>
@@ -210,13 +180,14 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, compact = 
       <hr style={{ border: 'none', borderTop: '1px dashed #aaa', margin: '8px 0' }} />
 
       {/* Footer */}
-      <div style={{ textAlign: 'center', fontSize: 10, color: '#555', marginTop: 10, lineHeight: 1.6 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#111', marginBottom: 2 }}>
-          Thank you for your business!
+      <div style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#000', marginTop: 8, lineHeight: 1.7 }}>
+        <div style={{ fontSize: 13, fontWeight: 900, marginBottom: 2 }}>
+          {receiptFooter}
         </div>
+        <div>Thank you for your business!</div>
         <div>{businessInfo.phone}</div>
         <div>Visit us again at {businessInfo.name}</div>
-        <div style={{ fontSize: '8.5px', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#aaa', marginTop: 6 }}>
+        <div style={{ fontSize: '9px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 6 }}>
           Powered by {BRAND.fullName}
         </div>
       </div>
@@ -234,7 +205,6 @@ function Row({ label, value, color }) {
   )
 }
 
-import { useAppStore } from '@/store'
 
 // ─── Shared Receipt Modal ─────────────────────────────────────────────────────
 export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Receipt' }) {
@@ -242,22 +212,84 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
 
   if (!sale) return null
 
+  // Derived from stored settings — forwarded to main.js via IPC
+  const paperWidth  = String(hardwareSettings?.paperWidth  || '80mm').trim()
+  const deviceName  = String(hardwareSettings?.printerPort || '').trim()
+  const profile     = buildThermalProfile({
+    paperWidth,
+    printerMode: hardwareSettings?.printerType || 'Raster',
+    printerProfile: hardwareSettings?.printerProfile || '',
+  })
+  const printOpts   = { deviceName, paperWidth: profile.paperWidth, printerMode: profile.printerMode, printerProfile: profile.printerProfile }
+
   const handlePrint = async () => {
     // Build print-safe HTML from ReceiptContent via a temp div
     const el = document.getElementById('paxxmo-receipt-inner')
     if (!el) return
-
     const paymentMode = String(sale?.paymentMethod || '').trim().toLowerCase()
+
+    // Convert any inline barcode SVGs to raster PNGs before printing.
+    // This produces a pixel-aligned, high-contrast image that thermal printers
+    // and physical scanners can read more reliably than anti-aliased SVGs.
+    const svgs = Array.from(el.querySelectorAll('svg'))
+    if (svgs.length > 0) {
+      await Promise.all(svgs.map((svg) => new Promise((resolve) => {
+        try {
+          const rect = svg.getBoundingClientRect()
+          const svgData = new XMLSerializer().serializeToString(svg)
+          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+          const url = URL.createObjectURL(svgBlob)
+          const img = new Image()
+
+          img.onload = () => {
+            try {
+              const canvas = document.createElement('canvas')
+              // Scale canvas to device pixels to preserve sharpness
+              const scale = window.devicePixelRatio || 1
+              canvas.width = Math.max(1, Math.round(rect.width * scale))
+              canvas.height = Math.max(1, Math.round(rect.height * scale))
+              const ctx = canvas.getContext('2d')
+              // White background + crisp draw
+              ctx.fillStyle = '#fff'
+              ctx.fillRect(0, 0, canvas.width, canvas.height)
+              ctx.imageSmoothingEnabled = false
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+              const dataUrl = canvas.toDataURL('image/png')
+              const imgEl = document.createElement('img')
+              imgEl.src = dataUrl
+              imgEl.style.display = 'block'
+              imgEl.style.width = `${Math.round(rect.width)}px`
+              imgEl.style.height = `${Math.round(rect.height)}px`
+              svg.parentNode.replaceChild(imgEl, svg)
+            } catch (innerErr) {
+              // ignore conversion failure and leave svg
+            }
+            URL.revokeObjectURL(url)
+            resolve()
+          }
+
+          img.onerror = () => {
+            URL.revokeObjectURL(url)
+            resolve()
+          }
+
+          img.src = url
+        } catch (e) {
+          resolve()
+        }
+      })))
+    }
+
     const content = el.innerHTML
-    const deviceName = String(hardwareSettings?.printerPort || '').trim()
 
     if (paymentMode === 'card') {
-      await printReceiptHTML(`${title} - Customer Copy`, `${buildCopyHeader('Customer Copy')}${content}`, { deviceName })
-      await printReceiptHTML(`${title} - Shop Copy`, `${buildCopyHeader('Shop Copy')}${content}`, { deviceName })
+      await printReceiptHTML(`${title} - Customer Copy`, `${buildCopyHeader('Customer Copy')}${content}`, printOpts)
+      await printReceiptHTML(`${title} - Shop Copy`, `${buildCopyHeader('Shop Copy')}${content}`, printOpts)
       return
     }
 
-    await printReceiptHTML(title, content, { deviceName })
+    await printReceiptHTML(title, content, printOpts)
   }
 
   // Auto-print effect
@@ -270,6 +302,7 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
       }, 600) // Small delay to guarantee DOM formatting
       return () => clearTimeout(timer)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receiptSettings?.autoPrint])
 
   const source = sale.source
@@ -348,7 +381,12 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
             }} />
 
             <div id="paxxmo-receipt-inner" style={{ padding: '8px 0' }}>
-              <ReceiptContent sale={sale} businessInfo={businessInfo} receiptSettings={receiptSettings} />
+              <ReceiptContent
+                sale={sale}
+                businessInfo={businessInfo}
+                receiptSettings={receiptSettings}
+                paperWidth={paperWidth}
+              />
             </div>
           </div>
         </div>

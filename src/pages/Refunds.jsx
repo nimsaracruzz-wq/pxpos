@@ -122,7 +122,15 @@ export default function Refunds() {
               <div className="flex flex-col gap-2">
                 {(sale.cartItems || []).map((item, idx) => (
                   <div key={`${item.id}-${idx}`} className="flex items-center justify-between text-sm">
-                    <span className="text-gray-700">{item.qty} x {item.name}</span>
+                    <div className="flex flex-col">
+                      <span className="text-gray-700">{item.qty} x {item.name}</span>
+                      {(item.serial || item.imei) && (
+                        <span className="text-xs text-gray-500 flex gap-2">
+                          {item.serial && <span>S/N: {item.serial}</span>}
+                          {item.imei && <span>IMEI: {item.imei}</span>}
+                        </span>
+                      )}
+                    </div>
                     <span className="font-semibold text-gray-900">{formatCurrency((item.salePrice || item.price || 0) * item.qty)}</span>
                   </div>
                 ))}

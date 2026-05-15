@@ -180,7 +180,14 @@ export async function validateLicense(key) {
     const db       = getDB()
     const clean    = String(key || '').trim().toUpperCase()
     const ref      = doc(db, 'licenses', clean)
-    const snap     = await getDoc(ref)
+    
+    // Add a 5-second timeout. If offline, getDoc will hang forever.
+    // If it times out, we throw an error to trigger the transient fallback.
+    const snap = await Promise.race([
+      getDoc(ref),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Network timeout')), 2000))
+    ])
+    
     const device = await getDeviceContext()
     const deviceId = device.deviceId
     const timestamp = nowIso()
@@ -217,26 +224,40 @@ export async function validateLicense(key) {
       }
     }
 
+    let requiresDbWrite = false
+    
     if (existingIndex >= 0) {
       const current = activatedDevices[existingIndex]
+      
+      const newIps = normalizeIpAddresses([
+        ...(current.ipAddresses || []),
+        ...(device.ipAddresses || []),
+        device.lastIp,
+      ])
+      const newMacs = normalizeMacAddresses([
+        ...(current.macAddresses || []),
+        ...(device.macAddresses || []),
+        device.lastMac,
+      ])
+      
+      // Only write to DB if we haven't seen this device in 12 hours, or if network info changed
+      const hoursSinceLastSeen = current.lastSeen ? (new Date().getTime() - new Date(current.lastSeen).getTime()) / (1000 * 60 * 60) : 999
+      
+      if (hoursSinceLastSeen > 12 || newIps.length !== (current.ipAddresses?.length || 0) || newMacs.length !== (current.macAddresses?.length || 0)) {
+        requiresDbWrite = true
+      }
+
       activatedDevices[existingIndex] = {
         ...current,
         hostname: device.hostname || current.hostname || '',
-        ipAddresses: normalizeIpAddresses([
-          ...(current.ipAddresses || []),
-          ...(device.ipAddresses || []),
-          device.lastIp,
-        ]),
+        ipAddresses: newIps,
         lastIp: device.lastIp || current.lastIp || '',
-        macAddresses: normalizeMacAddresses([
-          ...(current.macAddresses || []),
-          ...(device.macAddresses || []),
-          device.lastMac,
-        ]),
+        macAddresses: newMacs,
         lastMac: device.lastMac || current.lastMac || '',
         lastSeen: timestamp,
       }
     } else {
+      requiresDbWrite = true
       activatedDevices.push({
         deviceId,
         hostname: device.hostname,
@@ -249,14 +270,16 @@ export async function validateLicense(key) {
       })
     }
 
-    await setDoc(ref, {
-      maxDevices,
-      activatedDevices,
-      deviceId: activatedDevices[0]?.deviceId || deviceId,
-      activatedAt: activatedDevices[0]?.activatedAt || timestamp,
-      lastSeen: timestamp,
-      updatedAt: timestamp,
-    }, { merge: true })
+    if (requiresDbWrite) {
+      await setDoc(ref, {
+        maxDevices,
+        activatedDevices,
+        deviceId: activatedDevices[0]?.deviceId || deviceId,
+        activatedAt: activatedDevices[0]?.activatedAt || timestamp,
+        lastSeen: timestamp,
+        updatedAt: timestamp,
+      }, { merge: true })
+    }
 
     return {
       valid:        true,

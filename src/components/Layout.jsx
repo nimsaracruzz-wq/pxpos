@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, ShoppingCart, Package, BarChart3, Settings,
   ChevronLeft, ChevronRight, Users, Warehouse, Zap,
   Truck, Utensils, BookOpen, Bell, X, ShoppingBag, Globe,
-  Cloud, RefreshCw, Activity, Sun, Moon, RotateCcw
+  Cloud, RefreshCw, Activity, Sun, Moon, RotateCcw, Wrench
 } from 'lucide-react'
-import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStore } from '@/store'
+import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStore, usePOSStore, useElectronicsStore } from '@/store'
 import { cn, generateReceiptNumber } from '@/lib/utils'
 import { format } from 'date-fns'
 import { markQRCodeOrderProcessed, resolveCloudTenantId, subscribeToQRCodeOrders, syncWithCloud, updateQRCodeOrderStatus, subscribeToStoreNotifications, markNotificationRead } from '@/lib/firebase'
@@ -29,6 +29,7 @@ const MODULE_NAV = {
   grocery: [
     { to: '/pos', icon: ShoppingCart, labelKey: 'nav_pos', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
     { to: '/grn', icon: Truck, labelKey: 'nav_grn', section: 'Retail POS', permission: 'manage_inventory' },
+    { to: '/batches', icon: Warehouse, labelKey: 'nav_batches', section: 'Retail POS', permission: 'manage_inventory' },
   ],
   clothing: [
     { to: '/pos', icon: ShoppingCart, labelKey: 'nav_pos', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
@@ -50,6 +51,10 @@ const MODULE_NAV = {
   ],
   online: [
     { to: '/web-orders', icon: Globe, labelKey: 'nav_weborders', section: 'Web Integration', permission: 'manage_inventory' },
+  ],
+  electronics: [
+    { to: '/pos', icon: ShoppingCart, labelKey: 'nav_pos', badge: 'HOT', section: 'Retail POS', permission: 'sales' },
+    { to: '/electronics', icon: Wrench, labelKey: 'Service & Warranty', section: 'Service Center', permission: 'sales' },
   ]
 }
 
@@ -68,7 +73,75 @@ export function Layout({ children }) {
   const { products, getLowStock, getOutOfStock } = useProductStore()
   const { currentUser, logout, hasPermission } = useAuthStore()
   const toast = useToast()
+  const navigate = useNavigate()
+  const location = useLocation()
   const { t } = useI18n()
+
+  // ── Global barcode scanner: works from any tab ──────────────────────────────
+  // Barcode scanners send chars very fast (< 50ms apart) ending with Enter.
+  // If the product is found and we're NOT already on /pos, navigate there & add to cart.
+  useEffect(() => {
+    let buffer = ''
+    let lastKeyTime = 0
+    const BARCODE_SPEED_MS = 60 // chars faster than this = scanner input
+    const MIN_BARCODE_LEN  = 3
+
+    const handleKey = (e) => {
+      const now = Date.now()
+      
+      // If Enter is pressed, check if we have a valid barcode in the buffer
+      if (e.key === 'Enter') {
+        const code = buffer.trim()
+        buffer = ''
+        
+        if (code.length < MIN_BARCODE_LEN) return
+
+        let product = useProductStore.getState().products.find(
+          p => p.active && p.barcode === code
+        )
+        
+        // Fallback for electronics module products
+        if (!product) {
+          const elStore = useElectronicsStore.getState()
+          if (elStore && elStore.elProducts) {
+            product = elStore.elProducts.find(p => p.active && p.barcode === code)
+          }
+        }
+
+        if (product) {
+          e.preventDefault() // Prevent Enter from submitting forms if we caught a barcode
+          
+          if (product.stock <= 0) {
+            toast.error(`${product.name} is out of stock`, { duration: 2500 })
+            return
+          }
+
+          // If the user was focused on an input, the scanner typed the barcode into it.
+          // We clear it out so it doesn't leave garbage text.
+          const active = document.activeElement
+          if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
+            // Best effort to clear the injected barcode text
+            active.value = ''
+            active.blur()
+          }
+
+          // Navigate to POS and pass the scanned product
+          navigate('/pos', { state: { scannedProduct: product, timestamp: Date.now() } })
+          return
+        }
+      }
+
+      // Track keystrokes for barcode buffer
+      if (e.key.length === 1) {
+        if (now - lastKeyTime > BARCODE_SPEED_MS * 3) buffer = '' // too slow — reset
+        buffer += e.key
+        lastKeyTime = now
+      }
+    }
+
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [location.pathname, navigate, toast])
 
   const handleManualSync = async () => {
     if (isSyncing) return

@@ -18,27 +18,48 @@ export default function Login() {
 
   // Background barcode scanner listener
   useEffect(() => {
-    let barcode = ''
-    let timer = null
+    let buffer = ''
+    let lastKeyTime = 0
+    const BARCODE_SPEED_MS = 60 // chars faster than this = scanner input
+    const MIN_BARCODE_LEN  = 3
+
     const handleKeyDown = async (e) => {
-      if (e.key === 'Enter' && barcode.length > 3) {
-        const code = barcode
-        barcode = ''
+      const now = Date.now()
+      
+      if (e.key === 'Enter') {
+        const code = buffer.trim()
+        buffer = ''
+        
+        if (code.length < MIN_BARCODE_LEN) return
+        
+        e.preventDefault()
+        
+        const active = document.activeElement
+        if (active && active.tagName.toLowerCase() === 'input') {
+          active.value = ''
+          active.blur()
+        }
+
         const ok = await loginByBarcode(code)
         if (!ok) {
-          toast.error('Unrecognized namecard barcode')
-          setErrorText('Invalid badge or user not found')
+          toast.error(`Unrecognized barcode: ${code}`)
+          setErrorText(`Barcode "${code}" is not linked to any active user.`)
         } else {
+          setUsername('')
+          setPassword('')
           setErrorText('')
+          setShowPassword(false)
         }
         return
       }
+
       if (e.key.length === 1) {
-        barcode += e.key
-        clearTimeout(timer)
-        timer = setTimeout(() => { barcode = '' }, 50)
+        if (now - lastKeyTime > BARCODE_SPEED_MS * 3) buffer = '' // too slow — reset
+        buffer += e.key
+        lastKeyTime = now
       }
     }
+
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [loginByBarcode, toast])
@@ -102,7 +123,9 @@ export default function Login() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    passwordRef.current?.focus()
+                    if (!e.currentTarget.value?.trim()) {
+                      passwordRef.current?.focus()
+                    }
                   }
                 }}
                 placeholder="Enter username"

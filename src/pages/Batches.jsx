@@ -1,118 +1,214 @@
 import React, { useState, useMemo } from 'react'
-import { Warehouse, AlertTriangle, Search, Filter } from 'lucide-react'
+import { Warehouse, AlertTriangle, Search, Filter, Flag } from 'lucide-react'
 import { SectionHeader, SearchInput, Badge, EmptyState } from '@/components/ui'
 import { formatCurrency } from '@/lib/utils'
-import { useProductStore } from '@/store'
+import { useProductStore, useAppStore } from '@/store'
+
+const STATUS_CONFIG = {
+  expired:  { label: 'EXPIRED',    color: 'red',    border: 'border-red-500',    bg: 'bg-red-50',    text: 'text-red-700' },
+  critical: { label: '< 3 Months', color: 'orange', border: 'border-orange-500', bg: 'bg-orange-50', text: 'text-orange-700' },
+  warning:  { label: '< 6 Months', color: 'yellow', border: 'border-yellow-500', bg: 'bg-yellow-50', text: 'text-yellow-700' },
+  safe:     { label: 'Safe',        color: 'green',  border: 'border-green-500',  bg: 'bg-green-50',  text: 'text-green-700' },
+  unknown:  { label: 'No Date',     color: 'gray',   border: 'border-gray-300',   bg: 'bg-gray-50',   text: 'text-gray-500' },
+}
+
+function getExpiryStatus(expiryStr) {
+  if (!expiryStr) return 'unknown'
+  const exp = new Date(expiryStr)
+  if (isNaN(exp)) return 'unknown'
+  const now = new Date()
+  const diffMs = exp - now
+  const diffMonths = diffMs / (1000 * 60 * 60 * 24 * 30)
+  if (diffMonths < 0) return 'expired'
+  if (diffMonths <= 3) return 'critical'
+  if (diffMonths <= 6) return 'warning'
+  return 'safe'
+}
+
+// Check if barcode belongs to a Sri Lanka GS1 product (prefix 479)
+function isSriLankaProduct(barcode) {
+  if (!barcode) return false
+  const b = String(barcode).replace(/\D/g, '')
+  return b.startsWith('479') || b.startsWith('0479')
+}
+
+const FILTER_OPTIONS = [
+  { value: 'all',      label: 'All Items' },
+  { value: 'expired',  label: 'Expired Only' },
+  { value: 'critical', label: 'Expiring < 3 Months' },
+  { value: 'warning',  label: 'Expiring < 6 Months' },
+  { value: 'unknown',  label: 'No Expiry Date' },
+]
 
 export default function Batches() {
   const { products } = useProductStore()
-  
-  const [search, setSearch] = useState('')
+  const { activeModule } = useAppStore()
 
-  const pharmacyProducts = useMemo(() => {
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState('all')
+  const [slOnly, setSlOnly] = useState(false)
+
+  // Support both pharmacy and grocery modules
+  const trackedProducts = useMemo(() => {
+    const relevantModules = ['pharmacy', 'grocery']
     return products
-      .filter((p) => p.module === 'pharmacy' && p.active && (!search || p.name.toLowerCase().includes(search.toLowerCase()) || p.id.includes(search)))
-      .map(p => {
-        let status = 'safe'
-        if (!p.expiry) return { ...p, status: 'unknown' }
-        const exp = new Date(p.expiry)
-        const now = new Date()
-        const diffMonths = (exp - now) / (1000 * 60 * 60 * 24 * 30)
-        
-        if (diffMonths < 0) status = 'expired'
-        else if (diffMonths <= 3) status = 'critical'
-        else if (diffMonths <= 6) status = 'warning'
-        
-        return { ...p, status }
+      .filter((p) => {
+        if (!p.active) return false
+        if (!relevantModules.includes(p.module || activeModule)) return false
+        if (slOnly && !isSriLankaProduct(p.barcode)) return false
+        const q = search.toLowerCase()
+        if (q && !p.name.toLowerCase().includes(q) && !p.id.includes(q) && !(p.batchNo || '').toLowerCase().includes(q)) return false
+        return true
       })
-  }, [products, search])
+      .map((p) => {
+        const status = getExpiryStatus(p.expiry)
+        return { ...p, status, isSL: isSriLankaProduct(p.barcode) }
+      })
+  }, [products, search, filter, slOnly, activeModule])
+
+  const filtered = useMemo(() => {
+    if (filter === 'all') return trackedProducts
+    return trackedProducts.filter(p => p.status === filter)
+  }, [trackedProducts, filter])
 
   const stats = {
-    expired: pharmacyProducts.filter(p => p.status === 'expired').length,
-    critical: pharmacyProducts.filter(p => p.status === 'critical').length,
-    warning: pharmacyProducts.filter(p => p.status === 'warning').length,
-    safe: pharmacyProducts.filter(p => p.status === 'safe' || p.status === 'unknown').length,
+    expired:  trackedProducts.filter(p => p.status === 'expired').length,
+    critical: trackedProducts.filter(p => p.status === 'critical').length,
+    warning:  trackedProducts.filter(p => p.status === 'warning').length,
+    safe:     trackedProducts.filter(p => p.status === 'safe').length,
+    unknown:  trackedProducts.filter(p => p.status === 'unknown').length,
   }
 
+  const slCount = trackedProducts.filter(p => p.isSL).length
+
   return (
-    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
-      <SectionHeader 
-        title="Batch & Expiry Tracker" 
-        subtitle="Monitor pharmaceutical stock validity and critical expirations"
-        action={
-          <div className="flex gap-2">
-            <button className="btn-secondary text-sm">
-              <Filter size={15} /> Filter Expiring Soon
-            </button>
-            <button className="btn-primary text-sm">
-              Log New Batch
-            </button>
-          </div>
-        }
+    <div className="h-full overflow-y-auto p-5" style={{ background: '#f4f7f5' }}>
+      <SectionHeader
+        title="Batch & Expiry Tracker"
+        subtitle="Monitor stock validity — GS1 Sri Lanka (479) products highlighted"
       />
 
-      <div className="grid grid-cols-4 gap-4 mt-5 mb-6">
-        <div className="card p-4 border-l-4 border-red-500 bg-red-50">
-          <p className="text-red-700 text-sm font-bold flex items-center gap-2"><AlertTriangle size={16}/> Expired</p>
-          <p className="text-2xl font-black text-red-700 mt-1">{stats.expired}</p>
-        </div>
-        <div className="card p-4 border-l-4 border-orange-500 bg-orange-50">
-          <p className="text-orange-700 text-sm font-bold">Expires &lt; 3 Months</p>
-          <p className="text-2xl font-black text-orange-700 mt-1">{stats.critical}</p>
-        </div>
-        <div className="card p-4 border-l-4 border-yellow-500 bg-yellow-50">
-          <p className="text-yellow-700 text-sm font-bold">Expires &lt; 6 Months</p>
-          <p className="text-2xl font-black text-yellow-700 mt-1">{stats.warning}</p>
-        </div>
-        <div className="card p-4 border-l-4 border-green-500 bg-green-50">
-          <p className="text-green-700 text-sm font-bold">Safe Stock</p>
-          <p className="text-2xl font-black text-green-700 mt-1">{stats.safe}</p>
-        </div>
+      {/* Stat Cards */}
+      <div className="grid grid-cols-5 gap-3 mt-5 mb-6">
+        {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+          <button
+            key={key}
+            onClick={() => setFilter(filter === key ? 'all' : key)}
+            className={`card p-4 border-l-4 ${cfg.border} ${cfg.bg} text-left transition-all ${filter === key ? 'ring-2 ring-offset-1 ring-gray-400' : ''}`}
+          >
+            <p className={`${cfg.text} text-xs font-bold flex items-center gap-1`}>
+              {key === 'expired' && <AlertTriangle size={13} />}
+              {cfg.label}
+            </p>
+            <p className={`text-2xl font-black ${cfg.text} mt-1`}>{stats[key]}</p>
+          </button>
+        ))}
       </div>
 
-      <div className="card overflow-hidden">
-        <div className="p-4 border-b border-gray-100 flex gap-4">
-           <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search batch by ID or drug name..." className="max-w-md" />
+      {/* SL GS1 highlight card */}
+      {slCount > 0 && (
+        <div className="mb-4 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-100 text-sm text-blue-800">
+          <span className="text-lg">🇱🇰</span>
+          <span><span className="font-bold">{slCount}</span> GS1 Sri Lanka products (barcode prefix 479) in stock</span>
+          <button
+            onClick={() => setSlOnly(!slOnly)}
+            className={`ml-auto text-xs font-bold px-3 py-1 rounded-full border transition-all ${slOnly ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-100'}`}
+          >
+            {slOnly ? '🇱🇰 SL Only' : 'Show All'}
+          </button>
         </div>
+      )}
+
+      <div className="card overflow-hidden">
+        <div className="p-4 border-b border-gray-100 flex flex-wrap gap-3 items-center">
+          <SearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, batch no., or ID..."
+            className="max-w-xs"
+          />
+          <select
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            className="input-base text-sm py-1.5"
+          >
+            {FILTER_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <span className="ml-auto text-xs text-gray-400">{filtered.length} products</span>
+        </div>
+
         <table className="table-modern">
           <thead>
             <tr>
-              <th>Batch ID</th>
-              <th>Drug Name</th>
-              <th>Current Stock</th>
+              <th>Product</th>
+              <th>Batch / Lot No.</th>
+              <th>Barcode</th>
+              <th>Stock</th>
               <th>Supplier</th>
               <th>Expiry Date</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
-            {pharmacyProducts.length === 0 && (
+            {filtered.length === 0 && (
               <tr>
-                <td colSpan="6" className="text-center py-10 text-gray-400">No batches recorded in Pharmacy module</td>
+                <td colSpan="7" className="text-center py-10 text-gray-400">
+                  No products found with expiry tracking
+                </td>
               </tr>
             )}
-            {pharmacyProducts.map(b => (
-              <tr key={b.id}>
-                <td className="font-mono text-xs text-gray-500">{b.id.substring(0,8)}</td>
-                <td className="font-bold text-gray-800">{b.name}</td>
-                <td>{b.stock} {b.unit || 'units'}</td>
-                <td className="text-gray-500 text-sm">{b.supplier || '—'}</td>
-                <td>
-                  <span className={`font-semibold ${b.status === 'expired' ? 'text-red-600' : b.status === 'critical' ? 'text-orange-600' : 'text-gray-700'}`}>
-                    {b.expiry || 'No Date'}
-                  </span>
-                </td>
-                <td>
-                  <Badge variant={b.status === 'expired' ? 'red' : b.status === 'critical' ? 'orange' : b.status === 'warning' ? 'yellow' : b.status === 'unknown' ? 'gray' : 'green'}>
-                    {b.status.toUpperCase()}
-                  </Badge>
-                </td>
-              </tr>
-            ))}
+            {filtered.map(p => {
+              const cfg = STATUS_CONFIG[p.status]
+              const daysLeft = p.expiry
+                ? Math.round((new Date(p.expiry) - new Date()) / (1000 * 60 * 60 * 24))
+                : null
+              return (
+                <tr key={p.id}>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <p className="font-bold text-gray-900 text-sm">{p.name}</p>
+                        <p className="text-[10px] text-gray-400 font-mono">{p.id.substring(0, 8)}</p>
+                      </div>
+                      {p.isSL && (
+                        <span title="GS1 Sri Lanka (479)" className="text-sm">🇱🇰</span>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    {p.batchNo
+                      ? <span className="font-mono text-xs bg-purple-50 border border-purple-200 text-purple-700 px-2 py-0.5 rounded-md">{p.batchNo}</span>
+                      : <span className="text-gray-300 text-xs">—</span>
+                    }
+                  </td>
+                  <td className="font-mono text-xs text-gray-500">{p.barcode || '—'}</td>
+                  <td>{p.stock} {p.unit || 'units'}</td>
+                  <td className="text-gray-500 text-sm">{p.supplier || '—'}</td>
+                  <td>
+                    <div>
+                      <span className={`font-semibold text-sm ${p.status === 'expired' ? 'text-red-600' : p.status === 'critical' ? 'text-orange-600' : 'text-gray-700'}`}>
+                        {p.expiry || '—'}
+                      </span>
+                      {daysLeft !== null && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">
+                          {daysLeft < 0 ? `${Math.abs(daysLeft)}d ago` : `${daysLeft}d left`}
+                        </p>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <Badge variant={cfg.color}>
+                      {cfg.label}
+                    </Badge>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
     </div>
   )
 }
-

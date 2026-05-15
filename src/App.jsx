@@ -24,6 +24,7 @@ import Refunds from '@/pages/Refunds'
 import PublicMenu from '@/pages/PublicMenu'
 import CustomerScreen from '@/pages/CustomerScreen'
 import AdminPortal from '@/pages/AdminPortal'
+import Electronics from '@/pages/Electronics'
 import Login from '@/pages/Login'
 import Activation from '@/pages/Activation'
 import { useAuthStore, useAppStore } from '@/store'
@@ -162,7 +163,15 @@ export default function App() {
 
       setInitialCloudHydration(true)
       try {
-        await syncWithCloud()
+        // 2-second timeout: if offline or quota exceeded, skip cloud sync and use local data
+        await Promise.race([
+          syncWithCloud(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Cloud sync timeout')), 2000))
+        ])
+        if (!cancelled) hydratedLicenseRef.current = normalizedLicense
+      } catch (err) {
+        console.warn('[App] Cloud sync skipped (offline or quota):', err?.message)
+        // Mark as hydrated anyway so we don't retry on next render
         if (!cancelled) hydratedLicenseRef.current = normalizedLicense
       } finally {
         if (!cancelled) setInitialCloudHydration(false)
@@ -295,6 +304,7 @@ export default function App() {
           <Route path="/barcodes" element={<AccessGuard permission="manage_inventory"><BarcodeLabels /></AccessGuard>} />
           <Route path="/batches" element={<AccessGuard permission="manage_inventory"><Batches /></AccessGuard>} />
           <Route path="/web-orders" element={<AccessGuard permission="manage_inventory"><WebOrders /></AccessGuard>} />
+          <Route path="/electronics" element={<AccessGuard permission="sales"><Electronics /></AccessGuard>} />
 
           {/* Reports — manager and above */}
           <Route path="/reports" element={<AccessGuard permission="view_reports"><Reports /></AccessGuard>} />

@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { useAppStore } from '@/store'
 // Re-export useAppStore for tr() to call getState() directly
 let _appStore = null
@@ -26,6 +27,7 @@ export const translations = {
     nav_takeout: 'Take Out',
     nav_ledger: 'Customer Ledger',
     nav_weborders: 'Web Orders',
+    nav_electronics: 'Computer & Mobile',
     nav_settings: 'Settings',
     nav_collapse: 'Collapse',
     nav_logout: 'Secure Logout',
@@ -84,6 +86,7 @@ export const translations = {
     nav_takeout: 'පාර්සල්',
     nav_ledger: 'ණය ගිණුම්',
     nav_weborders: 'අන්තර්ජාල ඇණවුම්',
+    nav_electronics: 'පරිගණක හා ජංගම දුරකථන',
     nav_settings: 'සැකසුම්',
     nav_collapse: 'හැකිලීමට',
     nav_logout: 'පිටවීම (Logout)',
@@ -128,13 +131,14 @@ export const translations = {
 
 export function useI18n() {
   const lang = useAppStore(s => s.language) || 'en'
-  const t = (key, ...args) => {
+  // Stable `t` reference — only recreated when `lang` changes
+  const t = useCallback((key, ...args) => {
     let str = translations[lang]?.[key] || translations.en[key] || key
     args.forEach((arg, i) => {
       str = str.replace(`{${i}}`, arg)
     })
     return str
-  }
+  }, [lang])
   return { t, lang }
 }
 

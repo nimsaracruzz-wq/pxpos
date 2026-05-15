@@ -11,7 +11,8 @@ import Papa from 'papaparse'
 const PRODUCT_FORM_DEFAULT = {
   name: '', barcode: '', price: '', cost: '', category: '',
   stock: '', unit: 'pcs', expiry: '', active: true,
-  supplier: '', brand: '', sizes: '', colors: ''
+  supplier: '', brand: '', sizes: '', colors: '',
+  warrantyMonths: 0, requiresSerial: true
 }
 
 const RESTAURANT_KEYWORDS = [
@@ -153,6 +154,37 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
               onChange={(e) => set('colors', e.target.value)}
               placeholder="e.g. Black, White"
             />
+          </>
+        )}
+        {activeModule === 'electronics' && (
+          <>
+            <Input
+              label="Brand"
+              value={form.brand}
+              onChange={(e) => set('brand', e.target.value)}
+              placeholder="e.g. Samsung, Apple, Dell"
+            />
+            <Input
+              label="Warranty Period (Months)"
+              type="number"
+              value={form.warrantyMonths || ''}
+              onChange={(e) => set('warrantyMonths', parseInt(e.target.value) || 0)}
+              placeholder="e.g. 12"
+            />
+            <div className="col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+              <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-blue-900">
+                <input
+                  type="checkbox"
+                  checked={!!form.requiresSerial}
+                  onChange={(e) => set('requiresSerial', e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded"
+                />
+                This product requires Serial / IMEI tracking
+              </label>
+              <p className="text-xs text-blue-600 mt-1 pl-6">
+                If checked, you must enter a specific serial number or IMEI when receiving stock (GRN) and during checkout.
+              </p>
+            </div>
           </>
         )}
         <div className="flex items-center gap-3 pt-2">
@@ -514,7 +546,7 @@ export default function Products() {
                   <th>Cost</th>
                   <th>Margin</th>
                   <th>Stock</th>
-                  <th>Expiry</th>
+                  <th>{activeModule === 'electronics' ? 'Warranty' : 'Expiry'}</th>
                   <th>Status</th>
                   <th className="text-right">Actions</th>
                 </tr>
@@ -558,7 +590,11 @@ export default function Products() {
                         </Badge>
                       </td>
                       <td>
-                        {p.expiry ? (
+                        {activeModule === 'electronics' ? (
+                          <span className="text-xs font-semibold text-gray-600">
+                            {p.warrantyMonths ? `${p.warrantyMonths} months` : 'No Warranty'}
+                          </span>
+                        ) : p.expiry ? (
                           <span className={cn('text-xs', isExpired ? 'text-red-500 font-bold' : 'text-gray-500')}>
                             {isExpired ? '⚠ ' : ''}{p.expiry}
                           </span>

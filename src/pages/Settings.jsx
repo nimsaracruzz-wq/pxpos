@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   Store, Receipt, Percent, Globe, Key, Shield,
   Printer, Barcode, Save, CheckCircle, ChevronRight,
@@ -15,6 +15,8 @@ import { defaultFirebaseConfigJson } from '@/lib/defaultFirebaseConfig'
 import { BRAND } from '@/lib/brand'
 import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
 import { cn } from '@/lib/utils'
+import { printReceiptHTML } from '@/lib/printReceipt'
+import { buildThermalProfile, receiptProfileOptions } from '@/lib/thermalPrinter'
 import UserBarcodeGenerator, { generateUserBarcode } from '@/components/UserBarcodeGenerator'
 import MediaCarousel from '@/components/display/MediaCarousel'
 import { v4 as uuidv4 } from 'uuid'
@@ -75,6 +77,13 @@ const MODULE_LIST = [
     icon: Globe,
     label: 'Online Store Mode',
     description: 'E-commerce integration, sync web orders and inventory',
+    color: '#0ea5e9',
+  },
+  {
+    id: 'electronics',
+    icon: Monitor,
+    label: 'Computer & Mobile Mode',
+    description: 'Serial & IMEI tracking, repair jobs, warranty management',
     color: '#0ea5e9',
   },
 ]
@@ -977,35 +986,210 @@ export default function Settings() {
                   🔌 Connect a USB barcode scanner. It works as keyboard input — no driver needed. 
                   Scan a barcode in the POS screen to test.
                 </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Receipt Barcode Type</label>
+                    <select className="input-base mt-1" value={hardwareSettings.barcodeType || 'CODE128'} onChange={(e) => updateHardwareSettings({ barcodeType: e.target.value })}>
+                      <option value="CODE128">CODE128 (recommended)</option>
+                      <option value="CODE39">CODE39</option>
+                      <option value="EAN13">EAN13</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Edge Padding (mm)</label>
+                    <input className="input-base mt-1" type="number" min="0" step="1" value={hardwareSettings.barcodeEdgePaddingMm || ''} onChange={(e) => updateHardwareSettings({ barcodeEdgePaddingMm: e.target.value ? Number(e.target.value) : null })} />
+                  </div>
+                </div>
               </div>
             </SettingsSection>
             <SettingsSection title="Receipt Printer">
               <div className="flex flex-col gap-3">
-                <Select label="Printer Type" value={hardwareSettings.printerType} onChange={(e) => updateHardwareSettings({ printerType: e.target.value })}>
-                  <option value="Thermal (ESC/POS)">Thermal (ESC/POS)</option>
-                  <option value="Desktop (Windows Print)">Desktop (Windows Print)</option>
-                  <option value="PDF Export">PDF Export</option>
+                <Select
+                  label="Receipt Profile"
+                  value={buildThermalProfile({
+                    paperWidth: hardwareSettings.paperWidth || '80mm',
+                    printerMode: hardwareSettings.printerType || 'Raster',
+                    printerProfile: hardwareSettings.printerProfile || '',
+                  }).printerProfile}
+                  onChange={(e) => {
+                    const selected = receiptProfileOptions().find((option) => option.value === e.target.value)
+                    const resolved = buildThermalProfile({
+                      paperWidth: selected?.paperWidth || hardwareSettings.paperWidth || '80mm',
+                      printerMode: selected?.printerMode || hardwareSettings.printerType || 'Raster',
+                      printerProfile: selected?.value || e.target.value,
+                    })
+                    updateHardwareSettings({
+                      paperWidth: resolved.paperWidth,
+                      printerType: resolved.printerMode,
+                      printerProfile: resolved.printerProfile,
+                    })
+                  }}
+                >
+                  {receiptProfileOptions().map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </Select>
-                <Input label="Printer Name / Port" value={hardwareSettings.printerPort} onChange={(e) => updateHardwareSettings({ printerPort: e.target.value })} placeholder="e.g. POS-58, COM3, USB001" />
-                <Input label="Paper Width" value={hardwareSettings.paperWidth} onChange={(e) => updateHardwareSettings({ paperWidth: e.target.value })} placeholder="e.g. 80mm or 58mm" />
-                <button 
+
+                {/* Printer Name input + Detect button */}
+                <div className="flex gap-2 items-end">
+                  <div className="flex-1">
+                    <Input
+                      label="Printer Name / Port"
+                      value={hardwareSettings.printerPort}
+                      onChange={(e) => updateHardwareSettings({ printerPort: e.target.value })}
+                      placeholder="e.g. FP-1100, POS-58, COM3"
+                    />
+                  </div>
+                  <button
+                    className="btn-secondary shrink-0"
+                    onClick={async () => {
+                      if (!window.require) {
+                        toast.error('Desktop app required to detect printers')
+                        return
+                      }
+                      try {
+                        const ipc = window.require('electron').ipcRenderer
+                        const res = await ipc.invoke('get-printers')
+                        if (!res.success || !res.printers?.length) {
+                          toast.error('No printers found on this computer')
+                          return
+                        }
+                        const names = res.printers.map(p => `${p.name}${p.isDefault ? ' (Default)' : ''}`).join('\n')
+                        const chosen = window.prompt(
+                          `Available printers on this PC:\n\n${names}\n\nCopy the exact name and paste it into Printer Name above.`
+                        )
+                        if (chosen?.trim()) updateHardwareSettings({ printerPort: chosen.trim() })
+                      } catch (e) {
+                        toast.error('Could not list printers: ' + e.message)
+                      }
+                    }}
+                  >
+                    <Printer size={14} />
+                    Detect
+                  </button>
+                </div>
+
+                {/* Paper Width — quick-select + manual override */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Paper Width</label>
+                  <div className="flex gap-2">
+                    {['58mm', '80mm'].map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => {
+                          const resolved = buildThermalProfile({
+                            paperWidth: w,
+                            printerMode: hardwareSettings.printerType || 'Raster',
+                            printerProfile: hardwareSettings.printerProfile || '',
+                          })
+                          updateHardwareSettings({
+                            paperWidth: resolved.paperWidth,
+                            printerType: resolved.printerMode,
+                            printerProfile: resolved.printerProfile,
+                          })
+                        }}
+                        className={cn(
+                          'flex-1 py-2.5 rounded-xl border-2 font-bold text-sm transition-all',
+                          (hardwareSettings.paperWidth || '80mm') === w
+                            ? 'border-green-500 bg-green-50 text-green-700'
+                            : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                        )}
+                      >
+                        {w}
+                        <span className="block text-[10px] font-normal opacity-60 mt-0.5">
+                          {w === '80mm' ? '72mm usable · 576px' : '48mm usable · 384px'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    className="input-base text-sm"
+                    value={hardwareSettings.paperWidth || '80mm'}
+                    onChange={(e) => {
+                      const resolved = buildThermalProfile({
+                        paperWidth: e.target.value,
+                        printerMode: hardwareSettings.printerType || 'Raster',
+                        printerProfile: hardwareSettings.printerProfile || '',
+                      })
+                      updateHardwareSettings({
+                        paperWidth: resolved.paperWidth,
+                        printerType: resolved.printerMode,
+                        printerProfile: resolved.printerProfile,
+                      })
+                    }}
+                    placeholder="e.g. 80mm or 58mm"
+                  />
+                  <p className="text-xs text-gray-400 bg-gray-50 rounded-xl p-2.5">
+                    💡 <strong>80mm</strong> = FIT FP-1100, EPSON TM-T82, most modern thermal printers.<br/>
+                    <strong>58mm</strong> = compact POS-58 style printers.<br/>
+                    <strong>Raster</strong> is best for Windows thermal drivers; <strong>ESC/POS</strong> is kept for direct thermal mode compatibility.
+                  </p>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Barcode Module Width (px)</label>
+                    <input className="input-base mt-1" type="number" min="0.5" step="0.1" value={hardwareSettings.barcodeModuleWidth || ''} onChange={(e) => updateHardwareSettings({ barcodeModuleWidth: e.target.value ? Number(e.target.value) : null })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Barcode Height (px)</label>
+                    <input className="input-base mt-1" type="number" min="20" step="1" value={hardwareSettings.barcodeHeight || ''} onChange={(e) => updateHardwareSettings({ barcodeHeight: e.target.value ? Number(e.target.value) : null })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Quiet Zone (px)</label>
+                    <input className="input-base mt-1" type="number" min="0" step="1" value={hardwareSettings.barcodeQuietZone || ''} onChange={(e) => updateHardwareSettings({ barcodeQuietZone: e.target.value ? Number(e.target.value) : null })} />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <button className="btn-secondary" onClick={async () => {
+                    const deviceName  = String(hardwareSettings.printerPort || '').trim()
+                    const resolvedProfile = buildThermalProfile({ paperWidth: hardwareSettings.paperWidth || '80mm', printerMode: hardwareSettings.printerType || 'Raster', printerProfile: hardwareSettings.printerProfile || '' })
+                    const barcodeSample = String('TEST-123456')
+                    const barcodeHtml = `<div style="text-align:center;padding:${(hardwareSettings.barcodeEdgePaddingMm || resolvedProfile.edgePaddingMm)}mm 0;font-family:'Courier New',monospace;font-weight:900">` +
+                      `<div style="margin-bottom:6px;font-size:12px;">BARCODE TEST</div>` +
+                      `<div>${`<svg xmlns=\"http://www.w3.org/2000/svg\">`}</div>` +
+                      `</div>`
+                    try {
+                      const ok = await printReceiptHTML('Barcode Test', `<div style="text-align:center;font-family:'Courier New',monospace;font-weight:900;padding:${(hardwareSettings.barcodeEdgePaddingMm || resolvedProfile.edgePaddingMm)}mm 0">` +
+                        `<div style="font-size:14px;font-weight:900;margin-bottom:6px">BARCODE TEST</div>` +
+                        `<div style=\"display:inline-block;\">` +
+                        // Use react-barcode equivalent by generating an img tag via server-side conversion is complex — we'll render a large human-readable code
+                        `<div style=\"font-size:40px;font-weight:900;letter-spacing:2px;\">${barcodeSample}</div>` +
+                        `</div></div>`, { deviceName, paperWidth: resolvedProfile.paperWidth, printerMode: resolvedProfile.printerMode, printerProfile: resolvedProfile.printerProfile })
+                      if (ok) toast.success('Barcode test printed (visual code - use scanner to test)')
+                      else toast.error('Barcode test failed to print')
+                    } catch (e) { toast.error('Print failed: ' + e.message) }
+                  }}>Test Barcode Print</button>
+                </div>
+                <button
                   className="btn-secondary w-fit"
                   onClick={async () => {
-                    const { printReceiptHTML } = await import('@/components/Receipt')
-                    printReceiptHTML(
+                    const deviceName  = String(hardwareSettings.printerPort || '').trim()
+                    const resolvedProfile = buildThermalProfile({
+                      paperWidth: hardwareSettings.paperWidth || '80mm',
+                      printerMode: hardwareSettings.printerType || 'Raster',
+                      printerProfile: hardwareSettings.printerProfile || '',
+                    })
+                    const ok = await printReceiptHTML(
                       'Printer Test',
-                      `<div style="text-align: center; margin: 20px 0;">
-                        <h2 style="font-size: 20px; font-weight: bold; margin-bottom: 10px;">Printer Test</h2>
-                        <p style="font-size: 14px; color: #555;">CeyPos POS System</p>
-                        <hr style="margin: 15px 0; border: none; border-top: 1px dashed #ccc;" />
-                        <p style="font-size: 12px; color: #777;">Test printed at: <br/>${new Date().toLocaleString()}</p>
-                        <p style="font-size: 10px; color: #aaa; margin-top: 10px;">Status: SUCCESS</p>
-                        <div style="margin-top:20px; font-size:12px; border:1px solid #000; padding:10px;">
-                           Printer Port: ${hardwareSettings.printerPort || 'System Default'}<br/>
-                           Type: ${hardwareSettings.printerType || 'Thermal (ESC/POS)'}
-                        </div>
-                      </div>`
+                      `<div style="text-align:center;font-family:'Courier New',monospace;font-size:13px;font-weight:700;margin:8px 0">
+                        <div style="font-size:16px;font-weight:900;letter-spacing:0.04em;margin-bottom:4px">PRINTER TEST</div>
+                        <div style="font-size:11px;margin-bottom:8px">CeyPos POS System</div>
+                        <hr style="border:none;border-top:1px dashed #000;margin:8px 0"/>
+                        <table style="width:100%;border-collapse:collapse;font-size:11px;font-weight:700;text-align:left">
+                          <tr><td>Paper Width</td><td style="text-align:right">${resolvedProfile.paperWidth}</td></tr>
+                          <tr><td>Profile</td><td style="text-align:right">${resolvedProfile.printerProfile}</td></tr>
+                          <tr><td>Printer</td><td style="text-align:right">${deviceName || 'System Default'}</td></tr>
+                          <tr><td>Mode</td><td style="text-align:right">${resolvedProfile.printerMode}</td></tr>
+                          <tr><td>Time</td><td style="text-align:right">${new Date().toLocaleTimeString()}</td></tr>
+                        </table>
+                        <hr style="border:none;border-top:2px solid #000;margin:8px 0"/>
+                        <div style="font-size:14px;font-weight:900;margin:6px 0">✓ STATUS: SUCCESS</div>
+                        <div style="font-size:10px;margin-top:6px;letter-spacing:0.1em">CeyPos Thermal Receipt Engine v2</div>
+                      </div>`,
+                      { deviceName, paperWidth: resolvedProfile.paperWidth, printerMode: resolvedProfile.printerMode, printerProfile: resolvedProfile.printerProfile }
                     )
+                    if (ok) toast.success('Test page sent to printer!')
+                    else toast.error(`Print failed — check printer name is exactly correct (currently: "${deviceName || 'none'}")`)
                   }}
                 >
                   <Printer size={14} />

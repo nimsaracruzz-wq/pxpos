@@ -1,15 +1,18 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Plus, Minus, Trash2, ShoppingBag, CreditCard, Banknote,
   Split, Tag, Receipt, X, Keyboard, RotateCcw, Pause,
-  Play, Barcode, Percent, User, Printer, Search, CheckCircle2, Zap
+  Play, Barcode, Percent, User, Printer, Search, CheckCircle2, Zap, ShieldCheck
 } from 'lucide-react'
-import { usePOSStore, useProductStore, useAppStore, useSalesStore, useAuthStore, useActivityStore, useRecipeStore } from '@/store'
+import { usePOSStore, useProductStore, useAppStore, useSalesStore, useAuthStore, useActivityStore, useRecipeStore, useElectronicsStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { formatCurrency, generateReceiptNumber } from '@/lib/utils'
 import { Badge, Modal, Input } from '@/components/ui'
 import { cn } from '@/lib/utils'
-import ReceiptModal from '@/components/Receipt'
+import ReceiptModal, { ReceiptContent } from '@/components/Receipt'
+import { printReceiptHTML } from '@/lib/printReceipt'
+import { buildThermalProfile } from '@/lib/thermalPrinter'
 import CustomerDisplay from '@/components/CustomerDisplay'
 import { useI18n } from '@/lib/i18n'
 import { v4 as uuidv4 } from 'uuid'
@@ -18,6 +21,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
+const EMPTY_SERIALS = []
 
 // ─── Category emoji map ──────────────────────────────────────────────────────
 const CAT_EMOJI = {
@@ -383,26 +387,61 @@ export default function POS() {
   const [customerDisplay, setCustomerDisplay] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [selectedCartItem, setSelectedCartItem] = useState(null)
+  const [showSerialModal, setShowSerialModal] = useState(false)
+  const [serialProduct, setSerialProduct] = useState(null)
+  const [serialForm, setSerialForm] = useState({ serial: '', imei: '', warrantyMonths: 0 })
+  const [autoPrintPending, setAutoPrintPending] = useState(false)
+  const hiddenReceiptRef = useRef(null)
   const searchRef = useRef(null)
   const toast = useToast()
 
-  const { products, getByBarcode, adjustStock } = useProductStore()
-  const { taxSettings } = useAppStore()
-  const {
-    cart, addToCart, removeFromCart, updateQty,
-    clearCart, setDiscount, discount, discountType,
-    getSubtotal, getDiscountAmount, getTax, getTotal,
-    holdTransaction, heldTransactions, resumeTransaction,
-  } = usePOSStore()
-  const { addSale } = useSalesStore()
-  const { activeModule } = useAppStore()
-  const { currentUser, switchCashierByBarcode } = useAuthStore()
-  const { t } = useI18n()
+  // Store settings needed for auto-printing
+  const businessInfo     = useAppStore(s => s.businessInfo)
+  const receiptSettings  = useAppStore(s => s.receiptSettings)
+  const hardwareSettings = useAppStore(s => s.hardwareSettings)
 
-  const subtotal = getSubtotal()
-  const discountAmt = getDiscountAmount()
-  const taxAmt = getTax(taxSettings.rate, taxSettings.inclusive)
-  const total = getTotal(taxSettings.rate, taxSettings.inclusive)
+  // ── Stable field-level selectors (prevents infinite re-render loops) ──────
+  const products        = useProductStore(s => s.products)
+  const getByBarcode    = useProductStore(s => s.getByBarcode)
+  const adjustStock     = useProductStore(s => s.adjustStock)
+  const activeModule    = useAppStore(s => s.activeModule)
+  const taxRate         = useAppStore(s => s.taxSettings.rate)
+  const taxInclusive    = useAppStore(s => s.taxSettings.inclusive)
+  const taxEnabled      = useAppStore(s => s.taxSettings.enabled)
+  const taxName         = useAppStore(s => s.taxSettings.name)
+
+  const cart              = usePOSStore(s => s.cart)
+  const discount          = usePOSStore(s => s.discount)
+  const discountType      = usePOSStore(s => s.discountType)
+  const heldTransactions  = usePOSStore(s => s.heldTransactions)
+  const addToCart         = usePOSStore(s => s.addToCart)
+  const addUniqueItemToCart = usePOSStore(s => s.addUniqueItemToCart)
+  const removeFromCart    = usePOSStore(s => s.removeFromCart)
+  const updateQty         = usePOSStore(s => s.updateQty)
+  const clearCart         = usePOSStore(s => s.clearCart)
+  const setDiscount       = usePOSStore(s => s.setDiscount)
+  const holdTransaction   = usePOSStore(s => s.holdTransaction)
+  const resumeTransaction = usePOSStore(s => s.resumeTransaction)
+
+  const addSale               = useSalesStore(s => s.addSale)
+  const currentUser           = useAuthStore(s => s.currentUser)
+  const switchCashierByBarcode = useAuthStore(s => s.switchCashierByBarcode)
+  const { t } = useI18n()
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  const allSerials = useElectronicsStore(s => s.serials || [])
+  const availableSerials = useMemo(() => 
+    serialProduct ? allSerials.filter(s => s.productId === serialProduct.id && s.status === 'in_stock') : EMPTY_SERIALS
+  , [allSerials, serialProduct])
+
+  const subtotal = usePOSStore(s => s.cart.reduce((sum, i) => sum + (i.salePrice ?? i.price) * i.qty, 0))
+  const discountAmt = usePOSStore(s => {
+    const sub = s.cart.reduce((sum, i) => sum + (i.salePrice ?? i.price) * i.qty, 0)
+    return s.discountType === 'percent' ? (sub * s.discount) / 100 : Math.min(s.discount, sub)
+  })
+  const taxAmt     = taxInclusive ? 0 : ((subtotal - discountAmt) * taxRate) / 100
+  const total      = subtotal - discountAmt + taxAmt
 
   const closeCustomerScreen = useCallback(() => {
     setCustomerDisplay(null)
@@ -475,23 +514,39 @@ export default function POS() {
     if (e.key === 'Enter' && search.trim()) {
       const found = getByBarcode(search.trim())
       if (found) {
-        const currentQty = getCartQty(found.id)
-        const stock = Number(found.stock || 0)
-        if (stock <= currentQty) {
-          toast.error(`${found.name} is out of stock`)
-          return
-        }
-        addToCart(found)
-        playTone('tick')
-        toast.success(`${found.name} added`, { duration: 1500 })
+        handleAddToCart(found)
         setSearch('')
       } else {
         toast.error('Product not found for this barcode', { duration: 2000 })
       }
     }
-  }, [search, getByBarcode, addToCart, cart])
+  }, [search, getByBarcode, cart])
 
-  const handleAddToCart = (p) => {
+  function handleAddToCart(p) {
+    // ── Block expired products ───────────────────────────────────────────────
+    if (p.expiry) {
+      const expDate = new Date(p.expiry)
+      if (!isNaN(expDate) && expDate < new Date()) {
+        toast.error(
+          `❌ Cannot sell — "${p.name}" expired on ${p.expiry}`,
+          { duration: 4000 }
+        )
+        return
+      }
+    }
+
+    // Check if it's an electronics item (either by activeModule, category, or by checking the electronics store)
+    const isElectronicsItem = activeModule === 'electronics' || 
+                              p.category === 'Smartphones' || 
+                              p.category === 'Laptops' ||
+                              useElectronicsStore.getState().elProducts?.some(ep => ep.id === p.id);
+
+    if (isElectronicsItem) {
+      setSerialProduct(p)
+      setSerialForm({ serial: '', imei: '', warrantyMonths: p.warrantyMonths || 0 })
+      setShowSerialModal(true)
+      return
+    }
     const currentQty = getCartQty(p.id)
     const stock = Number(p.stock || 0)
     if (stock <= currentQty) { toast.error(`${p.name} is out of stock`); return }
@@ -500,13 +555,49 @@ export default function POS() {
     toast.success(`${p.name} added to cart`, { duration: 1200 })
   }
 
+  useEffect(() => {
+    if (location.state?.scannedProduct) {
+      handleAddToCart(location.state.scannedProduct)
+      // Clear the state so it doesn't re-trigger on reload
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [location.state?.timestamp])
+
+  const handleSerialSubmit = (e) => {
+    e.preventDefault()
+    
+    // If skipped (no serial/IMEI provided), add as regular item
+    if (!serialForm.serial && !serialForm.imei) {
+      const currentQty = getCartQty(serialProduct.id)
+      const stock = Number(serialProduct.stock || 0)
+      if (stock <= currentQty) { toast.error(`${serialProduct.name} is out of stock`); return }
+      addToCart(serialProduct)
+    } else {
+      // Add as uniquely serialized item
+      addUniqueItemToCart(serialProduct, {
+        serial: serialForm.serial,
+        imei: serialForm.imei,
+        warrantyMonths: serialForm.warrantyMonths
+      })
+    }
+    
+    playTone('tick')
+    toast.success(`${serialProduct.name} added to cart`)
+    setShowSerialModal(false)
+    setSerialProduct(null)
+  }
+
   const handleIncreaseQty = (item) => {
+    if (item.isUnique) {
+      toast.error('Serialized items must be added individually')
+      return
+    }
     const stock = Number(item.stock || 0)
     if (item.qty >= stock) {
       toast.error(`${item.name} has only ${stock} in stock`)
       return
     }
-    updateQty(item.id, item.qty + 1)
+    updateQty(item.cartItemId || item.id, item.qty + 1)
   }
 
   const handleCashierBarcodeKey = async (e) => {
@@ -577,8 +668,12 @@ export default function POS() {
     setShowPayment(false)
     clearCart()
     setSelectedCartItem(null)
-    setShowReceipt(true)
-    openCustomerScreen({
+
+    // ── Fire silent auto-print immediately (no modal, no button click) ────────
+    setAutoPrintPending(true)
+
+    // ── Customer display: show on customer screen, auto-clear POS side in 3s ─
+    const customerPayload = {
       amount: total,
       qrData,
       paymentMethod: method,
@@ -593,14 +688,53 @@ export default function POS() {
         lineTotal: Number(item.salePrice || item.price || 0) * Number(item.qty || 0),
       })),
       reference: paymentRef,
-      title: isHelaQR ? 'HelaQR Payment Successful' : 'Customer Payment View',
+      title: isHelaQR ? 'HelaQR Payment Successful' : 'Payment Complete',
       subtitle: isHelaQR
         ? 'Payment has been successfully completed.'
-        : `Please confirm this amount for ${String(method || '').toUpperCase()} payment.`,
-    })
+        : `Thank you! ${String(method || '').toUpperCase()} payment confirmed.`,
+    }
+    // Only publish to customer-facing screen — don't block POS owner view
+    publishCustomerDisplay(customerPayload)
+    // Auto-clear customer display overlay from POS screen after 3 seconds
+    setTimeout(() => {
+      setCustomerDisplay(null)
+      clearCustomerDisplay()
+    }, 3000)
+
     playTone('success')
-    toast.success(isHelaQR ? `HelaQR Paid: Rs. ${total.toFixed(2)}` : `Sale complete! Rs. ${total.toFixed(2)} — ${method}`)
+    toast.success(isHelaQR ? `✅ HelaQR Paid: Rs. ${total.toFixed(2)}` : `✅ Sale complete! Rs. ${total.toFixed(2)} — Printing...`, { duration: 3000 })
   }
+
+  // ── Auto-print useEffect: fires whenever autoPrintPending is set true ──────────
+  useEffect(() => {
+    if (!autoPrintPending || !lastSale) return
+    setAutoPrintPending(false)
+
+    // Wait one animation frame so the hidden receipt div has rendered
+    requestAnimationFrame(() => {
+      const el = hiddenReceiptRef.current
+      if (!el) return
+      const content = el.innerHTML
+      const method = String(lastSale.paymentMethod || '').toLowerCase()
+      const deviceName  = String(hardwareSettings?.printerPort || '').trim()
+      const paperWidth  = String(hardwareSettings?.paperWidth  || '80mm').trim()
+      const profile     = buildThermalProfile({
+        paperWidth,
+        printerMode: hardwareSettings?.printerType || 'Raster',
+        printerProfile: hardwareSettings?.printerProfile || '',
+      })
+      const printOpts   = { deviceName, paperWidth: profile.paperWidth, printerMode: profile.printerMode, printerProfile: profile.printerProfile }
+      const copyHeader = (label) =>
+        `<div style="text-align:center;border:1px dashed #000;padding:4px 6px;margin:0 0 8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">${label}</div>`
+
+      if (method === 'card') {
+        printReceiptHTML('Receipt - Customer Copy', `${copyHeader('Customer Copy')}${content}`, printOpts)
+        printReceiptHTML('Receipt - Shop Copy', `${copyHeader('Shop Copy')}${content}`, printOpts)
+      } else {
+        printReceiptHTML('Sale Receipt', content, printOpts)
+      }
+    })
+  }, [autoPrintPending, lastSale])
 
   useEffect(() => {
     const transactional = ['checkout', 'paying', 'paid'].includes(String(customerDisplay?.status || '').toLowerCase())
@@ -720,17 +854,29 @@ export default function POS() {
             >
               {filteredProducts.map((p) => {
                 const cartQty = cart.find((i) => i.id === p.id)?.qty || 0
+                const isExpired = p.expiry && new Date(p.expiry) < new Date()
                 return (
                   <button
                     key={p.id}
                     onClick={() => handleAddToCart(p)}
-                    disabled={p.stock === 0}
+                    disabled={p.stock === 0 || isExpired}
+                    title={isExpired ? `EXPIRED — ${p.expiry}` : undefined}
                     className={cn(
                       'pos-product-btn flex flex-col gap-1.5 relative overflow-hidden text-left',
-                      p.stock === 0 && 'opacity-50 cursor-not-allowed'
+                      (p.stock === 0 || isExpired) && 'opacity-60 cursor-not-allowed'
                     )}
                   >
-                    {cartQty > 0 && (
+                    {/* Expired overlay */}
+                    {isExpired && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-xl"
+                        style={{ background: 'rgba(239,68,68,0.12)', border: '1.5px solid #fca5a5' }}>
+                        <span className="text-[10px] font-black text-red-600 bg-red-100 px-2 py-0.5 rounded-full tracking-wide">
+                          ⛔ EXPIRED
+                        </span>
+                        <span className="text-[9px] text-red-400 mt-0.5">{p.expiry}</span>
+                      </div>
+                    )}
+                    {cartQty > 0 && !isExpired && (
                       <div
                         className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-white font-black animate-pop-in"
                         style={{ background: '#16a34a', fontSize: 11, boxShadow: '0 2px 8px rgba(22,163,74,0.4)' }}
@@ -740,7 +886,7 @@ export default function POS() {
                     )}
                     <div
                       className="w-full h-14 rounded-xl flex items-center justify-center text-2xl mb-0.5 shrink-0"
-                      style={{ background: cartQty > 0 ? 'linear-gradient(135deg,#dcfce7,#f0fdf4)' : '#f8fafb', border: cartQty > 0 ? '1px solid #bbf7d0' : '1px solid transparent' }}
+                      style={{ background: isExpired ? '#fff1f2' : cartQty > 0 ? 'linear-gradient(135deg,#dcfce7,#f0fdf4)' : '#f8fafb', border: isExpired ? '1px solid #fecaca' : cartQty > 0 ? '1px solid #bbf7d0' : '1px solid transparent' }}
                     >
                       {CAT_EMOJI[p.category] || '📦'}
                     </div>
@@ -750,10 +896,10 @@ export default function POS() {
                       <span
                         className={cn(
                           'text-[11px] font-bold',
-                          p.stock === 0 ? 'text-red-500' : p.stock <= 5 ? 'text-orange-500' : 'text-gray-400'
+                          isExpired ? 'text-red-500' : p.stock === 0 ? 'text-red-500' : p.stock <= 5 ? 'text-orange-500' : 'text-gray-400'
                         )}
                       >
-                        {p.stock === 0 ? '⛔ Out' : p.stock <= 5 ? `⚡${p.stock}` : `${p.stock}`}
+                        {isExpired ? '⛔ Exp' : p.stock === 0 ? '⛔ Out' : p.stock <= 5 ? `⚡${p.stock}` : `${p.stock}`}
                       </span>
                     </div>
                   </button>
@@ -853,23 +999,30 @@ export default function POS() {
                   <div
                     className={cn(
                       'cart-item-row cursor-pointer',
-                      selectedCartItem === item.id && 'border-green-400 bg-green-50'
+                      selectedCartItem === (item.cartItemId || item.id) && 'border-green-400 bg-green-50'
                     )}
-                    onClick={() => setSelectedCartItem(selectedCartItem === item.id ? null : item.id)}
+                    onClick={() => setSelectedCartItem(selectedCartItem === (item.cartItemId || item.id) ? null : (item.cartItemId || item.id))}
                   >
                     <div
                       className="w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0"
-                      style={{ background: selectedCartItem === item.id ? '#dcfce7' : '#f8fafb' }}
+                      style={{ background: selectedCartItem === (item.cartItemId || item.id) ? '#dcfce7' : '#f8fafb' }}
                     >
                       {CAT_EMOJI[item.category] || '📦'}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
+                      {item.isUnique && (
+                        <p className="text-[10px] text-gray-500 mt-0.5 flex gap-2">
+                          {item.serial && <span>S/N: <span className="font-mono text-gray-700">{item.serial}</span></span>}
+                          {item.imei && <span>IMEI: <span className="font-mono text-gray-700">{item.imei}</span></span>}
+                          {item.warrantyMonths > 0 && <span className="text-blue-600 flex items-center gap-0.5"><ShieldCheck size={10} />{item.warrantyMonths}m Warranty</span>}
+                        </p>
+                      )}
                       <p className="text-xs text-gray-400 mt-0.5">{formatCurrency(item.salePrice)} × {item.qty}</p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={(e) => { e.stopPropagation(); updateQty(item.id, item.qty - 1) }}
+                        onClick={(e) => { e.stopPropagation(); updateQty(item.cartItemId || item.id, item.qty - 1) }}
                         className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-red-100 text-red-400 transition-all active:scale-90 border border-red-100"
                       >
                         <Minus size={12} />
@@ -886,7 +1039,7 @@ export default function POS() {
                       {formatCurrency(item.salePrice * item.qty)}
                     </p>
                     <button
-                      onClick={(e) => { e.stopPropagation(); removeFromCart(item.id); if (selectedCartItem === item.id) setSelectedCartItem(null) }}
+                      onClick={(e) => { e.stopPropagation(); removeFromCart(item.cartItemId || item.id); if (selectedCartItem === (item.cartItemId || item.id)) setSelectedCartItem(null) }}
                       className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-100 transition-all active:scale-90"
                       title="Remove item from cart"
                     >
@@ -942,9 +1095,9 @@ export default function POS() {
                 <span>− {formatCurrency(discountAmt)}</span>
               </div>
             )}
-            {taxSettings.enabled && (
+            {taxEnabled && (
               <div className="flex justify-between text-gray-500">
-                <span>{taxSettings.name} ({taxSettings.rate}%)</span>
+                <span>{taxName} ({taxRate}%)</span>
                 <span>{formatCurrency(taxAmt)}</span>
               </div>
             )}
@@ -1014,10 +1167,60 @@ export default function POS() {
         onPublishCustomerDisplay={openCustomerScreen}
         cartItems={cart}
       />
+      <Modal open={showSerialModal} onClose={() => setShowSerialModal(false)} title={`Provide Details: ${serialProduct?.name}`}>
+        <form onSubmit={handleSerialSubmit} className="flex flex-col gap-4 pt-2">
+          <datalist id={`serials-${serialProduct?.id}`}>
+            {availableSerials.filter(s => s.serial).map(s => <option key={`sn-${s.id}`} value={s.serial} />)}
+          </datalist>
+          <datalist id={`imeis-${serialProduct?.id}`}>
+            {availableSerials.filter(s => s.imei).map(s => <option key={`im-${s.id}`} value={s.imei} />)}
+          </datalist>
+          <Input 
+            label="Serial Number" 
+            value={serialForm.serial} 
+            onChange={(e) => setSerialForm(s => ({ ...s, serial: e.target.value }))}
+            placeholder="Scan or enter S/N"
+            list={`serials-${serialProduct?.id}`}
+            autoFocus
+          />
+          <Input 
+            label="IMEI (Mobile Devices)" 
+            value={serialForm.imei} 
+            onChange={(e) => setSerialForm(s => ({ ...s, imei: e.target.value }))}
+            placeholder="Scan or enter IMEI"
+            list={`imeis-${serialProduct?.id}`}
+          />
+          <Input 
+            label="Warranty Period (Months)" 
+            type="number"
+            value={serialForm.warrantyMonths} 
+            onChange={(e) => setSerialForm(s => ({ ...s, warrantyMonths: parseInt(e.target.value) || 0 }))}
+          />
+          <div className="flex gap-2 pt-2">
+            <button type="submit" className="btn-primary flex-1 justify-center">
+              {serialForm.serial || serialForm.imei ? 'Add with Serial' : 'Skip & Add Normally'}
+            </button>
+            <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setShowSerialModal(false)}>Cancel</button>
+          </div>
+        </form>
+      </Modal>
+      {/* Hidden offscreen receipt div for auto-printing (never shown on screen) */}
+      <div style={{ position: 'fixed', left: -9999, top: -9999, width: 280, pointerEvents: 'none', opacity: 0, overflow: 'hidden', zIndex: -1 }}>
+        <div ref={hiddenReceiptRef}>
+          {lastSale && (
+            <ReceiptContent
+              sale={lastSale}
+              businessInfo={businessInfo}
+              receiptSettings={receiptSettings}
+            />
+          )}
+        </div>
+      </div>
+      {/* Receipt modal — only shown when user manually clicks reprint */}
       {showReceipt && lastSale && (
         <ReceiptModal
           sale={lastSale}
-          businessInfo={useAppStore.getState().businessInfo}
+          businessInfo={businessInfo}
           onClose={() => setShowReceipt(false)}
         />
       )}

@@ -10,7 +10,7 @@ import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
 
 const APP_STORE_VERSION = 4
 const DEFAULT_PUBLIC_MENU_BASE_URL = (import.meta.env.VITE_PUBLIC_MENU_BASE_URL || SYSTEM_PUBLIC_MENU_URL).trim()
-const LICENSED_MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online']
+const LICENSED_MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online', 'electronics']
 
 function normalizePublicMenuBaseUrl(value = '') {
   const candidate = String(value || '').trim()
@@ -155,6 +155,7 @@ export const useAppStore = create(
         pharmacy: false,
         wholesale: false,
         online: false,
+        electronics: false,
       },
       businessInfo: {
         name: BRAND.name,
@@ -189,7 +190,8 @@ export const useAppStore = create(
       },
       hardwareSettings: {
         barcodeScanner: true,
-        printerType: 'Thermal (ESC/POS)',
+        printerType: 'Raster',
+        printerProfile: '80mm-raster',
         printerPort: '',
         paperWidth: '80mm',
         autoOpenDrawer: false,
@@ -429,6 +431,21 @@ export const useAppStore = create(
           showCashier: persistedState?.receiptSettings?.showCashier ?? true,
           logoUrl: persistedState?.receiptSettings?.logoUrl ?? null,
         },
+        hardwareSettings: {
+          barcodeScanner: persistedState?.hardwareSettings?.barcodeScanner ?? true,
+          printerType: persistedState?.hardwareSettings?.printerType || 'Raster',
+          printerProfile: persistedState?.hardwareSettings?.printerProfile || '80mm-raster',
+          printerPort: persistedState?.hardwareSettings?.printerPort || '',
+          paperWidth: persistedState?.hardwareSettings?.paperWidth || '80mm',
+          autoOpenDrawer: persistedState?.hardwareSettings?.autoOpenDrawer ?? false,
+          drawerPort: persistedState?.hardwareSettings?.drawerPort || '',
+          // Barcode printing controls
+          barcodeType: persistedState?.hardwareSettings?.barcodeType || 'CODE128',
+          barcodeModuleWidth: persistedState?.hardwareSettings?.barcodeModuleWidth || null,
+          barcodeHeight: persistedState?.hardwareSettings?.barcodeHeight || null,
+          barcodeQuietZone: persistedState?.hardwareSettings?.barcodeQuietZone || null,
+          barcodeEdgePaddingMm: persistedState?.hardwareSettings?.barcodeEdgePaddingMm || null,
+        },
         helaQRSettings: {
           enabled: false,
           testMode: true,
@@ -602,6 +619,7 @@ const DEFAULT_CATEGORIES_BY_MODULE = {
   clothing: ['Pants', 'Shirts', 'Shoes', 'Accessories'],
   wholesale: ['Bulk', 'Packed Goods'],
   online: ['Marketplace', 'Delivery'],
+  electronics: ['Smartphones', 'Laptops', 'Tablets', 'Accessories', 'Printers', 'Audio'],
 }
 
 const normalizeModuleKey = (moduleName) => String(moduleName || 'grocery').trim().toLowerCase() || 'grocery'
@@ -815,31 +833,47 @@ export const usePOSStore = create((set, get) => ({
 
   addToCart: (product, qty = 1) => {
     const cart = get().cart
-    const existing = cart.find((i) => i.id === product.id)
+    const existing = cart.find((i) => i.id === product.id && !i.isUnique)
     if (existing) {
       set({
         cart: cart.map((i) =>
-          i.id === product.id ? { ...i, qty: i.qty + qty } : i
+          i.id === product.id && !i.isUnique ? { ...i, qty: i.qty + qty } : i
         ),
       })
     } else {
       set({ cart: [...cart, { ...product, qty, salePrice: product.price }] })
     }
   },
-  removeFromCart: (id) =>
-    set((s) => ({ cart: s.cart.filter((i) => i.id !== id) })),
-  updateQty: (id, qty) => {
+  addUniqueItemToCart: (product, uniqueData) => {
+    const cart = get().cart
+    set({
+      cart: [
+        ...cart,
+        {
+          ...product,
+          ...uniqueData,
+          cartItemId: Math.random().toString(36).substring(7),
+          isUnique: true,
+          qty: 1,
+          salePrice: product.price
+        }
+      ]
+    })
+  },
+  removeFromCart: (identifier) =>
+    set((s) => ({ cart: s.cart.filter((i) => (i.cartItemId || i.id) !== identifier) })),
+  updateQty: (identifier, qty) => {
     if (qty <= 0) {
-      get().removeFromCart(id)
+      get().removeFromCart(identifier)
       return
     }
     set((s) => ({
-      cart: s.cart.map((i) => (i.id === id ? { ...i, qty } : i)),
+      cart: s.cart.map((i) => ((i.cartItemId || i.id) === identifier ? { ...i, qty } : i)),
     }))
   },
-  updatePrice: (id, price) =>
+  updatePrice: (identifier, price) =>
     set((s) => ({
-      cart: s.cart.map((i) => (i.id === id ? { ...i, salePrice: price } : i)),
+      cart: s.cart.map((i) => ((i.cartItemId || i.id) === identifier ? { ...i, salePrice: price } : i)),
     })),
   clearCart: () => set({ cart: [], discount: 0, customer: null, note: '' }),
   setDiscount: (discount, type) => set({ discount, discountType: type }),
@@ -926,19 +960,73 @@ export const useSalesStore = create(
     (set, get) => ({
       sales: [],
 
-      addSale: (sale) =>
-        set((s) => ({
-          sales: [{
-            ...sale,
-            id: uuidv4(),
-            date: new Date(),
-            receiptNo: String(sale.receiptNo || '').trim() || generateReceiptNumber(),
-            paymentMethod: sale.paymentMethod || 'cash',
-            status: sale.status || 'completed',
-            source: sale.source || 'grocery',
-            items_detail: sale.items_detail || sale.cartItems || [],
-          }, ...s.sales],
-        })),
+      addSale: (sale) => {
+        const saleId = uuidv4()
+        const saleDate = new Date()
+        const newSale = {
+          ...sale,
+          id: saleId,
+          date: saleDate,
+          receiptNo: String(sale.receiptNo || '').trim() || generateReceiptNumber(),
+          paymentMethod: sale.paymentMethod || 'cash',
+          status: sale.status || 'completed',
+          source: sale.source || 'grocery',
+          items_detail: sale.items_detail || sale.cartItems || [],
+        }
+        
+        // Register warranty for items with serials or warranty periods
+        if (sale.activeModule === 'electronics' || sale.source === 'electronics') {
+          try {
+            const electronicsStore = useElectronicsStore.getState()
+            newSale.items_detail.forEach((item) => {
+              if (item.serial || item.imei || item.warrantyMonths > 0) {
+                const months = item.warrantyMonths || 0
+                const startDate = saleDate
+                const endDate = new Date(startDate)
+                endDate.setMonth(endDate.getMonth() + months)
+                
+                electronicsStore.addWarrantyRecord({
+                  saleId,
+                  productId: item.id,
+                  productName: item.name,
+                  serial: item.serial || '',
+                  imei: item.imei || '',
+                  customerId: sale.customerId || 'walk-in',
+                  warrantyMonths: months,
+                  startDate: startDate.toISOString(),
+                  endDate: endDate.toISOString(),
+                  status: 'active'
+                })
+                
+                // If it's linked to an inventory serial, mark it as sold
+                if (item.serialId) {
+                  electronicsStore.updateSerial(item.serialId, { 
+                    status: 'sold', 
+                    soldAt: saleDate.toISOString(), 
+                    saleId, 
+                    customerId: sale.customerId 
+                  })
+                } else if (item.serial || item.imei) {
+                  // If it wasn't explicitly linked to an inventory ID, try to find and mark sold
+                  const existing = electronicsStore.findBySerial(item.serial || item.imei)
+                  if (existing) {
+                    electronicsStore.updateSerial(existing.id, { 
+                      status: 'sold', 
+                      soldAt: saleDate.toISOString(), 
+                      saleId, 
+                      customerId: sale.customerId 
+                    })
+                  }
+                }
+              }
+            })
+          } catch (err) {
+            console.error('[addSale] Failed to register warranties:', err)
+          }
+        }
+        
+        set((s) => ({ sales: [newSale, ...s.sales] }))
+      },
       finalizePendingSale: ({ receiptNo, paymentRef } = {}) => {
         const normalizedReceipt = String(receiptNo || '').trim().toUpperCase()
         const normalizedRef = String(paymentRef || '').trim()
@@ -1503,6 +1591,233 @@ export function initDesktopDataPersistence() {
     window.removeEventListener('beforeunload', persistBeforeClose)
   }
 }
+
+// ─── Electronics / Computer & Mobile Shop Store ─────────────────────────────
+export const useElectronicsStore = create(
+  persist(
+    (set, get) => ({
+      // ── Products with serial/IMEI tracking ───────────────────────────────
+      elProducts: [
+        { id: 'ep1', name: 'Samsung Galaxy A55', brand: 'Samsung', category: 'Smartphones', barcode: 'SAMS-A55-001', cost: 42000, price: 55000, warrantyMonths: 12, unit: 'pcs', active: true, createdAt: new Date().toISOString() },
+        { id: 'ep2', name: 'Apple iPhone 15', brand: 'Apple', category: 'Smartphones', barcode: 'APPL-IP15-001', cost: 115000, price: 145000, warrantyMonths: 12, unit: 'pcs', active: true, createdAt: new Date().toISOString() },
+        { id: 'ep3', name: 'Dell Inspiron 15 Laptop', brand: 'Dell', category: 'Laptops', barcode: 'DELL-I15-001', cost: 85000, price: 109000, warrantyMonths: 24, unit: 'pcs', active: true, createdAt: new Date().toISOString() },
+        { id: 'ep4', name: 'JBL Tune 770NC Headphones', brand: 'JBL', category: 'Accessories', barcode: 'JBL-T770-001', cost: 8500, price: 12500, warrantyMonths: 6, unit: 'pcs', active: true, createdAt: new Date().toISOString() },
+        { id: 'ep5', name: 'Anker USB-C Charger 65W', brand: 'Anker', category: 'Accessories', barcode: 'ANKR-65W-001', cost: 2200, price: 3500, warrantyMonths: 12, unit: 'pcs', active: true, createdAt: new Date().toISOString() },
+        { id: 'ep6', name: 'HP LaserJet Pro M404n', brand: 'HP', category: 'Printers', barcode: 'HP-M404-001', cost: 35000, price: 48000, warrantyMonths: 12, unit: 'pcs', active: true, createdAt: new Date().toISOString() },
+      ],
+
+      // ── Serial/IMEI units (inventory items) ─────────────────────────────
+      serials: [
+        { id: 's1', productId: 'ep1', serial: '358234567890123', imei: '358234567890123', status: 'in_stock', supplierId: 'sup1', grnId: 'grn1', createdAt: new Date().toISOString() },
+        { id: 's2', productId: 'ep1', serial: '358234567890456', imei: '358234567890456', status: 'in_stock', supplierId: 'sup1', grnId: 'grn1', createdAt: new Date().toISOString() },
+        { id: 's3', productId: 'ep2', serial: 'F2LZF4KHJK7N', imei: '350015893451234', status: 'in_stock', supplierId: 'sup2', grnId: 'grn1', createdAt: new Date().toISOString() },
+        { id: 's4', productId: 'ep3', serial: 'DL2024XY00123', imei: null, status: 'in_stock', supplierId: 'sup1', grnId: 'grn1', createdAt: new Date().toISOString() },
+      ],
+
+      // ── Suppliers ────────────────────────────────────────────────────────
+      elSuppliers: [
+        { id: 'sup1', name: 'TechDistributor Lanka', contact: '+94 11 234 5678', email: 'orders@techdist.lk', address: 'Colombo 03', createdAt: new Date().toISOString() },
+        { id: 'sup2', name: 'Apple Authorized Partner', contact: '+94 77 123 4567', email: 'b2b@applepartner.lk', address: 'Colombo 07', createdAt: new Date().toISOString() },
+      ],
+
+      // ── GRN (Goods Received Notes) ────────────────────────────────────────
+      elGRNs: [
+        { id: 'grn1', supplierId: 'sup1', date: new Date().toISOString(), invoiceNo: 'INV-2025-001', items: [{ productId: 'ep1', qty: 2, cost: 42000 }, { productId: 'ep3', qty: 1, cost: 85000 }], status: 'received', notes: 'Sample GRN', createdAt: new Date().toISOString() },
+      ],
+
+      // ── Sales with serial details ─────────────────────────────────────────
+      elSales: [],
+
+      // ── Repair/Service jobs ──────────────────────────────────────────────
+      repairJobs: [],
+
+      // ── Customers ────────────────────────────────────────────────────────
+      elCustomers: [
+        { id: 'cust1', name: 'Amal Silva', phone: '+94 77 100 2345', email: 'amal@email.com', address: 'Gampaha', createdAt: new Date().toISOString() },
+        { id: 'cust2', name: 'Priya Nirosha', phone: '+94 76 200 3456', email: 'priya@email.com', address: 'Kandy', createdAt: new Date().toISOString() },
+      ],
+
+      // ── Warranty records ─────────────────────────────────────────────────
+      warranties: [],
+
+      // ── Actions: Products ─────────────────────────────────────────────────
+      addElProduct: (product) => set((s) => ({
+        elProducts: [...s.elProducts, { ...product, id: uuidv4(), createdAt: new Date().toISOString(), active: true }]
+      })),
+      updateElProduct: (id, updates) => set((s) => ({
+        elProducts: s.elProducts.map((p) => p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p)
+      })),
+      deleteElProduct: (id) => set((s) => ({ elProducts: s.elProducts.filter((p) => p.id !== id) })),
+
+      // ── Actions: Serials ──────────────────────────────────────────────────
+      addSerial: (serial) => {
+        const existing = get().serials.find((s) => s.serial === serial.serial || (serial.imei && s.imei === serial.imei))
+        if (existing) return { success: false, error: 'Serial/IMEI already exists in inventory' }
+        set((s) => ({ serials: [...s.serials, { ...serial, id: uuidv4(), status: 'in_stock', createdAt: new Date().toISOString() }] }))
+        return { success: true }
+      },
+      addSerialsBatch: (serialsArr) => {
+        const existing = get().serials
+        const results = []
+        const newSerials = []
+        serialsArr.forEach((s) => {
+          const dup = existing.find((e) => e.serial === s.serial || (s.imei && e.imei === s.imei))
+          if (dup) { results.push({ serial: s.serial, success: false, error: 'Duplicate' }); return }
+          const newS = { ...s, id: uuidv4(), status: 'in_stock', createdAt: new Date().toISOString() }
+          newSerials.push(newS)
+          results.push({ serial: s.serial, success: true })
+        })
+        if (newSerials.length > 0) set((s) => ({ serials: [...s.serials, ...newSerials] }))
+        return results
+      },
+      updateSerial: (id, updates) => set((s) => ({
+        serials: s.serials.map((sr) => sr.id === id ? { ...sr, ...updates } : sr)
+      })),
+      getSerialsByProduct: (productId) => get().serials.filter((s) => s.productId === productId),
+      getAvailableSerials: (productId) => get().serials.filter((s) => s.productId === productId && s.status === 'in_stock'),
+      findBySerial: (query) => {
+        const q = String(query || '').trim().toLowerCase()
+        return get().serials.find((s) => s.serial?.toLowerCase() === q || s.imei?.toLowerCase() === q) || null
+      },
+
+      // ── Actions: Suppliers ────────────────────────────────────────────────
+      addElSupplier: (sup) => set((s) => ({ elSuppliers: [...s.elSuppliers, { ...sup, id: uuidv4(), createdAt: new Date().toISOString() }] })),
+      updateElSupplier: (id, updates) => set((s) => ({ elSuppliers: s.elSuppliers.map((x) => x.id === id ? { ...x, ...updates } : x) })),
+      deleteElSupplier: (id) => set((s) => ({ elSuppliers: s.elSuppliers.filter((x) => x.id !== id) })),
+
+      // ── Actions: GRN ─────────────────────────────────────────────────────
+      addElGRN: (grn, serialsToAdd = []) => {
+        const grnId = uuidv4()
+        const newGRN = { ...grn, id: grnId, createdAt: new Date().toISOString(), status: 'received' }
+        const results = get().addSerialsBatch(serialsToAdd.map((s) => ({ ...s, grnId })))
+        set((st) => ({ elGRNs: [...st.elGRNs, newGRN] }))
+        return { grnId, serialResults: results }
+      },
+
+      // ── Actions: Sales ────────────────────────────────────────────────────
+      addElSale: (sale) => {
+        const saleId = uuidv4()
+        const warrantyRecords = []
+        ;(sale.items || []).forEach((item) => {
+          if (item.serialId) {
+            get().updateSerial(item.serialId, { status: 'sold', soldAt: new Date().toISOString(), saleId, customerId: sale.customerId })
+            if (item.warrantyMonths > 0) {
+              const startDate = new Date()
+              const endDate = new Date(startDate)
+              endDate.setMonth(endDate.getMonth() + item.warrantyMonths)
+              warrantyRecords.push({
+                id: uuidv4(), saleId, serialId: item.serialId, productId: item.productId,
+                productName: item.productName, serial: item.serial, imei: item.imei,
+                customerId: sale.customerId, warrantyMonths: item.warrantyMonths,
+                startDate: startDate.toISOString(), endDate: endDate.toISOString(),
+                status: 'active', createdAt: new Date().toISOString()
+              })
+            }
+          }
+        })
+        set((s) => ({
+          elSales: [{ ...sale, id: saleId, date: new Date().toISOString(), status: 'completed' }, ...s.elSales],
+          warranties: [...s.warranties, ...warrantyRecords]
+        }))
+        return saleId
+      },
+
+      // ── Actions: Repair Jobs ──────────────────────────────────────────────
+      addRepairJob: (job) => set((s) => ({
+        repairJobs: [{
+          ...job, id: uuidv4(),
+          jobNo: `JOB-${String(s.repairJobs.length + 1).padStart(3, '0')}`,
+          status: 'received', notified: false,
+          receivedDate: job.receivedDate || new Date().toISOString(),
+          jobType: job.jobType || 'custom',
+          createdAt: new Date().toISOString()
+        }, ...s.repairJobs]
+      })),
+      updateRepairJob: (id, updates) => set((s) => ({
+        repairJobs: s.repairJobs.map((j) => j.id === id ? { ...j, ...updates, updatedAt: new Date().toISOString() } : j)
+      })),
+      deleteRepairJob: (id) => set((s) => ({ repairJobs: s.repairJobs.filter((j) => j.id !== id) })),
+
+      // ── Actions: Customers ────────────────────────────────────────────────
+      addElCustomer: (cust) => {
+        const id = uuidv4()
+        set((s) => ({ elCustomers: [...s.elCustomers, { ...cust, id, createdAt: new Date().toISOString() }] }))
+        return id
+      },
+      updateElCustomer: (id, updates) => set((s) => ({ elCustomers: s.elCustomers.map((c) => c.id === id ? { ...c, ...updates } : c) })),
+      deleteElCustomer: (id) => set((s) => ({ elCustomers: s.elCustomers.filter((c) => c.id !== id) })),
+
+      // ── Actions: Warranty lookup ──────────────────────────────────────────
+      addWarrantyRecord: (warranty) => {
+        set((s) => ({
+          warranties: [...s.warranties, { ...warranty, id: uuidv4(), createdAt: new Date().toISOString() }]
+        }))
+      },
+      getWarrantyStatus: (serialOrIMEI) => {
+        const q = String(serialOrIMEI || '').trim().toLowerCase()
+        let w = get().warranties.find((w) => w.serial?.toLowerCase() === q || w.imei?.toLowerCase() === q)
+        
+        // Fallback: if search by invoice
+        if (!w) {
+          const globalSale = useSalesStore.getState().sales.find(s => s.receiptNo?.toLowerCase() === q)
+          const elSale = get().elSales.find(s => s.receiptNo?.toLowerCase() === q)
+          const saleId = globalSale?.id || elSale?.id
+          if (saleId) w = get().warranties.find(wa => wa.saleId === saleId)
+        }
+        
+        if (!w) return null
+        const now = new Date()
+        const end = new Date(w.endDate)
+        return { ...w, isActive: end > now, daysLeft: Math.floor((end - now) / 86400000) }
+      },
+      getWarrantiesBySearch: (query) => {
+        const q = String(query || '').trim().toLowerCase()
+        if (!q) return []
+        
+        const now = new Date()
+        
+        // 1. Direct match by Serial or IMEI
+        const directMatches = get().warranties.filter((w) => w.serial?.toLowerCase() === q || w.imei?.toLowerCase() === q)
+        
+        // 2. Match by Invoice Number (find sale first)
+        const globalSale = useSalesStore.getState().sales.find(s => s.receiptNo?.toLowerCase() === q)
+        const elSale = get().elSales.find(s => s.receiptNo?.toLowerCase() === q)
+        const saleIdToMatch = globalSale?.id || elSale?.id
+        const saleMatches = saleIdToMatch ? get().warranties.filter(w => w.saleId === saleIdToMatch) : []
+        
+        // Combine unique matches
+        const allMatches = [...directMatches, ...saleMatches].reduce((acc, curr) => {
+          if (!acc.find(w => w.id === curr.id)) acc.push(curr)
+          return acc
+        }, [])
+
+        return allMatches.map(w => {
+           const end = new Date(w.endDate)
+           const gSale = useSalesStore.getState().sales.find(s => s.id === w.saleId)
+           const eSale = get().elSales.find(s => s.id === w.saleId)
+           const relatedSale = gSale || eSale
+           return { 
+             ...w, 
+             isActive: end > now, 
+             daysLeft: Math.floor((end - now) / 86400000),
+             receiptNo: relatedSale?.receiptNo || w.saleId
+           }
+        })
+      },
+      getCustomerWarranties: (customerId) => {
+        const now = new Date()
+        return get().warranties.filter((w) => w.customerId === customerId).map((w) => ({
+          ...w, isActive: new Date(w.endDate) > now, daysLeft: Math.floor((new Date(w.endDate) - now) / 86400000)
+        }))
+      },
+      getStockCount: (productId) => get().serials.filter((s) => s.productId === productId && s.status === 'in_stock').length,
+    }),
+    {
+      name: 'ceypos-electronics',
+      storage: createJSONStorage(() => idbStorage),
+    }
+  )
+)
 
 // Boot: load users from DB into store on startup
 if (typeof window !== 'undefined' && window.require) {
