@@ -4,7 +4,7 @@ import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Sear
 import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
-import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings } from '@/lib/firebase'
+import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings, getTableQrSession } from '@/lib/firebase'
 
 const I18N = {
   en: {
@@ -181,6 +181,7 @@ export default function PublicMenu() {
   const [expandedItemId, setExpandedItemId] = useState('')
   const [customizations, setCustomizations] = useState({})
   const [sessionState, setSessionState] = useState('loading')
+  const [sessionRetry, setSessionRetry] = useState(0)
   const [cloudProducts, setCloudProducts] = useState([])
   const [cloudProductsLoaded, setCloudProductsLoaded] = useState(false)
 
@@ -246,10 +247,23 @@ export default function PublicMenu() {
   const productSource = isElectron ? products : cloudProducts
 
   const menuItems = useMemo(() => {
-    const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu'])
+    const restaurantCategories = new Set(['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu', 'main', 'starter', 'drink', 'dessert'])
+
+    const isRestaurantProduct = (product) => {
+      if (!product) return false
+      const moduleName = String(product.module || '').trim().toLowerCase()
+      const sourceName = String(product.source || '').trim().toLowerCase()
+      const categoryName = String(product.category || '').trim().toLowerCase()
+
+      if (moduleName === 'restaurant' || sourceName === 'restaurant') return true
+      if (restaurantCategories.has(categoryName)) return true
+      return false
+    }
 
     const scopedActiveProducts = productSource.filter((p) => {
       if (!p?.active) return false
+      if (!isRestaurantProduct(p)) return false
+
       // On mobile (cloud products): filter by storeId so each store sees only its own menu
       if (!isElectron && decodedStoreId) {
         return String(p.storeId || '').trim() === decodedStoreId
@@ -257,8 +271,6 @@ export default function PublicMenu() {
       return true
     })
 
-    // Return all active products assigned to this store, regardless of module mapping.
-    // The UI automatically groups them perfectly by their assigned category.
     return scopedActiveProducts
   }, [decodedStoreId, productSource, isElectron, cloudProductsLoaded, cloudProducts])
   const categories = useMemo(() => ['All', ...new Set(menuItems.map((item) => item.category).filter(Boolean))], [menuItems])
@@ -295,8 +307,25 @@ export default function PublicMenu() {
     }
 
     setSessionState('loading')
-    const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, (session) => {
+    let retryTimer = null
+    const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (session) => {
       if (!session) {
+        // Fallback: try a one-time fetch in case the realtime listener fired before
+        // the session doc was created/propagated. This avoids incorrectly marking
+        // freshly generated QR links as expired.
+        try {
+          const fetched = await getTableQrSession(decodedStoreId, tableNo)
+          if (fetched && String(fetched.token || '') === qrToken) {
+            setSessionState('valid')
+            return
+          }
+        } catch (_) {}
+
+        if (sessionRetry < 2) {
+          retryTimer = setTimeout(() => setSessionRetry((prev) => prev + 1), 700)
+          return
+        }
+
         setSessionState('invalid')
         return
       }
@@ -324,8 +353,11 @@ export default function PublicMenu() {
       setSessionState(matches ? 'valid' : 'invalid')
     })
 
-    return () => unsubscribe()
-  }, [decodedStoreId, tableNo, effectiveSession, qrToken])
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer)
+      if (typeof unsubscribe === 'function') unsubscribe()
+    }
+  }, [decodedStoreId, tableNo, effectiveSession, qrToken, sessionRetry])
 
   const getCustomization = (itemId) => customizations[itemId] || defaultCustomization()
 
