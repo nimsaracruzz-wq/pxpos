@@ -39,7 +39,7 @@ function BarcodeDisplay({ value }) {
   return (
     <div className="text-center p-3 bg-gray-50 rounded-xl">
       <div className="flex justify-center gap-0.5 mb-2">
-        {value.split('').flatMap((c, i) => {
+        {String(value).split('').flatMap((c, i) => {
           const num = c.charCodeAt(0) % 7
           return [
             <div key={`${i}a`} style={{ width: num % 2 === 0 ? 2 : 3, height: 50, background: '#111', marginRight: 1 }} />,
@@ -85,13 +85,18 @@ const playTone = (type = 'tick') => {
   }
 }
 
-function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categories, activeModule }) {
-  const [form, setForm] = useState({ ...PRODUCT_FORM_DEFAULT, ...initial })
+function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categories = [], activeModule }) {
+  // Defensive fallbacks in case initial is null/undefined
+  const safeInitial = initial || PRODUCT_FORM_DEFAULT
+  const [form, setForm] = useState({ ...PRODUCT_FORM_DEFAULT, ...safeInitial })
   const [batchMode, setBatchMode] = useState(false)
   const [newCatOpen, setNewCatOpen] = useState(false)
   const [newCatName, setNewCatName] = useState('')
-  const [otherUnitOpen, setOtherUnitOpen] = useState(!['pcs', 'kg', 'g', 'L', 'bottle', 'pack', 'box'].includes(initial.unit) && initial.unit !== 'pcs')
-  const [otherUnitVal, setOtherUnitVal] = useState(!['pcs', 'kg', 'g', 'L', 'bottle', 'pack', 'box'].includes(initial.unit) && initial.unit !== 'pcs' ? initial.unit : '')
+
+  const initialUnit = safeInitial.unit || 'pcs'
+  const isCustomUnit = !['pcs', 'kg', 'g', 'L', 'bottle', 'pack', 'box'].includes(initialUnit) && initialUnit !== 'pcs'
+  const [otherUnitOpen, setOtherUnitOpen] = useState(isCustomUnit)
+  const [otherUnitVal, setOtherUnitVal] = useState(isCustomUnit ? initialUnit : '')
 
   const nameInputRef = useRef(null)
   const { addCategory } = useProductStore()
@@ -103,9 +108,8 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
   const costVal = parseFloat(form.cost) || 0
   const profit = priceVal - costVal
   const margin = costVal > 0
-    ? ((priceVal - costVal) / costVal * 105).toFixed(1)
+    ? ((priceVal - costVal) / costVal * 100).toFixed(1)
     : null
-
   useEffect(() => {
     setTimeout(() => {
       nameInputRef.current?.focus()
@@ -514,7 +518,7 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
                 {/* Simulated Barcode */}
                 <div className="w-full max-w-[170px] mb-2 flex flex-col items-center">
                   <div className="flex justify-center w-full gap-0.5 h-10 overflow-hidden">
-                    {(form.barcode || 'SCANNER').split('').flatMap((c, i) => {
+                    {String(form.barcode || 'SCANNER').split('').flatMap((c, i) => {
                       const num = c.charCodeAt(0) % 7
                       return [
                         <div key={`${i}p`} className="bg-gray-800" style={{ width: num % 2 === 0 ? 1 : 2, height: '100%', marginRight: 0.5, backgroundColor: '#1f2937' }} />,
@@ -522,7 +526,7 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
                     })}
                   </div>
                   <span className="font-mono text-[9px] tracking-[0.2em] font-semibold text-gray-500 mt-1">
-                    {form.barcode || 'NO-BARCODE'}
+                    {String(form.barcode || 'NO-BARCODE')}
                   </span>
                 </div>
 
