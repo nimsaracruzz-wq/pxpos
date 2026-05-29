@@ -90,9 +90,11 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
   const [qrReceiptNo, setQrReceiptNo] = useState('')
   const [qrError, setQrError]   = useState('')
   const [qrTimeLeft, setQrTimeLeft] = useState(0)
-  const pollRef      = useRef(null)
-  const countdownRef = useRef(null)
-  const QR_TIMEOUT   = 300 // 5 minutes in seconds
+  const pollRef           = useRef(null)
+  const countdownRef      = useRef(null)
+  const firestoreUnsubRef = useRef(null)   // realtime Firestore listener
+  const confirmedRef      = useRef(false)  // prevent double-confirm
+  const QR_TIMEOUT = 300 // 5 minutes in seconds
 
   const cashNum = parseFloat(cashGiven) || 0
   const change  = method === 'cash' ? Math.max(0, cashNum - total) : 0
@@ -105,6 +107,10 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
   const stopQrTimers = () => {
     clearInterval(pollRef.current)
     clearInterval(countdownRef.current)
+    if (typeof firestoreUnsubRef.current === 'function') {
+      firestoreUnsubRef.current()
+      firestoreUnsubRef.current = null
+    }
   }
 
   // Reset everything when modal closes or method changes away from helaqr
@@ -198,30 +204,62 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
       })
     }, 1000)
 
-    // Payment confirmation poll — every 15 seconds to avoid API rate limits
+    // ── Shared confirm handler (called from either Firestore OR API poll) ────
+    confirmedRef.current = false
+    const handleConfirmed = (source) => {
+      if (confirmedRef.current) return // prevent double-fire
+      confirmedRef.current = true
+      console.log(`[HelaQR] Payment confirmed via ${source}`)
+      stopQrTimers()
+      setQrState('idle')
+      onComplete('helaqr', 0, 0, {
+        qrData:      result.qrData,
+        qrReference: result.qrReference || '',
+        paymentRef:  result.reference || receiptNo,
+        receiptNo,
+      })
+    }
+
+    const handleFailed = () => {
+      if (confirmedRef.current) return
+      stopQrTimers()
+      setQrState('error')
+      setQrError('Payment failed, expired, or was cancelled.')
+    }
+
+    // ── 1. Firestore realtime listener (INSTANT when webhook fires) ──────────
+    try {
+      const { getApps, getApp } = await import('firebase/app')
+      const { getFirestore, doc, onSnapshot } = await import('firebase/firestore')
+      const apps = getApps()
+      if (apps.length > 0) {
+        const db = getFirestore(apps[0])
+        const ref = doc(db, 'helaqr_payments', receiptNo)
+        firestoreUnsubRef.current = onSnapshot(ref, (snap) => {
+          if (!snap.exists()) return
+          const data = snap.data() || {}
+          console.log('[HelaQR] Firestore snapshot —', receiptNo, 'isPaid:', data.isPaid)
+          if (data.isPaid) handleConfirmed('firestore')
+          else if (data.isFailed) handleFailed()
+        }, (err) => {
+          console.warn('[HelaQR] Firestore listener error:', err?.message)
+        })
+      }
+    } catch (fsErr) {
+      console.warn('[HelaQR] Could not start Firestore listener:', fsErr?.message)
+    }
+
+    // ── 2. API fallback poll every 3 seconds (covers no-Firestore cases) ─────
     pollRef.current = setInterval(async () => {
       try {
         const status = await checkHelaQRPaymentStatus({
           reference: receiptNo,
           qrReference: result.qrReference || '',
         })
-        if (status?.isPaid) {
-          stopQrTimers()
-          setQrState('idle')
-          // ✅ Only now complete the sale
-          onComplete('helaqr', 0, 0, {
-            qrData:      result.qrData,
-            qrReference: result.qrReference || '',
-            paymentRef:  result.reference || receiptNo,
-            receiptNo,
-          })
-        } else if (status?.isFailed) {
-          stopQrTimers()
-          setQrState('error')
-          setQrError('Payment failed, expired, or was cancelled.')
-        }
+        if (status?.isPaid) handleConfirmed('api-poll')
+        else if (status?.isFailed) handleFailed()
       } catch { /* network hiccup — try again next tick */ }
-    }, 15000)
+    }, 3000)
   }
 
   const handlePay = () => {
