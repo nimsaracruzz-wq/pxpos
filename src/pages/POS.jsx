@@ -228,8 +228,11 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
     }
 
     // ── 1. Firestore realtime listener (INSTANT when webhook fires) ──────────
+    // When this succeeds we do NOT need to poll the HelaQR API at all,
+    // which avoids rate-limit errors entirely.
+    let firestoreListening = false
     try {
-      const { getApps, getApp } = await import('firebase/app')
+      const { getApps } = await import('firebase/app')
       const { getFirestore, doc, onSnapshot } = await import('firebase/firestore')
       const apps = getApps()
       if (apps.length > 0) {
@@ -244,22 +247,28 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
         }, (err) => {
           console.warn('[HelaQR] Firestore listener error:', err?.message)
         })
+        firestoreListening = true
+        console.log('[HelaQR] Realtime Firestore listener active — API polling skipped')
       }
     } catch (fsErr) {
-      console.warn('[HelaQR] Could not start Firestore listener:', fsErr?.message)
+      console.warn('[HelaQR] Could not start Firestore listener, will use API poll:', fsErr?.message)
     }
 
-    // ── 2. API fallback poll every 3 seconds (covers no-Firestore cases) ─────
-    pollRef.current = setInterval(async () => {
-      try {
-        const status = await checkHelaQRPaymentStatus({
-          reference: receiptNo,
-          qrReference: result.qrReference || '',
-        })
-        if (status?.isPaid) handleConfirmed('api-poll')
-        else if (status?.isFailed) handleFailed()
-      } catch { /* network hiccup — try again next tick */ }
-    }, 3000)
+    // ── 2. API fallback poll — ONLY when Firestore is not available ───────────
+    // Rate-limited to 10 s to stay within HelaQR's request quota.
+    if (!firestoreListening) {
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await checkHelaQRPaymentStatus({
+            reference: receiptNo,
+            qrReference: result.qrReference || '',
+          })
+          if (status?.isPaid) handleConfirmed('api-poll')
+          else if (status?.isFailed) handleFailed()
+        } catch { /* network hiccup — try again next tick */ }
+      }, 10000)
+    }
+
   }
 
   const handlePay = () => {
