@@ -33,28 +33,28 @@ function initGlobalListener() {
   if (_globalInitialised || typeof window === 'undefined') return
   _globalInitialised = true
 
-  let buffer   = ''
-  let lastTime = 0
+  let buffer    = ''
+  let lastTime  = 0
+  let inScan    = false  // true once we see the first fast keystroke
 
   window.addEventListener('keydown', (e) => {
     // Ignore modifier-only keys and function keys
     if (e.ctrlKey || e.altKey || e.metaKey) return
 
-    const now  = Date.now()
-    const gap  = now - lastTime
-    lastTime   = now
-
-    // Reset buffer if the gap is too large (manual typing)
-    if (gap > THRESHOLD_MS && buffer.length > 0) {
-      buffer = ''
-    }
+    const now = Date.now()
+    const gap = now - lastTime
+    lastTime  = now
 
     if (e.key === 'Enter') {
       const code = buffer.trim()
       buffer = ''
+      inScan = false
 
       if (code.length >= MIN_LENGTH) {
-        // Dispatch to all subscribers via a custom event
+        // Consume the Enter so the focused input's onKeyDown never sees it
+        e.preventDefault()
+        e.stopPropagation()
+
         window.dispatchEvent(new CustomEvent('barcode:scanned', {
           detail: { code },
           bubbles: true,
@@ -64,10 +64,26 @@ function initGlobalListener() {
     }
 
     // Only accumulate printable single characters
-    if (e.key.length === 1) {
-      buffer += e.key
+    if (e.key.length !== 1) return
+
+    if (gap > THRESHOLD_MS) {
+      // Large gap → manual keystroke; reset scanner buffer
+      buffer = ''
+      inScan = false
+    } else if (buffer.length === 0) {
+      // First fast char after a gap — start of a potential scan
+      inScan = true
     }
-  }, { capture: true }) // capture phase so we intercept before inputs
+
+    // While we're in scanner mode, eat the keystrokes so they don't
+    // go into whatever input happens to be focused
+    if (inScan) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    buffer += e.key
+  }, { capture: true }) // capture phase: runs before any React handler
 }
 
 // Initialise once at module load time (safe in SSR — guarded by typeof window)
