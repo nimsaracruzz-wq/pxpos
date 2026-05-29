@@ -5,30 +5,23 @@ import { useEffect, useRef } from 'react'
  *
  * HOW IT WORKS
  * ─────────────
- * USB/Bluetooth scanners (keyboard-wedge mode) type every character in the
- * barcode in < 50 ms, ending with Enter.  Normal human typing has gaps of
- * 100–400 ms between keys.
+ * USB/Bluetooth scanners (keyboard-wedge mode) type characters extremely fast
+ * (usually < 30ms between keys). Humans type much slower (> 100ms between keys).
  *
- * We accumulate characters with their timestamps.  When Enter arrives we
- * check whether ALL characters arrived within SCAN_WINDOW_MS of each other.
- * If yes → valid scan; if no → manual input, ignore it.
+ * Instead of suppressing characters while typing (which can cut characters or
+ * leave partial text in inputs), this utility allows characters to flow naturally.
+ * When 'Enter' is pressed, it analyzes the gaps between all characters in the
+ * current sequence. If they all arrived with very small gaps, we know it's a scanner.
  *
- * A per-barcode COOLDOWN_MS prevents the same code from firing twice within
- * a short window (scanner bounce / accidental double-scan).
- *
- * Characters that are part of a detected scan are consumed via
- * e.preventDefault() so they never reach a focused <input>.
- *
- * Usage:
- *   useBarcodeScanner((code) => { ... })
- *
- * Raw DOM event (no React):
- *   window.addEventListener('barcode:scanned', e => console.log(e.detail.code))
+ * In that case, we:
+ * 1. Suppress the 'Enter' key so it doesn't trigger searches or form submissions.
+ * 2. Clear any text typed into the focused input (using React-compatible resetting).
+ * 3. Dispatch the barcode event.
  */
 
-const SCAN_WINDOW_MS = 100   // all chars must arrive within this window
-const MIN_LENGTH     = 3     // minimum barcode length
-const COOLDOWN_MS    = 1500  // ignore same barcode re-fire within this period
+const MAX_KEY_GAP_MS = 75   // maximum gap between characters for scanner speed
+const MIN_LENGTH     = 3    // minimum barcode length
+const COOLDOWN_MS    = 1500 // ignore same barcode re-fire within this period
 
 // ─── Module-level singleton ──────────────────────────────────────────────────
 let _globalInitialised = false
@@ -54,14 +47,19 @@ function initGlobalListener() {
       const log = charLog
       charLog = []
 
-      if (log.length < MIN_LENGTH) return // too short — ignore
+      if (log.length < MIN_LENGTH) return // too short
 
-      // Check: did all characters arrive within the scan window?
-      const first = log[0].time
-      const last  = log[log.length - 1].time
-      const isScanner = (last - first) <= SCAN_WINDOW_MS
+      // Check: did all consecutive characters arrive within the scanner gap?
+      let isScanner = true
+      for (let i = 1; i < log.length; i++) {
+        const gap = log[i].time - log[i - 1].time
+        if (gap > MAX_KEY_GAP_MS) {
+          isScanner = false
+          break
+        }
+      }
 
-      if (!isScanner) return // manual typing — don't treat as barcode
+      if (!isScanner) return // manual typing — let Enter pass through normally
 
       const code = log.map(e => e.char).join('').trim()
       if (code.length < MIN_LENGTH) return
@@ -69,16 +67,36 @@ function initGlobalListener() {
       // Per-barcode cooldown — prevent double-fire
       const prevFired = lastFired.get(code) || 0
       if (now - prevFired < COOLDOWN_MS) {
-        // Already fired this barcode recently — swallow the Enter silently
+        // Suppress Enter to avoid double-submit
         e.preventDefault()
         e.stopPropagation()
         return
       }
       lastFired.set(code, now)
 
-      // Consume Enter so the focused input never sees it
+      // Consume Enter so focused components don't see it
       e.preventDefault()
       e.stopPropagation()
+
+      // Best effort to clear any React-controlled input that the scanner typed into
+      const active = document.activeElement
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+        try {
+          const prototype = Object.getPrototypeOf(active)
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value') || 
+                             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+          
+          if (descriptor && descriptor.set) {
+            descriptor.set.call(active, '')
+            active.dispatchEvent(new Event('input', { bubbles: true }))
+          } else {
+            active.value = ''
+          }
+        } catch (err) {
+          console.warn('[BarcodeScanner] Failed to clear React input:', err)
+          active.value = ''
+        }
+      }
 
       window.dispatchEvent(new CustomEvent('barcode:scanned', {
         detail: { code },
@@ -88,27 +106,15 @@ function initGlobalListener() {
     }
 
     // ── Regular character ─────────────────────────────────────────────────────
-    if (e.key.length !== 1) return // skip Shift, Tab, etc.
+    if (e.key.length !== 1) return // skip Shift, Tab, Escape, etc.
 
-    // If the previous char was too long ago, clear the log (stale data)
-    if (charLog.length > 0 && now - charLog[charLog.length - 1].time > SCAN_WINDOW_MS * 3) {
+    // If the gap since the last character is too large, reset the buffer
+    const lastEntry = charLog[charLog.length - 1]
+    if (lastEntry && (now - lastEntry.time > MAX_KEY_GAP_MS)) {
       charLog = []
     }
 
     charLog.push({ char: e.key, time: now })
-
-    // Speculatively suppress the keystroke if it looks like scanner input.
-    // We check: are ALL chars so far arriving fast (within SCAN_WINDOW_MS)?
-    if (charLog.length >= 2) {
-      const spanSoFar = now - charLog[0].time
-      if (spanSoFar <= SCAN_WINDOW_MS) {
-        // Looks like a scanner — eat the character
-        e.preventDefault()
-        e.stopPropagation()
-      }
-    }
-    // Note: the very first char is never suppressed (we can't know yet).
-    // But a single stray char won't match MIN_LENGTH anyway.
   }, { capture: true })
 }
 
@@ -134,6 +140,7 @@ export function useBarcodeScanner(onScan, enabled = true) {
         onScanRef.current(e.detail.code)
       }
     }
+    window.dispatchEvent(new CustomEvent('helaqr:debug', { detail: { raw: { msg: 'scanner listener active' } } }))
     window.addEventListener('barcode:scanned', handler)
     return () => window.removeEventListener('barcode:scanned', handler)
   }, [enabled])
