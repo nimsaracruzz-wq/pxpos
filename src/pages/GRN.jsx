@@ -136,7 +136,7 @@ export default function GRN() {
         ? `${prod.name} · ${describeParsedBarcode(parsed)}`
         : prod.name
 
-      toast.success(`📦 ${desc}`, { duration: 3000 })
+      toast.success(`Received: ${desc}`, { duration: 3000 })
     } else if (parsed?.type === 'GS1-128') {
       // GS1 barcode scanned but product not in DB — still fill what we know
       toast.warning(

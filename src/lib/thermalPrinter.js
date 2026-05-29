@@ -38,11 +38,10 @@ function buildThermalProfile({ paperWidth = '80mm', printerMode = 'Raster', prin
   const windowPx = Math.round(contentMm * pxPerMm)
   const fontScale = paperMm === 58 ? 0.88 : 1
   // Barcode rendering hints tuned per paper size to improve scanner readability
-  // Increase module width and quiet zone for 80mm to improve scanner reliability
-  // Sensible defaults: slightly larger than SVG library defaults but not oversized
-  const barcodeModuleWidth = paperMm === 58 ? 1.4 : 1.8
-  const barcodeQuietZone = paperMm === 58 ? 6 : 8
-  const barcodeHeight = paperMm === 58 ? 48 : 64
+  // These defaults are larger and more reliable for thermal receipt output.
+  const barcodeModuleWidth = paperMm === 58 ? 2.0 : 2.4
+  const barcodeQuietZone = paperMm === 58 ? 8 : 10
+  const barcodeHeight = paperMm === 58 ? 70 : 80
   const edgePaddingMm = paperMm === 58 ? 4 : 6
 
   return {

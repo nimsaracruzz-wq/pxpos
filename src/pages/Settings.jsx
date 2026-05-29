@@ -4,7 +4,7 @@ import {
   Printer, Barcode, Save, CheckCircle, ChevronRight,
   ShoppingBag, Utensils, Shirt, Pill, Truck, Cloud, Database, Users, Upload, Sun, Moon,
   Banknote, History, CalendarDays, BadgeDollarSign, CircleDollarSign,
-  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw, Copy, Download
+  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw, Copy, Download, AlertTriangle
 } from 'lucide-react'
 import { useAppStore, useAuthStore } from '@/store'
 import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
@@ -122,7 +122,7 @@ function UserForm({ initial, onSave, onCancel, saving, currentUser }) {
 
   return (
     <div className="bg-green-50 border border-green-200 rounded-2xl p-5 mb-4 animate-fade-in">
-      <p className="font-bold text-green-800 mb-4 text-sm">{isEdit ? '✏️ Edit Staff Member' : '➕ Add New Staff Member'}</p>
+      <p className="font-bold text-green-800 mb-4 text-sm">{isEdit ? 'Edit Staff Member' : 'Add New Staff Member'}</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Full Name</label>
@@ -449,6 +449,12 @@ function CustomerDisplayTab() {
             checked={customerDisplaySettings?.enabled !== false}
             onChange={(v) => updateCustomerDisplaySettings({ enabled: v })}
             label="Use custom customer display content"
+          />
+
+          <Toggle
+            checked={customerDisplaySettings?.showOnPOS !== false}
+            onChange={(v) => updateCustomerDisplaySettings({ showOnPOS: v })}
+            label="Show customer overlay on POS screen"
           />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -983,7 +989,7 @@ export default function Settings() {
               <div className="flex flex-col gap-3">
                 <Toggle checked={hardwareSettings.barcodeScanner} onChange={(v) => updateHardwareSettings({ barcodeScanner: v })} label="Enable barcode scanner (keyboard input)" />
                 <p className="text-xs text-gray-500 bg-gray-50 p-3 rounded-xl">
-                  🔌 Connect a USB barcode scanner. It works as keyboard input — no driver needed. 
+                  Connect a USB barcode scanner. It works as keyboard input — no driver needed. 
                   Scan a barcode in the POS screen to test.
                 </p>
                 <div className="grid grid-cols-2 gap-3">
@@ -1120,7 +1126,7 @@ export default function Settings() {
                     placeholder="e.g. 80mm or 58mm"
                   />
                   <p className="text-xs text-gray-400 bg-gray-50 rounded-xl p-2.5">
-                    💡 <strong>80mm</strong> = FIT FP-1100, EPSON TM-T82, most modern thermal printers.<br/>
+                    <strong>80mm</strong> = FIT FP-1100, EPSON TM-T82, most modern thermal printers.<br/>
                     <strong>58mm</strong> = compact POS-58 style printers.<br/>
                     <strong>Raster</strong> is best for Windows thermal drivers; <strong>ESC/POS</strong> is kept for direct thermal mode compatibility.
                   </p>
@@ -1580,7 +1586,7 @@ export default function Settings() {
                 </div>
               ) : (
                 <div className="p-4 rounded-xl bg-amber-50 border border-amber-200">
-                  <p className="text-sm text-amber-700 font-medium">⚠ Running in Trial Mode</p>
+                  <p className="text-sm text-amber-700 font-medium flex items-center gap-1.5"><AlertTriangle size={16} /> Running in Trial Mode</p>
                   <p className="text-xs text-amber-600 mt-1">Enter your license key to unlock all features</p>
                 </div>
               )}

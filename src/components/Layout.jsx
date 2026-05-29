@@ -4,7 +4,7 @@ import {
   LayoutDashboard, ShoppingCart, Package, BarChart3, Settings,
   ChevronLeft, ChevronRight, Users, Warehouse, Zap,
   Truck, Utensils, BookOpen, Bell, X, ShoppingBag, Globe,
-  Cloud, RefreshCw, Activity, Sun, Moon, RotateCcw, Wrench
+  Cloud, RefreshCw, Activity, Sun, Moon, RotateCcw, Wrench, ClipboardList
 } from 'lucide-react'
 import { useAppStore, useProductStore, useAuthStore, useSalesStore, useTableStore, usePOSStore, useElectronicsStore } from '@/store'
 import { cn, generateReceiptNumber } from '@/lib/utils'
@@ -18,6 +18,7 @@ import { BRAND } from '@/lib/brand'
 const CORE_NAV = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav_dashboard', permission: null },
   { to: '/refunds', icon: RotateCcw, labelKey: 'Refunds', permission: 'sales' },
+  { to: '/sale-history', icon: ClipboardList, labelKey: 'Sale History', permission: 'sales' },
   { to: '/products', icon: Package, labelKey: 'nav_products', permission: 'manage_inventory' },
   { to: '/inventory', icon: Warehouse, labelKey: 'nav_inventory', permission: 'manage_inventory' },
   { to: '/customers', icon: Users, labelKey: 'nav_customers', permission: 'manage_inventory' },
@@ -283,7 +284,18 @@ export function Layout({ children }) {
           mergedMap.set(key, normalized)
         })
 
-        items.forEach((item) => {
+        // Filter incoming items to avoid mixing modules (e.g., grocery items into restaurant tables)
+        const productStoreState = useProductStore.getState()
+        const filteredIncomingItems = (items || []).filter((it) => {
+          const prod = productStoreState.products.find((p) => String(p.id) === String(it.id))
+          if (!prod) return false
+          // When POS is in restaurant mode, only accept restaurant-module products
+          if (activeModule === 'restaurant') return String(prod.module || 'grocery') === 'restaurant'
+          // Otherwise accept products that match the current active module
+          return String(prod.module || 'grocery') === String(activeModule || 'grocery')
+        })
+
+        filteredIncomingItems.forEach((item) => {
           const key = mergeKey(item)
           const current = mergedMap.get(key)
           if (current) {

@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react'
-import { Utensils, ChefHat, X, Banknote, CreditCard, Split, Receipt as ReceiptIcon, ShoppingBag, Clock, CheckCircle2, QrCode, Settings2, Plus, Minus, Pencil, Trash2 } from 'lucide-react'
+import { Utensils, ChefHat, X, Banknote, CreditCard, Split, Receipt as ReceiptIcon, ShoppingBag, Clock, CheckCircle2, QrCode, Settings2, Plus, Minus, Pencil, Trash2, UtensilsCrossed, Salad, CupSoda, Pizza, Cake, User, Loader2, AlertTriangle } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { useSalesStore, useAppStore, useProductStore, useTableStore, useActivityStore, useAuthStore, useRecipeStore } from '@/store'
 import { Badge, SectionHeader } from '@/components/ui'
@@ -22,6 +22,17 @@ const STATUS_CONFIG = {
 }
 
 
+
+// ─── Category icon helper ───────────────────────────────────────────────────
+const getCategoryIcon = (category, size = 20) => {
+  const cat = String(category || '').trim().toLowerCase()
+  if (cat === 'mains') return <UtensilsCrossed size={size} className="text-orange-600" />
+  if (cat === 'starters') return <Salad size={size} className="text-green-600" />
+  if (cat === 'drinks') return <CupSoda size={size} className="text-blue-500" />
+  if (cat === 'pizzas') return <Pizza size={size} className="text-red-500" />
+  if (cat === 'desserts') return <Cake size={size} className="text-pink-500" />
+  return <ChefHat size={size} className="text-amber-500" />
+}
 
 // ─── Settle Payment Modal ──────────────────────────────────────────────────────
 function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
@@ -302,7 +313,7 @@ function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
             </div>
             {cashNum >= total && cashNum > 0 && (
               <div className="mt-3 p-4 rounded-xl flex items-center justify-between" style={{ background: '#eff6ff' }}>
-                <span className="text-sm font-semibold text-blue-700">💵 Change to Return</span>
+                <span className="text-sm font-semibold text-blue-700">Change to Return</span>
                 <span className="text-2xl font-black text-blue-700">{formatCurrency(change)}</span>
               </div>
             )}
@@ -334,7 +345,7 @@ function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
             )}
             {qrState === 'generating' && (
               <div className="p-5 rounded-xl bg-amber-50 text-center border border-amber-100">
-                <div className="text-3xl mb-2 animate-spin inline-block">⏳</div>
+                <div className="text-3xl mb-2 inline-block"><Loader2 size={36} className="animate-spin text-blue-600" /></div>
                 <p className="text-sm font-semibold text-amber-700">Generating QR Code…</p>
               </div>
             )}
@@ -356,7 +367,7 @@ function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
             )}
             {qrState === 'error' && (
               <div className="p-5 rounded-xl bg-red-50 border border-red-200 text-center">
-                <p className="text-sm font-semibold text-red-700 mb-1">⚠ {qrError}</p>
+                <p className="text-sm font-semibold text-red-700 mb-1 flex items-center justify-center gap-1"><AlertTriangle size={14} /> {qrError}</p>
                 <button onClick={() => setQrState('idle')} className="text-xs text-red-500 hover:underline">Try again</button>
               </div>
             )}
@@ -370,11 +381,15 @@ function SettleModal({ table, order, onPaid, onClose, onCheckout }) {
             className="btn-primary w-full justify-center py-4 text-base"
             style={{ borderRadius: 14, opacity: (!canPay && method === 'cash') ? 0.5 : 1 }}
           >
-            {processing
-              ? '⏳ Processing…'
-              : method === 'helaqr'
-                ? `⚡ Generate QR — ${formatCurrency(total)}`
-                : `✓ Confirm & Settle — ${formatCurrency(total)}`}
+            {processing ? (
+                <span className="flex items-center gap-1.5 justify-center">
+                  <Loader2 size={14} className="animate-spin" /> Processing…
+                </span>
+              ) : method === 'helaqr' ? (
+                `Generate QR — ${formatCurrency(total)}`
+              ) : (
+                `Confirm — ${formatCurrency(total)}`
+              )}
           </button>
         )}
       </div>
@@ -413,7 +428,7 @@ function TableCard({ table, onClick }) {
           <p className="text-xs text-gray-500">{table.order?.items?.length || 0} items</p>
           <p className="text-xs text-gray-400 mt-0.5">Grand total</p>
           <p className="text-sm font-bold text-green-700">{formatCurrency(grandTotal)}</p>
-          {table.waiter && <p className="text-xs text-gray-400 mt-1">👤 {table.waiter}</p>}
+          {table.waiter && <p className="text-xs text-gray-400 mt-1 flex items-center gap-1"><User size={12} className="text-gray-400" /> {table.waiter}</p>}
         </div>
       ) : table.status === 'reserved' ? (
         <p className="text-xs text-gray-500">Tap to manage</p>
@@ -1101,8 +1116,8 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
                           Out
                         </span>
                       )}
-                      <div className="text-2xl mb-1">
-                        {item.category === 'Mains' ? '🍽️' : item.category === 'Starters' ? '🥗' : item.category === 'Drinks' ? '🥤' : item.category === 'Pizzas' ? '🍕' : item.category === 'Desserts' ? '🍰' : '🍲'}
+                      <div className="w-10 h-10 rounded-full bg-gray-50 dark:bg-zinc-800 flex items-center justify-center mb-1 mx-auto">
+                        {getCategoryIcon(item.category, 20)}
                       </div>
                       <p className="text-xs font-semibold text-gray-800 dark:text-zinc-100 leading-tight">{item.name}</p>
                       <p className="text-sm font-bold text-green-700 dark:text-green-400 mt-1">{formatCurrency(item.price)}</p>
@@ -1278,9 +1293,9 @@ function KOTBoard({ kots, updateKOTStatus }) {
   }
 
   const cols = [
-    { label: '⏳ Pending', items: pending, color: '#f59e0b', next: 'Start Cooking' },
-    { label: '🍳 Preparing', items: preparing, color: '#3b82f6', next: 'Mark Ready' },
-    { label: '✅ Ready', items: ready, color: '#16a34a', next: 'Delivered' },
+    { label: 'Pending', items: pending, color: '#f59e0b', next: 'Start Cooking' },
+    { label: 'Preparing', items: preparing, color: '#3b82f6', next: 'Mark Ready' },
+    { label: 'Ready', items: ready, color: '#16a34a', next: 'Delivered' },
   ]
 
   return (
@@ -1311,7 +1326,7 @@ function KOTBoard({ kots, updateKOTStatus }) {
                 {!!(kot.notes && String(kot.notes).trim()) && (
                   <p className="text-xs text-amber-600 mt-1 italic whitespace-pre-wrap">"{String(kot.notes).trim()}"</p>
                 )}
-                {kot.waiter && <p className="text-xs text-gray-400 mt-1">👤 {kot.waiter}</p>}
+                {kot.waiter && <p className="text-xs text-gray-400 mt-1 flex items-center gap-1"><User size={12} className="text-gray-400" /> {kot.waiter}</p>}
                 <button
                   onClick={() => advance(kot)}
                   className="btn-primary w-full justify-center mt-3 py-1.5 text-xs"

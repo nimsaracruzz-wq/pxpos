@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react'
-import { Plus, Edit2, Trash2, Package, Upload, Download, Barcode, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Plus, Edit2, Trash2, Package, Upload, Download, Barcode, ToggleLeft, ToggleRight, AlertTriangle } from 'lucide-react'
 import { useProductStore, useAppStore, useActivityStore, useAuthStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { Button, Badge, Modal, Input, Select, SectionHeader, SearchInput, EmptyState } from '@/components/ui'
@@ -102,7 +102,7 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
         />
         {margin !== null && (
           <div className="col-span-2 p-2 rounded-xl bg-green-50 text-sm text-green-700 font-semibold text-center">
-            💹 Profit Margin: {margin}%
+            Profit Margin: {margin}%
             {' '}(Rs. {(parseFloat(form.price) - parseFloat(form.cost)).toFixed(2)} per unit)
           </div>
         )}
@@ -201,7 +201,7 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
       </div>
       <div className="flex gap-3 pt-2">
         <button type="submit" className="btn-primary flex-1 justify-center">
-          {initial.id ? '💾 Save Changes' : '✓ Add Product'}
+          {initial.id ? 'Save Changes' : 'Add Product'}
         </button>
         <button type="button" className="btn-ghost" onClick={onCancel}>Cancel</button>
       </div>
@@ -277,7 +277,7 @@ function ImportModal({ open, onClose, categories, activeModule }) {
     <Modal open={open} onClose={onClose} title="Import Products from CSV" maxWidth="max-w-2xl">
       <div className="flex flex-col gap-4">
         <div className="p-4 rounded-xl bg-blue-50 border border-blue-100 text-sm text-blue-700">
-          <p className="font-semibold mb-1">📋 CSV Format Required:</p>
+          <p className="font-semibold mb-1">CSV Format Required:</p>
           <p className="font-mono text-xs">name, barcode, price, cost, category, stock, unit, expiry</p>
         </div>
         <div className="flex gap-3">
@@ -315,7 +315,7 @@ function ImportModal({ open, onClose, categories, activeModule }) {
             </div>
             <div className="flex gap-3 mt-4">
               <button onClick={handleImport} disabled={importing} className="btn-primary flex-1 justify-center">
-                ✓ Import {preview.length} Products
+                Import {preview.length} Products
               </button>
               <button onClick={() => setPreview([])} className="btn-ghost">Reset</button>
             </div>
@@ -560,7 +560,9 @@ export default function Products() {
                     <tr key={p.id}>
                       <td>
                         <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-sm shrink-0">📦</div>
+                          <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-sm shrink-0">
+                            <Package size={16} className="text-green-600" />
+                          </div>
                           <div>
                             <p className="font-semibold text-gray-800 text-sm">{p.name}</p>
                             <p className="text-xs text-gray-400">{p.unit}</p>
@@ -586,7 +588,7 @@ export default function Products() {
                       </td>
                       <td>
                         <Badge variant={stockVariant}>
-                          {p.stock === 0 ? '⛔ Out' : p.stock <= 5 ? `⚡ ${p.stock}` : p.stock}
+                          {p.stock === 0 ? 'Out of Stock' : p.stock <= 5 ? `Low Stock (${p.stock})` : p.stock}
                         </Badge>
                       </td>
                       <td>
@@ -595,8 +597,8 @@ export default function Products() {
                             {p.warrantyMonths ? `${p.warrantyMonths} months` : 'No Warranty'}
                           </span>
                         ) : p.expiry ? (
-                          <span className={cn('text-xs', isExpired ? 'text-red-500 font-bold' : 'text-gray-500')}>
-                            {isExpired ? '⚠ ' : ''}{p.expiry}
+                          <span className={cn('text-xs flex items-center gap-1', isExpired ? 'text-red-500 font-bold' : 'text-gray-500')}>
+                            {isExpired && <AlertTriangle size={12} className="shrink-0 text-red-500" />}{p.expiry}
                           </span>
                         ) : <span className="text-gray-300">—</span>}
                       </td>

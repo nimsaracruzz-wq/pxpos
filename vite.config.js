@@ -18,13 +18,14 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, './src'),
       },
     },
-    base: './',
+    base: '/',
     build: {
       outDir: 'dist',
       assetsDir: 'assets',
     },
     define: {
       'process.env.VITE_PUBLIC_MENU_BASE_URL': JSON.stringify(env.VITE_PUBLIC_MENU_BASE_URL || 'http://localhost:5173'),
+      'process.env.VITE_DEMO_MODE': JSON.stringify(env.VITE_DEMO_MODE || ''),
     },
     server: {
       port: 5173,

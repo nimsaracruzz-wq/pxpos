@@ -21,6 +21,7 @@ import Batches from '@/pages/Batches'
 import Prescriptions from '@/pages/Prescriptions'
 import WebOrders from '@/pages/WebOrders'
 import Refunds from '@/pages/Refunds'
+import SaleHistory from '@/pages/SaleHistory'
 import PublicMenu from '@/pages/PublicMenu'
 import CustomerScreen from '@/pages/CustomerScreen'
 import AdminPortal from '@/pages/AdminPortal'
@@ -31,12 +32,15 @@ import { useAuthStore, useAppStore } from '@/store'
 import { checkCurrentLicenseAccess } from '@/lib/license'
 import { syncWithCloud } from '@/lib/firebase'
 
+// Demo mode: set VITE_DEMO_MODE=true in .env.production to bypass license/login for demo site
+const IS_DEMO = import.meta.env.VITE_DEMO_MODE === 'true' || process.env.VITE_DEMO_MODE === 'true'
+
 export default function App() {
   const { currentUser, logout }              = useAuthStore()
   const { licenseActive, licenseKey, theme } = useAppStore()
-  const [checking, setChecking]              = useState(() => !useAppStore.getState()?.licenseActive)
+  const [checking, setChecking]              = useState(() => IS_DEMO ? false : !useAppStore.getState()?.licenseActive)
   const [initialCloudHydration, setInitialCloudHydration] = useState(false)
-  const [storeHydrated, setStoreHydrated] = useState(() => useAppStore.persist?.hasHydrated?.() ?? true)
+  const [storeHydrated, setStoreHydrated] = useState(() => IS_DEMO ? true : (useAppStore.persist?.hasHydrated?.() ?? true))
   const hydratedLicenseRef = useRef('')
 
   const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
@@ -112,9 +116,40 @@ export default function App() {
     }
   }, [])
 
+  // Demo mode: auto-activate license + auto-login as demo admin
+  useEffect(() => {
+    if (!IS_DEMO) return
+
+    // Auto-activate license
+    useAppStore.setState((s) => ({
+      licenseActive: true,
+      licenseKey: 'DEMO-MODE',
+      modules: { grocery: true, restaurant: true, clothing: true, pharmacy: true, wholesale: true, online: true },
+      businessInfo: {
+        ...s.businessInfo,
+        name: s.businessInfo?.name || 'CeyPos Demo Store',
+      },
+    }))
+
+    // Auto-login as demo owner — bypass IPC entirely via setState
+    if (!useAuthStore.getState().currentUser) {
+      useAuthStore.setState({
+        currentUser: {
+          id: 'demo-owner',
+          username: 'Demo Admin',
+          fullName: 'Demo Owner',
+          role: 'owner',
+          active: true,
+        },
+      })
+    }
+
+    setChecking(false)
+  }, [])
+
   // Re-validate stored license on every app startup
   useEffect(() => {
-    if (!storeHydrated) return
+    if (!storeHydrated || IS_DEMO) return
     let cancelled = false
 
     async function check() {
@@ -261,8 +296,8 @@ export default function App() {
     )
   }
 
-  // Step 1 — License gate (must activate before anything else)
-  if (!licenseActive) {
+  // Step 1 — License gate (must activate before anything else) — skipped in demo mode
+  if (!licenseActive && !IS_DEMO) {
     return (
       <>
         <Activation />
@@ -271,8 +306,8 @@ export default function App() {
     )
   }
 
-  // Step 2 — Login gate
-  if (!currentUser) {
+  // Step 2 — Login gate — skipped in demo mode
+  if (!currentUser && !IS_DEMO) {
     return (
       <>
         <Login />
@@ -285,6 +320,22 @@ export default function App() {
   return (
     <Router>
       <Layout>
+        {IS_DEMO && (
+          <div style={{
+            background: 'linear-gradient(90deg, #7c3aed, #2563eb)',
+            color: '#fff',
+            textAlign: 'center',
+            padding: '8px 16px',
+            fontSize: '13px',
+            fontWeight: 600,
+            letterSpacing: '0.02em',
+            zIndex: 9999,
+            position: 'sticky',
+            top: 0,
+          }}>
+            🚀 This is a live demo of CeyPos — data resets periodically. Contact us to get your license!
+          </div>
+        )}
         <Routes>
           <Route path="/" element={<Dashboard />} />
 
@@ -309,6 +360,7 @@ export default function App() {
           {/* Reports — manager and above */}
           <Route path="/reports" element={<AccessGuard permission="view_reports"><Reports /></AccessGuard>} />
           <Route path="/refunds" element={<AccessGuard permission="sales"><Refunds /></AccessGuard>} />
+          <Route path="/sale-history" element={<AccessGuard permission="sales"><SaleHistory /></AccessGuard>} />
           <Route path="/logs" element={<AccessGuard permission="view_logs"><Logs /></AccessGuard>} />
 
           {/* Settings — owner and above */}

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { ShoppingBag, Banknote, CreditCard, Split, X, Clock, CheckCircle2 } from 'lucide-react'
+import { ShoppingBag, Banknote, CreditCard, Split, X, Clock, CheckCircle2, UtensilsCrossed, Salad, CupSoda, Pizza, Cake, ChefHat, User, Loader2 } from 'lucide-react'
 import { useSalesStore, useAppStore, useProductStore, useTableStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { cn, formatCurrency, generateReceiptNumber } from '@/lib/utils'
@@ -8,6 +8,17 @@ import CustomerDisplay from '@/components/CustomerDisplay'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 
 // Removed hardcoded MENU_ITEMS - Now pulling dynamically from useProductStore
+
+// ─── Category icon helper ───────────────────────────────────────────────────
+const getCategoryIcon = (category, size = 20) => {
+  const cat = String(category || '').trim().toLowerCase()
+  if (cat === 'mains') return <UtensilsCrossed size={size} className="text-orange-600" />
+  if (cat === 'starters') return <Salad size={size} className="text-green-600" />
+  if (cat === 'drinks') return <CupSoda size={size} className="text-blue-500" />
+  if (cat === 'pizzas') return <Pizza size={size} className="text-red-500" />
+  if (cat === 'desserts') return <Cake size={size} className="text-pink-500" />
+  return <ChefHat size={size} className="text-amber-500" />
+}
 
 
 // ─── Payment Modal ─────────────────────────────────────────────────────────────
@@ -53,7 +64,7 @@ function PayModal({ items, notes, customerName, customerPhone, taxSettings, onCl
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-xl font-bold text-gray-900">Payment — Take Out</h2>
-            {customerName && <p className="text-sm text-gray-500">👤 {customerName}{customerPhone ? ` · ${customerPhone}` : ''}</p>}
+            {customerName && <p className="text-sm text-gray-500 flex items-center gap-1"><User size={14} className="text-gray-400 shrink-0" /> {customerName}{customerPhone ? ` · ${customerPhone}` : ''}</p>}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
@@ -107,7 +118,7 @@ function PayModal({ items, notes, customerName, customerPhone, taxSettings, onCl
             </div>
             {cashNum >= total && cashNum > 0 && (
               <div className="mt-3 p-4 rounded-xl flex items-center justify-between" style={{ background: '#eff6ff' }}>
-                <span className="text-sm font-semibold text-blue-700">💵 Change to Return</span>
+                <span className="text-sm font-semibold text-blue-700">Change to Return</span>
                 <span className="text-2xl font-black text-blue-700">{formatCurrency(change)}</span>
               </div>
             )}
@@ -129,7 +140,11 @@ function PayModal({ items, notes, customerName, customerPhone, taxSettings, onCl
         <button onClick={confirm} disabled={!canPay || processing}
           className="w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold text-white text-base"
           style={{ background: canPay ? 'linear-gradient(135deg,#ea580c,#f97316)' : '#e5e7eb', color: canPay ? 'white' : '#9ca3af', borderRadius: 14 }}>
-          {processing ? '⏳ Processing…' : `✓ Confirm — ${formatCurrency(total)}`}
+          {processing ? (
+            <span className="flex items-center gap-2 justify-center">
+              <Loader2 size={16} className="animate-spin" /> Processing…
+            </span>
+          ) : `Confirm — ${formatCurrency(total)}`}
         </button>
       </div>
     </div>
@@ -295,8 +310,8 @@ export default function TakeOut() {
                   <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full text-white text-xs font-bold flex items-center justify-center"
                     style={{ background: '#ea580c' }}>{inOrder.qty}</span>
                 )}
-                <div className="text-2xl mb-1">
-                  {item.category === 'Mains' ? '🍽️' : item.category === 'Starters' ? '🥗' : item.category === 'Drinks' ? '🥤' : item.category === 'Pizzas' ? '🍕' : item.category === 'Desserts' ? '🍰' : '🍲'}
+                <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center mb-1 mx-auto">
+                  {getCategoryIcon(item.category, 20)}
                 </div>
                 <p className="text-xs font-semibold text-gray-800 leading-tight">{item.name}</p>
                 <p className="text-sm font-bold mt-1" style={{ color: '#ea580c' }}>{formatCurrency(item.price)}</p>
@@ -310,7 +325,7 @@ export default function TakeOut() {
       <div className="flex flex-col shrink-0" style={{ width: 320, background: 'white', borderLeft: '1px solid #f0f0f0' }}>
         {/* Customer info */}
         <div className="p-4 shrink-0" style={{ borderBottom: '1px solid #f0f0f0', background: '#fff7ed' }}>
-          <p className="text-xs font-bold text-orange-700 uppercase tracking-wide mb-2">🛍️ Take Out Customer</p>
+          <p className="text-xs font-bold text-orange-700 uppercase tracking-wide mb-2">Take Out Customer</p>
           <div className="flex flex-col gap-2">
             <input value={customerName} onChange={(e) => setCustomerName(e.target.value)}
               placeholder="Name (optional)" className="input-base text-sm" />
@@ -330,8 +345,8 @@ export default function TakeOut() {
             <div className="flex flex-col gap-2">
               {items.map((item) => (
                 <div key={item.id} className="flex items-center gap-2 p-2.5 rounded-xl border border-gray-100 hover:border-orange-200 transition-colors group">
-                  <span className="text-lg">
-                    {item.category === 'Mains' ? '🍽️' : item.category === 'Starters' ? '🥗' : item.category === 'Drinks' ? '🥤' : item.category === 'Pizzas' ? '🍕' : item.category === 'Desserts' ? '🍰' : '🍲'}
+                  <span className="shrink-0 flex items-center">
+                    {getCategoryIcon(item.category, 16)}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-gray-700 truncate">{item.name}</p>

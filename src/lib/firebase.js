@@ -704,6 +704,24 @@ export function subscribeToTableQrSession(storeId, tableNumber, onSession) {
   }
 }
 
+export async function getTableQrSession(storeId, tableNumber) {
+  try {
+    const key = String(storeId || '').trim()
+    const tableKey = String(tableNumber || '').trim()
+    if (!key || !tableKey) return null
+
+    const rdb = ensureRealtimeDb()
+    if (!rdb) return null
+
+    const snap = await getDoc(doc(rdb, 'stores', key, 'table_sessions', tableKey))
+    if (!snap.exists()) return null
+    return { id: snap.id, ...snap.data() }
+  } catch (error) {
+    console.error('[Firebase] getTableQrSession failed:', error)
+    return null
+  }
+}
+
 export function subscribeToStoreSettings(storeId, onSettings) {
   try {
     const key = String(storeId || '').trim()

@@ -3,7 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Plus, Minus, Trash2, ShoppingBag, CreditCard, Banknote,
   Split, Tag, Receipt, X, Keyboard, RotateCcw, Pause,
-  Play, Barcode, Percent, User, Printer, Search, CheckCircle2, Zap, ShieldCheck
+  Play, Barcode, Percent, User, Printer, Search, CheckCircle2, Zap, ShieldCheck,
+  Wheat, Droplets, ShoppingBasket, Milk, Coffee, Sparkles, Pill, ChefHat,
+  Loader2, AlertCircle, AlertTriangle, Package
 } from 'lucide-react'
 import { usePOSStore, useProductStore, useAppStore, useSalesStore, useAuthStore, useActivityStore, useRecipeStore, useElectronicsStore } from '@/store'
 import { useToast } from '@/components/Toast'
@@ -23,10 +25,20 @@ import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisp
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
 const EMPTY_SERIALS = []
 
-// ─── Category emoji map ──────────────────────────────────────────────────────
-const CAT_EMOJI = {
-  Grains: '🌾', Oils: '🫙', Groceries: '🧺', Dairy: '🥛',
-  Beverages: '☕', 'Personal Care': '🧴', Pharmacy: '💊', Condiments: '🧂',
+// ─── Category icon map ───────────────────────────────────────────────────────
+const CAT_ICONS = {
+  Grains: Wheat,
+  Oils: Droplets,
+  Groceries: ShoppingBasket,
+  Dairy: Milk,
+  Beverages: Coffee,
+  'Personal Care': Sparkles,
+  Pharmacy: Pill,
+  Condiments: ChefHat,
+}
+const CatIcon = ({ cat, size = 14, className }) => {
+  const Icon = CAT_ICONS[cat] || Package
+  return <Icon size={size} className={className} />
 }
 
 const playTone = (type = 'tick') => {
@@ -279,7 +291,7 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
           </div>
           {cashNum >= total && cashNum > 0 && (
             <div className="mt-4 p-4 rounded-2xl flex items-center justify-between animate-pop-in" style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
-              <div className="flex items-center gap-2"><span className="text-xl">💵</span><span className="text-sm font-semibold text-blue-700">Change to Return</span></div>
+              <div className="flex items-center gap-2"><Banknote size={16} className="text-blue-600" /><span className="text-sm font-semibold text-blue-700">Change to Return</span></div>
               <span className="text-2xl font-black text-blue-700">{formatCurrency(change)}</span>
             </div>
           )}
@@ -314,7 +326,7 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
           )}
           {qrState === 'generating' && (
             <div className="p-6 rounded-2xl bg-amber-50 text-center border border-amber-100">
-              <div className="text-3xl mb-2 animate-spin inline-block">⏳</div>
+              <div className="flex justify-center mb-2"><Loader2 size={32} className="animate-spin text-amber-500" /></div>
               <p className="text-sm font-semibold text-amber-700">Generating QR Code…</p>
             </div>
           )}
@@ -335,7 +347,7 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
           )}
           {qrState === 'error' && (
             <div className="p-5 rounded-2xl bg-red-50 border border-red-200 text-center">
-              <p className="text-sm font-semibold text-red-700 mb-1">⚠ {qrError}</p>
+              <div className="flex items-center gap-2 justify-center text-red-700 mb-1"><AlertCircle size={15}/><p className="text-sm font-semibold">{qrError}</p></div>
               <button onClick={() => setQrState('idle')} className="text-xs text-red-500 hover:underline">Try again</button>
             </div>
           )}
@@ -354,7 +366,7 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
           }}
         >
           {processing
-            ? <><span className="animate-spin inline-block mr-2">⏳</span> Processing...</>
+            ? <><Loader2 size={18} className="animate-spin" /> Processing...</>
             : method === 'helaqr'
               ? <><Zap size={20} /> Generate QR Code</>
               : <><CheckCircle2 size={20} /> Confirm {method === 'cash' ? 'Cash' : method === 'card' ? 'Card' : 'Split'} Payment</>
@@ -440,7 +452,7 @@ export default function POS() {
     const sub = s.cart.reduce((sum, i) => sum + (i.salePrice ?? i.price) * i.qty, 0)
     return s.discountType === 'percent' ? (sub * s.discount) / 100 : Math.min(s.discount, sub)
   })
-  const taxAmt     = taxInclusive ? 0 : ((subtotal - discountAmt) * taxRate) / 100
+  const taxAmt     = (taxEnabled && !taxInclusive) ? ((subtotal - discountAmt) * taxRate) / 100 : 0
   const total      = subtotal - discountAmt + taxAmt
 
   const closeCustomerScreen = useCallback(() => {
@@ -449,7 +461,12 @@ export default function POS() {
   }, [])
 
   const openCustomerScreen = useCallback((payload) => {
-    setCustomerDisplay(payload)
+    // Respect the customer display settings: when `showOnPOS` is false,
+    // we publish to the external customer-screen but do not show the
+    // overlay on the main POS window.
+    const displaySettings = useAppStore.getState().customerDisplaySettings || {}
+    const showOnPOS = displaySettings.showOnPOS !== false
+    if (showOnPOS) setCustomerDisplay(payload)
     publishCustomerDisplay(payload)
   }, [])
 
@@ -694,15 +711,20 @@ export default function POS() {
         : `Thank you! ${String(method || '').toUpperCase()} payment confirmed.`,
     }
     // Only publish to customer-facing screen — don't block POS owner view
-    publishCustomerDisplay(customerPayload)
-    // Auto-clear customer display overlay from POS screen after 3 seconds
+    // Publish to the external customer screen and respect POS visibility
+    // settings by routing through `openCustomerScreen` which will only set
+    // the POS overlay when `showOnPOS` is enabled.
+    openCustomerScreen(customerPayload)
     setTimeout(() => {
-      setCustomerDisplay(null)
+      // Always clear the external display; POS overlay cleared inside openCustomerScreen
       clearCustomerDisplay()
+      const displaySettings = useAppStore.getState().customerDisplaySettings || {}
+      const showOnPOS = displaySettings.showOnPOS !== false
+      if (showOnPOS) setCustomerDisplay(null)
     }, 3000)
 
     playTone('success')
-    toast.success(isHelaQR ? `✅ HelaQR Paid: Rs. ${total.toFixed(2)}` : `✅ Sale complete! Rs. ${total.toFixed(2)} — Printing...`, { duration: 3000 })
+    toast.success(isHelaQR ? `HelaQR Paid: Rs. ${total.toFixed(2)}` : `Sale complete! Rs. ${total.toFixed(2)} — Printing...`, { duration: 3000 })
   }
 
   // ── Auto-print useEffect: fires whenever autoPrintPending is set true ──────────
@@ -710,29 +732,44 @@ export default function POS() {
     if (!autoPrintPending || !lastSale) return
     setAutoPrintPending(false)
 
-    // Wait one animation frame so the hidden receipt div has rendered
+    // Wait one animation frame so the hidden receipt div has rendered,
+    // then perform printing. For card payments we print Customer + Shop
+    // copies sequentially with a small delay to avoid driver race/load errors.
     requestAnimationFrame(() => {
-      const el = hiddenReceiptRef.current
-      if (!el) return
-      const content = el.innerHTML
-      const method = String(lastSale.paymentMethod || '').toLowerCase()
-      const deviceName  = String(hardwareSettings?.printerPort || '').trim()
-      const paperWidth  = String(hardwareSettings?.paperWidth  || '80mm').trim()
-      const profile     = buildThermalProfile({
-        paperWidth,
-        printerMode: hardwareSettings?.printerType || 'Raster',
-        printerProfile: hardwareSettings?.printerProfile || '',
-      })
-      const printOpts   = { deviceName, paperWidth: profile.paperWidth, printerMode: profile.printerMode, printerProfile: profile.printerProfile }
-      const copyHeader = (label) =>
-        `<div style="text-align:center;border:1px dashed #000;padding:4px 6px;margin:0 0 8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">${label}</div>`
+      ;(async () => {
+        const el = hiddenReceiptRef.current
+        if (!el) return
+        const content = el.innerHTML
+        const method = String(lastSale.paymentMethod || '').toLowerCase()
+        const deviceName  = String(hardwareSettings?.printerPort || '').trim()
+        const paperWidth  = String(hardwareSettings?.paperWidth  || '80mm').trim()
+        const profile     = buildThermalProfile({
+          paperWidth,
+          printerMode: hardwareSettings?.printerType || 'Raster',
+          printerProfile: hardwareSettings?.printerProfile || '',
+        })
+        const printOpts   = { deviceName, paperWidth: profile.paperWidth, printerMode: profile.printerMode, printerProfile: profile.printerProfile }
+        const copyHeader = (label) =>
+          `<div style="text-align:center;border:1px dashed #000;padding:4px 6px;margin:0 0 8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">${label}</div>`
 
-      if (method === 'card') {
-        printReceiptHTML('Receipt - Customer Copy', `${copyHeader('Customer Copy')}${content}`, printOpts)
-        printReceiptHTML('Receipt - Shop Copy', `${copyHeader('Shop Copy')}${content}`, printOpts)
-      } else {
-        printReceiptHTML('Sale Receipt', content, printOpts)
-      }
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+        if (method === 'card') {
+          try {
+            await printReceiptHTML('Receipt - Customer Copy', `${copyHeader('Customer Copy')}${content}`, printOpts)
+            await sleep(250)
+            await printReceiptHTML('Receipt - Shop Copy', `${copyHeader('Shop Copy')}${content}`, printOpts)
+          } catch (e) {
+            console.error('[POS] Failed to print copies for card payment', e)
+          }
+        } else {
+          try {
+            await printReceiptHTML('Sale Receipt', content, printOpts)
+          } catch (e) {
+            console.error('[POS] Failed to print receipt', e)
+          }
+        }
+      })()
     })
   }, [autoPrintPending, lastSale])
 
@@ -822,7 +859,7 @@ export default function POS() {
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800'
               )}
             >
-              {cat !== 'All' && <span>{CAT_EMOJI[cat] || '📦'}</span>}
+              {cat !== 'All' && <CatIcon cat={cat} size={12} />}
               {cat}
             </button>
           ))}
@@ -885,10 +922,10 @@ export default function POS() {
                       </div>
                     )}
                     <div
-                      className="w-full h-14 rounded-xl flex items-center justify-center text-2xl mb-0.5 shrink-0"
+                      className="w-full h-14 rounded-xl flex items-center justify-center mb-0.5 shrink-0"
                       style={{ background: isExpired ? '#fff1f2' : cartQty > 0 ? 'linear-gradient(135deg,#dcfce7,#f0fdf4)' : '#f8fafb', border: isExpired ? '1px solid #fecaca' : cartQty > 0 ? '1px solid #bbf7d0' : '1px solid transparent' }}
                     >
-                      {CAT_EMOJI[p.category] || '📦'}
+                      <CatIcon cat={p.category} size={24} className={cn(isExpired ? 'text-red-500' : cartQty > 0 ? 'text-green-600' : 'text-gray-400')} />
                     </div>
                     <p className="text-xs font-semibold text-gray-800 leading-tight truncate-2">{p.name}</p>
                     <div className="flex items-center justify-between mt-auto pt-0.5">
@@ -899,7 +936,7 @@ export default function POS() {
                           isExpired ? 'text-red-500' : p.stock === 0 ? 'text-red-500' : p.stock <= 5 ? 'text-orange-500' : 'text-gray-400'
                         )}
                       >
-                        {isExpired ? '⛔ Exp' : p.stock === 0 ? '⛔ Out' : p.stock <= 5 ? `⚡${p.stock}` : `${p.stock}`}
+                        {isExpired ? 'Exp' : p.stock === 0 ? 'Out' : p.stock <= 5 ? `Low:${p.stock}` : `${p.stock}`}
                       </span>
                     </div>
                   </button>
@@ -1004,10 +1041,10 @@ export default function POS() {
                     onClick={() => setSelectedCartItem(selectedCartItem === (item.cartItemId || item.id) ? null : (item.cartItemId || item.id))}
                   >
                     <div
-                      className="w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0"
+                      className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
                       style={{ background: selectedCartItem === (item.cartItemId || item.id) ? '#dcfce7' : '#f8fafb' }}
                     >
-                      {CAT_EMOJI[item.category] || '📦'}
+                      <CatIcon cat={item.category} size={18} className={selectedCartItem === (item.cartItemId || item.id) ? 'text-green-600' : 'text-gray-500'} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>

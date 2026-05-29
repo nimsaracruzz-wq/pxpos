@@ -78,7 +78,6 @@ export default function Customers() {
   }
 
   const typeVariant = { retail: 'blue', wholesale: 'yellow', vip: 'green' }
-  const typeEmoji = { retail: '🛒', wholesale: '🏭', vip: '⭐' }
 
   return (
     <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }}>
@@ -113,9 +112,9 @@ export default function Customers() {
         <div className="flex gap-2">
           {[
             { id: 'all', label: 'All' },
-            { id: 'retail', label: '🛒 Retail' },
-            { id: 'wholesale', label: '🏭 Wholesale' },
-            { id: 'vip', label: '⭐ VIP' },
+            { id: 'retail', label: 'Retail' },
+            { id: 'wholesale', label: 'Wholesale' },
+            { id: 'vip', label: 'VIP' },
           ].map(({ id, label }) => (
             <button
               key={id}
@@ -173,7 +172,7 @@ export default function Customers() {
                   </td>
                   <td>
                     <Badge variant={typeVariant[c.type] || 'gray'}>
-                      {typeEmoji[c.type]} {c.type}
+                      {c.type.toUpperCase()}
                     </Badge>
                   </td>
                   <td><span className="font-bold text-green-700">{formatCurrency(c.totalPurchases)}</span></td>

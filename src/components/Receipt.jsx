@@ -17,7 +17,22 @@ function barcodeBarWidth(paperWidth = '80mm') {
     printerMode: hardwareSettings?.printerType || 'Raster',
     printerProfile: hardwareSettings?.printerProfile || '',
   })
-  return profile.barcodeModuleWidth || (profile.is58 ? 1.1 : 1.55)
+  return Number(hardwareSettings?.barcodeModuleWidth) || profile.barcodeModuleWidth || (profile.is58 ? 1.1 : 1.55)
+}
+
+function getBarcodeFormat(value, preferred) {
+  const raw = String(value || '').trim()
+  const preferredFormat = String(preferred || 'CODE128').toUpperCase()
+
+  if (preferredFormat === 'EAN13' && /^[0-9]{12,13}$/.test(raw)) {
+    return 'EAN13'
+  }
+
+  if (preferredFormat === 'CODE39' && /^[0-9A-Z\-\. \$\/\+\%]+$/.test(raw)) {
+    return 'CODE39'
+  }
+
+  return 'CODE128'
 }
 
 // ─── Copy header block (2-copy receipts for card payments) ───────────────────
@@ -107,10 +122,10 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
           <div style={{ display: 'inline-block', maxWidth: '100%', boxSizing: 'border-box' }}>
             <Barcode
               value={String(receiptNo)}
-              format={(receiptSettings?.barcodeType) || (hardwareSettings?.barcodeType) || 'CODE128'}
-              width={Number(hardwareSettings?.barcodeModuleWidth || profile.barcodeModuleWidth)}
-              height={Number(hardwareSettings?.barcodeHeight || profile.barcodeHeight)}
-              margin={Number(hardwareSettings?.barcodeQuietZone || profile.barcodeQuietZone)}
+              format={getBarcodeFormat(receiptNo, receiptSettings?.barcodeType || hardwareSettings?.barcodeType || 'CODE128')}
+              width={Number(hardwareSettings?.barcodeModuleWidth) || profile.barcodeModuleWidth}
+              height={Number(hardwareSettings?.barcodeHeight) || profile.barcodeHeight}
+              margin={Number(hardwareSettings?.barcodeQuietZone) || profile.barcodeQuietZone}
               fontSize={0}
               displayValue={false}
               background="#fff"

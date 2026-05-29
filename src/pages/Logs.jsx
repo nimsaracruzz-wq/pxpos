@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Activity } from 'lucide-react'
 import { useActivityStore } from '@/store'
 import { Badge, Modal, SectionHeader } from '@/components/ui'
@@ -7,6 +7,20 @@ import { format } from 'date-fns'
 export default function Logs() {
   const { logs } = useActivityStore()
   const [selectedLog, setSelectedLog] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = 25
+  const pageCount = Math.max(1, Math.ceil(logs.length / pageSize))
+
+  useEffect(() => {
+    if (currentPage > pageCount) {
+      setCurrentPage(pageCount)
+    }
+  }, [currentPage, pageCount])
+
+  const displayedLogs = useMemo(
+    () => logs.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [logs, currentPage]
+  )
 
   const formatTimestamp = (value) => {
     const d = new Date(value)
@@ -45,7 +59,7 @@ export default function Logs() {
               {logs.length === 0 ? (
                 <tr><td colSpan="4" className="text-center py-8 text-gray-400 font-medium">No system activities logged yet.</td></tr>
               ) : (
-                logs.map((log) => (
+                displayedLogs.map((log) => (
                   <tr
                     key={log.id}
                     className="cursor-pointer hover:bg-gray-50 transition-colors"
@@ -63,6 +77,48 @@ export default function Logs() {
             </tbody>
           </table>
         </div>
+
+        {logs.length > 0 && (
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs text-gray-500">
+              Showing {displayedLogs.length} of {logs.length} entries · Page {currentPage} of {pageCount}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(1)}
+                className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                First
+              </button>
+              <button
+                type="button"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                disabled={currentPage === pageCount}
+                onClick={() => setCurrentPage((prev) => Math.min(pageCount, prev + 1))}
+                className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+              <button
+                type="button"
+                disabled={currentPage === pageCount}
+                onClick={() => setCurrentPage(pageCount)}
+                className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Last
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <Modal

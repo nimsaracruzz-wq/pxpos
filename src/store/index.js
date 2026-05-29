@@ -1074,7 +1074,7 @@ export const useSalesStore = create(
         const normalized = String(receiptNo).trim().toUpperCase()
         return get().sales.find((s) => String(s.receiptNo || '').trim().toUpperCase() === normalized) || null
       },
-      refundSaleByReceiptNo: ({ receiptNo, reason = 'Customer return', cashier = 'System' }) => {
+      refundSaleByReceiptNo: ({ receiptNo, reason = 'Customer return', cashier = 'System', items }) => {
         const originalSale = get().findSaleByReceiptNo(receiptNo)
         if (!originalSale) {
           return { success: false, error: 'Receipt not found' }
@@ -1094,22 +1094,40 @@ export const useSalesStore = create(
           return { success: false, error: 'Refund record already exists for this receipt.' }
         }
 
-        const cartItems = originalSale.cartItems || []
-        const total = Number(originalSale.total || 0)
-        const subtotal = Number(originalSale.subtotal || total)
-        const tax = Number(originalSale.tax || 0)
-        const discount = Number(originalSale.discount || 0)
-        const serviceCharge = Number(originalSale.serviceCharge || 0)
+        const itemsToRefund = items || originalSale.cartItems || []
+        if (itemsToRefund.length === 0) {
+          return { success: false, error: 'No items to refund.' }
+        }
+
+        // Calculate refund math based on itemsToRefund
+        const refundSubtotal = itemsToRefund.reduce((sum, item) => {
+          const qty = Number(item.qty || item.quantity || 0)
+          const unit = Number(item.salePrice || item.price || 0)
+          return sum + qty * unit
+        }, 0)
+
+        const originalSubtotal = (originalSale.cartItems || []).reduce((sum, item) => {
+          const qty = Number(item.qty || item.quantity || 0)
+          const unit = Number(item.salePrice || item.price || 0)
+          return sum + qty * unit
+        }, 0)
+
+        const ratio = originalSubtotal > 0 ? refundSubtotal / originalSubtotal : 0
+
+        const discount = Number(originalSale.discount || 0) * ratio
+        const tax = Number(originalSale.tax || 0) * ratio
+        const serviceCharge = Number(originalSale.serviceCharge || 0) * ratio
+        const total = refundSubtotal - discount + tax + serviceCharge
 
         const adjustStock = useProductStore.getState().adjustStock
-        cartItems.forEach((item) => {
+        itemsToRefund.forEach((item) => {
           adjustStock(item.id, Number(item.qty || 0))
         })
 
         // For restaurant/takeout, return ingredient stock as well when recipes are configured.
         if (originalSale.source === 'restaurant' || originalSale.source === 'takeout') {
           const recipes = useRecipeStore.getState().recipes || {}
-          cartItems.forEach((item) => {
+          itemsToRefund.forEach((item) => {
             const recipe = recipes[item.id] || []
             recipe.forEach((ingredient) => {
               const qtyBack = Number(ingredient.qty || 0) * Number(item.qty || 0)
@@ -1118,13 +1136,35 @@ export const useSalesStore = create(
           })
         }
 
+        // Restoring serials/IMEIs back to 'in_stock'
+        itemsToRefund.forEach((item) => {
+          if (item.serialId) {
+            try {
+              useElectronicsStore.getState().updateSerial(item.serialId, {
+                status: 'in_stock',
+                soldAt: null,
+                saleId: null,
+                customerId: null
+              })
+            } catch (err) {
+              console.error('Failed to update serial status on refund:', err)
+            }
+          }
+        })
+
+        const isFullRefund = itemsToRefund.length === (originalSale.cartItems || []).length &&
+          itemsToRefund.every((item) => {
+            const originalItem = (originalSale.cartItems || []).find((oi) => oi.id === item.id)
+            return originalItem && Number(item.qty || 0) === Number(originalItem.qty || originalItem.quantity || 0)
+          })
+
         const refundSale = {
           receiptNo: refundReceiptNo,
           date: new Date(),
-          cartItems,
-          items_detail: cartItems,
-          items: originalSale.items || cartItems.reduce((sum, i) => sum + Number(i.qty || 0), 0),
-          subtotal: -Math.abs(subtotal),
+          cartItems: itemsToRefund,
+          items_detail: itemsToRefund,
+          items: itemsToRefund.reduce((sum, i) => sum + Number(i.qty || 0), 0),
+          subtotal: -Math.abs(refundSubtotal),
           discount: -Math.abs(discount),
           tax: -Math.abs(tax),
           serviceCharge: -Math.abs(serviceCharge),
@@ -1143,7 +1183,13 @@ export const useSalesStore = create(
           sales: [
             { ...refundSale, id: uuidv4() },
             ...s.sales.map((sale) =>
-              sale.id === originalSale.id ? { ...sale, status: 'refunded', isRefunded: true } : sale
+              sale.id === originalSale.id
+                ? {
+                    ...sale,
+                    status: isFullRefund ? 'refunded' : 'partially refunded',
+                    isRefunded: isFullRefund,
+                  }
+                : sale
             ),
           ],
         }))
@@ -1765,6 +1811,40 @@ export const useElectronicsStore = create(
           if (saleId) w = get().warranties.find(wa => wa.saleId === saleId)
         }
         
+        // Fallback 2: if search by invoice
+        if (!w) {
+          const globalSale = useSalesStore.getState().sales.find(s => s.receiptNo?.toLowerCase() === q)
+          const elSale = get().elSales.find(s => s.receiptNo?.toLowerCase() === q)
+          const sale = globalSale || elSale
+          if (sale) {
+            w = get().warranties.find(wa => wa.saleId === sale.id)
+            if (!w) {
+              const items = sale.items_detail || sale.cartItems || []
+              const foundItem = items.find(item => item.serial || item.imei || item.warrantyMonths > 0)
+              if (foundItem) {
+                const months = foundItem.warrantyMonths || 0
+                const startDate = new Date(sale.date)
+                const endDate = new Date(startDate)
+                endDate.setMonth(endDate.getMonth() + months)
+                
+                w = {
+                  id: `dynamic-${sale.id}-${foundItem.id}`,
+                  saleId: sale.id,
+                  receiptNo: sale.receiptNo,
+                  productId: foundItem.id,
+                  productName: foundItem.name,
+                  serial: foundItem.serial || '',
+                  imei: foundItem.imei || '',
+                  customerId: sale.customerId || 'walk-in',
+                  warrantyMonths: months,
+                  startDate: startDate.toISOString(),
+                  endDate: endDate.toISOString(),
+                }
+              }
+            }
+          }
+        }
+        
         if (!w) return null
         const now = new Date()
         const end = new Date(w.endDate)
@@ -1785,8 +1865,41 @@ export const useElectronicsStore = create(
         const saleIdToMatch = globalSale?.id || elSale?.id
         const saleMatches = saleIdToMatch ? get().warranties.filter(w => w.saleId === saleIdToMatch) : []
         
+        // 3. Search in global sales history dynamically for matching item
+        const salesMatchesFromHistory = []
+        const sales = useSalesStore.getState().sales || []
+        sales.forEach(sale => {
+          const items = sale.items_detail || sale.cartItems || []
+          items.forEach(item => {
+            const serialMatch = String(item.serial || '').trim().toLowerCase() === q
+            const imeiMatch = String(item.imei || '').trim().toLowerCase() === q
+            const invoiceMatch = String(sale.receiptNo || '').trim().toLowerCase() === q
+            
+            if (serialMatch || imeiMatch || invoiceMatch) {
+              const months = item.warrantyMonths || 0
+              const startDate = new Date(sale.date)
+              const endDate = new Date(startDate)
+              endDate.setMonth(endDate.getMonth() + months)
+              
+              salesMatchesFromHistory.push({
+                id: `dynamic-${sale.id}-${item.id}`,
+                saleId: sale.id,
+                receiptNo: sale.receiptNo,
+                productId: item.id,
+                productName: item.name,
+                serial: item.serial || '',
+                imei: item.imei || '',
+                customerId: sale.customerId || 'walk-in',
+                warrantyMonths: months,
+                startDate: startDate.toISOString(),
+                endDate: endDate.toISOString(),
+              })
+            }
+          })
+        })
+        
         // Combine unique matches
-        const allMatches = [...directMatches, ...saleMatches].reduce((acc, curr) => {
+        const allMatches = [...directMatches, ...saleMatches, ...salesMatchesFromHistory].reduce((acc, curr) => {
           if (!acc.find(w => w.id === curr.id)) acc.push(curr)
           return acc
         }, [])
@@ -1800,15 +1913,55 @@ export const useElectronicsStore = create(
              ...w, 
              isActive: end > now, 
              daysLeft: Math.floor((end - now) / 86400000),
-             receiptNo: relatedSale?.receiptNo || w.saleId
+             receiptNo: relatedSale?.receiptNo || w.receiptNo || w.saleId
            }
         })
       },
       getCustomerWarranties: (customerId) => {
         const now = new Date()
-        return get().warranties.filter((w) => w.customerId === customerId).map((w) => ({
+        const direct = get().warranties.filter((w) => w.customerId === customerId).map((w) => ({
           ...w, isActive: new Date(w.endDate) > now, daysLeft: Math.floor((new Date(w.endDate) - now) / 86400000)
         }))
+        
+        const fromHistory = []
+        const sales = useSalesStore.getState().sales || []
+        sales.filter(s => s.customerId === customerId).forEach(sale => {
+          const items = sale.items_detail || sale.cartItems || []
+          items.forEach(item => {
+            if (item.serial || item.imei || item.warrantyMonths > 0) {
+              const months = item.warrantyMonths || 0
+              const startDate = new Date(sale.date)
+              const endDate = new Date(startDate)
+              endDate.setMonth(endDate.getMonth() + months)
+              fromHistory.push({
+                id: `dynamic-${sale.id}-${item.id}`,
+                saleId: sale.id,
+                receiptNo: sale.receiptNo,
+                productId: item.id,
+                productName: item.name,
+                serial: item.serial || '',
+                imei: item.imei || '',
+                customerId: sale.customerId || 'walk-in',
+                warrantyMonths: months,
+                startDate: startDate.toISOString(),
+                endDate: endDate.toISOString(),
+                isActive: endDate > now,
+                daysLeft: Math.floor((endDate - now) / 86400000)
+              })
+            }
+          })
+        })
+        
+        const merged = [...direct, ...fromHistory]
+        const unique = []
+        const seen = new Set()
+        merged.forEach(m => {
+          if (!seen.has(m.id)) {
+            seen.add(m.id)
+            unique.push(m)
+          }
+        })
+        return unique
       },
       getStockCount: (productId) => get().serials.filter((s) => s.productId === productId && s.status === 'in_stock').length,
     }),

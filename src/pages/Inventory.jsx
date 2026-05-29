@@ -81,7 +81,7 @@ export default function Inventory() {
       setAdjType('add')
       setAdjQty('1')
       setBarcodeInput('')
-      toast.success(`Found ${prod.name}! Enter quantity.`, { icon: '📦' })
+      toast.success(`Found ${prod.name}! Enter quantity.`)
     } else {
       toast.error('No matching product found in current module for this barcode')
     }
@@ -145,8 +145,8 @@ export default function Inventory() {
         <div className="flex gap-2 shrink-0 overflow-x-auto">
           {[
             { id: 'all', label: 'All', count: scopedProducts.length },
-            { id: 'low', label: '⚡ Low Stock', count: lowStock.length },
-            { id: 'out', label: '⛔ Out of Stock', count: outOfStock.length },
+            { id: 'low', label: 'Low Stock', count: lowStock.length },
+            { id: 'out', label: 'Out of Stock', count: outOfStock.length },
           ].map(({ id, label, count }) => (
             <button
               key={id}
@@ -190,7 +190,9 @@ export default function Inventory() {
                   <tr key={p.id}>
                     <td>
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-sm shrink-0">📦</div>
+                        <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-sm shrink-0">
+                          <Package size={16} className="text-green-600" />
+                        </div>
                         <span className="font-medium text-gray-800 text-sm">{p.name}</span>
                       </div>
                     </td>
