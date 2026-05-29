@@ -22,6 +22,7 @@ import { generateHelaQRPayment, checkHelaQRPaymentStatus, getHelaQRConfigStatus 
 import { QRCodeSVG } from 'qrcode.react'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
 import { useBarcodeScanner } from '@/lib/useBarcodeScanner'
+import { publishStoreProductUpsert, resolveCloudTenantId, syncToCloud } from '@/lib/firebase'
 
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
 const EMPTY_SERIALS = []
@@ -435,6 +436,183 @@ const ProductSkeleton = () => (
   </div>
 )
 
+// ─── Quick Add Unlisted Product Modal ───────────────────────────────────────
+const POSQuickAddModal = ({ open, onClose, barcode, onSave, categories }) => {
+  const [name, setName] = useState('')
+  const [price, setPrice] = useState('')
+  const [cost, setCost] = useState('')
+  const [stock, setStock] = useState('100')
+  const [category, setCategory] = useState('')
+  const [unit, setUnit] = useState('pcs')
+  const [newCatOpen, setNewCatOpen] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  
+  const nameInputRef = useRef(null)
+  const toast = useToast()
+  
+  useEffect(() => {
+    if (open) {
+      setName('')
+      setPrice('')
+      setCost('')
+      setStock('100')
+      setCategory(categories[0] || '')
+      setUnit('pcs')
+      setNewCatOpen(false)
+      setNewCatName('')
+      setTimeout(() => nameInputRef.current?.focus(), 150)
+    }
+  }, [open, categories])
+
+  const handleSave = (e) => {
+    if (e) e.preventDefault()
+    if (!name.trim() || !price) {
+      toast.error('Product Name and Selling Price are required')
+      return
+    }
+
+    onSave({
+      name: name.trim(),
+      barcode,
+      price: parseFloat(price) || 0,
+      cost: parseFloat(cost) || 0,
+      stock: parseInt(stock) || 0,
+      category,
+      unit,
+      active: true
+    })
+  }
+
+  const handleCreateCategoryInline = () => {
+    const val = String(newCatName || '').trim()
+    if (!val) return
+    useProductStore.getState().addCategory(useAppStore.getState().activeModule, val)
+    setCategory(val)
+    setNewCatName('')
+    setNewCatOpen(false)
+    toast.success(`Category "${val}" created!`)
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="✨ Quick Add Unlisted Product" maxWidth="max-w-md">
+      <form onSubmit={handleSave} className="space-y-4 animate-scale-in">
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2">
+          <Barcode size={18} className="text-amber-600 shrink-0" />
+          <span className="text-xs font-bold text-amber-800">Scanned barcode:</span>
+          <span className="font-mono text-xs font-black text-amber-800 tracking-wider bg-white px-2 py-0.5 rounded border border-amber-300">
+            {barcode}
+          </span>
+        </div>
+
+        <Input
+          ref={nameInputRef}
+          label="Product Name *"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          placeholder="e.g. Sprite 1.5L"
+        />
+
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Selling Price (Rs.) *"
+            type="number"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            required
+            placeholder="0.00"
+          />
+          <Input
+            label="Cost Price (Rs.)"
+            type="number"
+            step="0.01"
+            value={cost}
+            onChange={(e) => setCost(e.target.value)}
+            placeholder="0.00"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Opening Stock"
+            type="number"
+            value={stock}
+            onChange={(e) => setStock(e.target.value)}
+            placeholder="100"
+          />
+          <div>
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Unit</label>
+            <select
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              className="input-base text-sm font-semibold"
+            >
+              {['pcs', 'kg', 'g', 'L', 'mL', 'pack', 'bottle', 'box'].map(u => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Category</label>
+            <button
+              type="button"
+              onClick={() => setNewCatOpen(!newCatOpen)}
+              className="text-xs font-bold text-green-600 hover:underline hover:text-green-700"
+            >
+              {newCatOpen ? 'Cancel' : '+ New Category'}
+            </button>
+          </div>
+
+          {newCatOpen ? (
+            <div className="flex gap-2 animate-slide-up">
+              <input
+                type="text"
+                value={newCatName}
+                onChange={(e) => setNewCatName(e.target.value)}
+                placeholder="Category name"
+                className="input-base flex-1 min-w-0 text-sm font-semibold"
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleCreateCategoryInline())}
+              />
+              <button
+                type="button"
+                onClick={handleCreateCategoryInline}
+                className="btn-primary py-1 px-3 text-xs shrink-0"
+                disabled={!newCatName.trim()}
+              >
+                Create
+              </button>
+            </div>
+          ) : (
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="input-base text-sm font-semibold"
+            >
+              <option value="">Select category</option>
+              {categories.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div className="flex gap-3 pt-2 border-t border-gray-100">
+          <button type="submit" className="btn-primary flex-1 justify-center py-2.5 text-sm font-bold rounded-xl min-h-[42px]">
+            ⚡ Save & Add to Cart
+          </button>
+          <button type="button" className="btn-ghost py-2.5 text-sm font-bold rounded-xl min-h-[42px]" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 // ─── Main POS Component ──────────────────────────────────────────────────────
 export default function POS() {
   const [search, setSearch] = useState('')
@@ -450,12 +628,15 @@ export default function POS() {
   const [serialProduct, setSerialProduct] = useState(null)
   const [serialForm, setSerialForm] = useState({ serial: '', imei: '', warrantyMonths: 0 })
   const [autoPrintPending, setAutoPrintPending] = useState(false)
+  const [quickAddBarcode, setQuickAddBarcode] = useState('')
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false)
   const hiddenReceiptRef = useRef(null)
   const searchRef = useRef(null)
   const toast = useToast()
 
   // Store settings needed for auto-printing
   const businessInfo     = useAppStore(s => s.businessInfo)
+  const licenseKey       = useAppStore(s => s.licenseKey)
   const receiptSettings  = useAppStore(s => s.receiptSettings)
   const hardwareSettings = useAppStore(s => s.hardwareSettings)
 
@@ -463,6 +644,8 @@ export default function POS() {
   const products        = useProductStore(s => s.products)
   const getByBarcode    = useProductStore(s => s.getByBarcode)
   const adjustStock     = useProductStore(s => s.adjustStock)
+  const addProduct      = useProductStore(s => s.addProduct)
+  const getCategoriesForModule = useProductStore(s => s.getCategoriesForModule)
   const activeModule    = useAppStore(s => s.activeModule)
   const taxRate         = useAppStore(s => s.taxSettings.rate)
   const taxInclusive    = useAppStore(s => s.taxSettings.inclusive)
@@ -488,6 +671,37 @@ export default function POS() {
   const { t } = useI18n()
   const location = useLocation()
   const navigate = useNavigate()
+
+  const moduleCategories = useMemo(() => getCategoriesForModule(activeModule), [getCategoriesForModule, activeModule])
+  const currentStoreId   = useMemo(() => resolveCloudTenantId(businessInfo, licenseKey), [businessInfo, licenseKey])
+
+  const handlePOSQuickAddSave = async (newForm) => {
+    const now = new Date().toISOString()
+    const newProduct = {
+      ...newForm,
+      id: uuidv4(),
+      storeId: currentStoreId,
+      module: activeModule,
+      variants: [],
+      image: null,
+      createdAt: now,
+      updatedAt: now
+    }
+    
+    // 1. Add to local store and sync
+    addProduct(newProduct)
+    await publishStoreProductUpsert(newProduct)
+    await syncToCloud()
+    
+    // 2. Add to active cart directly
+    addToCart(newProduct)
+    playTone('success')
+    
+    // 3. Wipes states and close
+    setShowQuickAddModal(false)
+    setQuickAddBarcode('')
+    toast.success(`"${newProduct.name}" added to inventory and cart!`)
+  }
 
   const allSerials = useElectronicsStore(s => s.serials || [])
   const availableSerials = useMemo(() => 
@@ -593,8 +807,11 @@ export default function POS() {
       }
     }
 
-    // 3. Nothing matched
-    toast.error(`Barcode not found: ${code}`, { duration: 2000 })
+    // 3. Nothing matched -> Open Quick Add Modal!
+    setQuickAddBarcode(code)
+    setShowQuickAddModal(true)
+    playTone('success')
+    toast.info(`Unlisted barcode scanned: ${code}. Opening Quick Add...`, { duration: 2500 })
   }, [getByBarcode, switchCashierByBarcode]))
 
 
@@ -1250,6 +1467,13 @@ export default function POS() {
         onComplete={handleCompleteSale}
         onPublishCustomerDisplay={openCustomerScreen}
         cartItems={cart}
+      />
+      <POSQuickAddModal
+        open={showQuickAddModal}
+        onClose={() => { setShowQuickAddModal(false); setQuickAddBarcode('') }}
+        barcode={quickAddBarcode}
+        categories={moduleCategories}
+        onSave={handlePOSQuickAddSave}
       />
       <Modal open={showSerialModal} onClose={() => setShowSerialModal(false)} title={`Provide Details: ${serialProduct?.name}`}>
         <form onSubmit={handleSerialSubmit} className="flex flex-col gap-4 pt-2">

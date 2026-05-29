@@ -51,159 +51,508 @@ function BarcodeDisplay({ value }) {
   )
 }
 
+const playTone = (type = 'tick') => {
+  if (typeof window === 'undefined') return
+  const AudioCtx = window.AudioContext || window.webkitAudioContext
+  if (!AudioCtx) return
+  try {
+    const ctx = new AudioCtx()
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+
+    if (type === 'success') {
+      osc.frequency.setValueAtTime(620, now)
+      osc.frequency.exponentialRampToValueAtTime(940, now + 0.18)
+      gain.gain.setValueAtTime(0.001, now)
+      gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26)
+    } else {
+      osc.frequency.setValueAtTime(540, now)
+      gain.gain.setValueAtTime(0.001, now)
+      gain.gain.exponentialRampToValueAtTime(0.05, now + 0.01)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12)
+    }
+
+    osc.type = 'sine'
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + (type === 'success' ? 0.28 : 0.14))
+    osc.onended = () => ctx.close()
+  } catch {
+    // best-effort feedback only
+  }
+}
+
 function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categories, activeModule }) {
   const [form, setForm] = useState({ ...PRODUCT_FORM_DEFAULT, ...initial })
+  const [batchMode, setBatchMode] = useState(false)
+  const [newCatOpen, setNewCatOpen] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  const [otherUnitOpen, setOtherUnitOpen] = useState(!['pcs', 'kg', 'g', 'L', 'bottle', 'pack', 'box'].includes(initial.unit) && initial.unit !== 'pcs')
+  const [otherUnitVal, setOtherUnitVal] = useState(!['pcs', 'kg', 'g', 'L', 'bottle', 'pack', 'box'].includes(initial.unit) && initial.unit !== 'pcs' ? initial.unit : '')
+
+  const nameInputRef = useRef(null)
+  const { addCategory } = useProductStore()
+  const toast = useToast()
+
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
-  const margin = form.price && form.cost
-    ? ((parseFloat(form.price) - parseFloat(form.cost)) / parseFloat(form.cost) * 100).toFixed(1)
+  const priceVal = parseFloat(form.price) || 0
+  const costVal = parseFloat(form.cost) || 0
+  const profit = priceVal - costVal
+  const margin = costVal > 0
+    ? ((priceVal - costVal) / costVal * 105).toFixed(1)
     : null
 
+  useEffect(() => {
+    setTimeout(() => {
+      nameInputRef.current?.focus()
+    }, 100)
+  }, [])
+
+  const generateRandomBarcode = () => {
+    const randomCode = '99' + Math.floor(1000000000 + Math.random() * 9000000000)
+    set('barcode', randomCode)
+    playTone('success')
+    toast.success(`Generated Barcode: ${randomCode}`, { duration: 1500 })
+  }
+
+  const handleInlineAddCategory = () => {
+    const val = String(newCatName || '').trim()
+    if (!val) return
+    addCategory(activeModule, val)
+    set('category', val)
+    setNewCatName('')
+    setNewCatOpen(false)
+    toast.success(`Category "${val}" created inline!`, { duration: 1500 })
+  }
+
+  const handleSubmitForm = (e, forceKeepOpen = false) => {
+    if (e) e.preventDefault()
+    if (!form.name.trim()) return
+
+    const keepOpen = batchMode || forceKeepOpen
+    onSave(form, keepOpen)
+
+    if (keepOpen) {
+      playTone('success')
+      setForm((f) => ({
+        ...PRODUCT_FORM_DEFAULT,
+        category: f.category,
+        brand: f.brand,
+        supplier: f.supplier,
+        unit: f.unit,
+        active: true,
+      }))
+      setOtherUnitVal('')
+      setOtherUnitOpen(false)
+
+      setTimeout(() => {
+        nameInputRef.current?.focus()
+      }, 50)
+    }
+  }
+
+  const commonUnits = ['pcs', 'kg', 'g', 'L', 'bottle', 'pack', 'box']
+
   return (
-    <form onSubmit={(e) => { e.preventDefault(); onSave(form) }} className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3">
-        <Input
-          label="Product Name *"
-          value={form.name}
-          onChange={(e) => set('name', e.target.value)}
-          required
-          placeholder="e.g. Basmati Rice 5kg"
-          className="col-span-2"
-        />
-        <div>
-          <Input
-            label="Barcode"
-            value={form.barcode}
-            onChange={(e) => set('barcode', e.target.value)}
-            placeholder="Scan or enter manually"
-          />
-          <BarcodeDisplay value={form.barcode} />
-        </div>
-        <Select label="Category" value={form.category} onChange={(e) => set('category', e.target.value)}>
-          <option value="">Select category</option>
-          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-        </Select>
-        <Input
-          label="Selling Price (Rs.) *"
-          type="number"
-          step="0.01"
-          value={form.price}
-          onChange={(e) => set('price', e.target.value)}
-          required
-          placeholder="0.00"
-        />
-        <Input
-          label="Cost Price (Rs.)"
-          type="number"
-          step="0.01"
-          value={form.cost}
-          onChange={(e) => set('cost', e.target.value)}
-          placeholder="0.00"
-        />
-        {margin !== null && (
-          <div className="col-span-2 p-2 rounded-xl bg-green-50 text-sm text-green-700 font-semibold text-center">
-            Profit Margin: {margin}%
-            {' '}(Rs. {(parseFloat(form.price) - parseFloat(form.cost)).toFixed(2)} per unit)
+    <form onSubmit={(e) => handleSubmitForm(e)} className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+        {/* Left Side: Product Fields Form */}
+        <div className="md:col-span-3 space-y-4 max-h-[66vh] overflow-y-auto pr-1">
+          {/* Card: Basic Details */}
+          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+              <Package size={14} className="text-green-500" /> Basic Details
+            </h3>
+            
+            <Input
+              ref={nameInputRef}
+              label="Product Name *"
+              value={form.name}
+              onChange={(e) => set('name', e.target.value)}
+              required
+              placeholder="e.g. Basmati Rice 5kg"
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Barcode</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={form.barcode}
+                    onChange={(e) => set('barcode', e.target.value)}
+                    placeholder="Scan or type barcode"
+                    className="input-base flex-1 min-w-0 text-sm font-semibold"
+                  />
+                  <button
+                    type="button"
+                    onClick={generateRandomBarcode}
+                    title="Auto-generate Random Barcode"
+                    className="w-11 h-11 rounded-xl bg-green-50 text-green-600 border border-green-200 flex items-center justify-center transition-all hover:bg-green-100 hover:border-green-300 active:scale-95 shrink-0"
+                  >
+                    <Barcode size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Category</label>
+                  <button
+                    type="button"
+                    onClick={() => setNewCatOpen(!newCatOpen)}
+                    className="text-xs font-bold text-green-600 hover:underline hover:text-green-700 flex items-center gap-0.5"
+                  >
+                    {newCatOpen ? 'Cancel' : '+ Create New'}
+                  </button>
+                </div>
+
+                {newCatOpen ? (
+                  <div className="flex gap-2 animate-slide-up">
+                    <input
+                      type="text"
+                      value={newCatName}
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      placeholder="e.g. Grains"
+                      className="input-base flex-1 min-w-0 text-sm font-semibold"
+                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleInlineAddCategory())}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleInlineAddCategory}
+                      className="btn-primary py-1 px-3 text-xs shrink-0"
+                      disabled={!newCatName.trim()}
+                    >
+                      Add
+                    </button>
+                  </div>
+                ) : (
+                  <Select
+                    value={form.category}
+                    onChange={(e) => set('category', e.target.value)}
+                  >
+                    <option value="">Select category</option>
+                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </Select>
+                )}
+              </div>
+            </div>
           </div>
-        )}
-        <Input
-          label="Opening Stock"
-          type="number"
-          value={form.stock}
-          onChange={(e) => set('stock', e.target.value)}
-          placeholder="0"
-        />
-        <Select label="Unit" value={form.unit} onChange={(e) => set('unit', e.target.value)}>
-          {['pcs', 'kg', 'g', 'L', 'mL', 'bag', 'box', 'bottle', 'pack', 'bar', 'strip', 'carton', 'jar'].map((u) => (
-            <option key={u} value={u}>{u}</option>
-          ))}
-        </Select>
-        <Input
-          label="Expiry Date"
-          type="date"
-          value={form.expiry}
-          onChange={(e) => set('expiry', e.target.value)}
-        />
-        {activeModule === 'pharmacy' && (
-          <Input
-            label="Supplier"
-            value={form.supplier}
-            onChange={(e) => set('supplier', e.target.value)}
-            placeholder="e.g. PharmaCorp"
-            className="col-span-2"
-          />
-        )}
-        {activeModule === 'clothing' && (
-          <>
-            <Input
-              label="Brand"
-              value={form.brand}
-              onChange={(e) => set('brand', e.target.value)}
-              placeholder="e.g. DenimCo"
-              className="col-span-2"
-            />
-            <Input
-              label="Sizes (comma separated)"
-              value={form.sizes}
-              onChange={(e) => set('sizes', e.target.value)}
-              placeholder="e.g. S, M, L, XL"
-            />
-            <Input
-              label="Colors (comma separated)"
-              value={form.colors}
-              onChange={(e) => set('colors', e.target.value)}
-              placeholder="e.g. Black, White"
-            />
-          </>
-        )}
-        {activeModule === 'electronics' && (
-          <>
-            <Input
-              label="Brand"
-              value={form.brand}
-              onChange={(e) => set('brand', e.target.value)}
-              placeholder="e.g. Samsung, Apple, Dell"
-            />
-            <Input
-              label="Warranty Period (Months)"
-              type="number"
-              value={form.warrantyMonths || ''}
-              onChange={(e) => set('warrantyMonths', parseInt(e.target.value) || 0)}
-              placeholder="e.g. 12"
-            />
-            <div className="col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-xl">
-              <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-blue-900">
+
+          {/* Card: Pricing & Stock */}
+          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+              <span className="text-green-500 font-bold">Rs.</span> Pricing & Stock
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Selling Price (Rs.) *"
+                type="number"
+                step="0.01"
+                value={form.price}
+                onChange={(e) => set('price', e.target.value)}
+                required
+                placeholder="0.00"
+              />
+              <Input
+                label="Cost Price (Rs.)"
+                type="number"
+                step="0.01"
+                value={form.cost}
+                onChange={(e) => set('cost', e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Opening Stock"
+                type="number"
+                value={form.stock}
+                onChange={(e) => set('stock', e.target.value)}
+                placeholder="0"
+              />
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Unit</label>
+                {otherUnitOpen ? (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={otherUnitVal}
+                      onChange={(e) => {
+                        setOtherUnitVal(e.target.value)
+                        set('unit', e.target.value)
+                      }}
+                      placeholder="e.g. meter"
+                      className="input-base flex-1 min-w-0 text-sm font-semibold"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOtherUnitOpen(false)
+                        set('unit', 'pcs')
+                      }}
+                      className="text-xs text-gray-400 hover:text-gray-600 hover:underline shrink-0"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-1.5 flex-wrap">
+                    {commonUnits.map((u) => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => set('unit', u)}
+                        className={cn(
+                          'px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all active:scale-95 min-h-[34px]',
+                          form.unit === u
+                            ? 'bg-green-500 border-green-500 text-white shadow-sm'
+                            : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                        )}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setOtherUnitOpen(true)}
+                      className={cn(
+                        'px-2.5 py-1.5 rounded-xl text-xs font-bold border border-dashed transition-all active:scale-95 min-h-[34px]',
+                        !commonUnits.includes(form.unit) && form.unit
+                          ? 'bg-green-500 border-green-500 text-white shadow-sm'
+                          : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                      )}
+                    >
+                      {!commonUnits.includes(form.unit) && form.unit ? form.unit : 'Other...'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Card: Tracking & Details */}
+          {(form.expiry || activeModule === 'pharmacy' || activeModule === 'clothing' || activeModule === 'electronics') && (
+            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-4">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                ⚙️ Advanced Details
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Input
+                  label="Expiry Date"
+                  type="date"
+                  value={form.expiry}
+                  onChange={(e) => set('expiry', e.target.value)}
+                />
+
+                {activeModule === 'pharmacy' && (
+                  <Input
+                    label="Supplier"
+                    value={form.supplier}
+                    onChange={(e) => set('supplier', e.target.value)}
+                    placeholder="e.g. PharmaCorp"
+                  />
+                )}
+
+                {activeModule === 'clothing' && (
+                  <>
+                    <Input
+                      label="Brand"
+                      value={form.brand}
+                      onChange={(e) => set('brand', e.target.value)}
+                      placeholder="e.g. DenimCo"
+                    />
+                    <Input
+                      label="Sizes (comma separated)"
+                      value={form.sizes}
+                      onChange={(e) => set('sizes', e.target.value)}
+                      placeholder="e.g. S, M, L, XL"
+                    />
+                    <Input
+                      label="Colors (comma separated)"
+                      value={form.colors}
+                      onChange={(e) => set('colors', e.target.value)}
+                      placeholder="e.g. Black, White"
+                      className="col-span-2"
+                    />
+                  </>
+                )}
+
+                {activeModule === 'electronics' && (
+                  <>
+                    <Input
+                      label="Brand"
+                      value={form.brand}
+                      onChange={(e) => set('brand', e.target.value)}
+                      placeholder="e.g. Samsung, Apple"
+                    />
+                    <Input
+                      label="Warranty Period (Months)"
+                      type="number"
+                      value={form.warrantyMonths || ''}
+                      onChange={(e) => set('warrantyMonths', parseInt(e.target.value) || 0)}
+                      placeholder="e.g. 12"
+                    />
+                    <div className="col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+                      <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-blue-900">
+                        <input
+                          type="checkbox"
+                          checked={!!form.requiresSerial}
+                          onChange={(e) => set('requiresSerial', e.target.checked)}
+                          className="w-4 h-4 text-blue-600 rounded"
+                        />
+                        This product requires Serial / IMEI tracking
+                      </label>
+                      <p className="text-xs text-blue-600 mt-1 pl-6">
+                        Required during stock checkouts and GRN receiving.
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Active status & switch */}
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-150">
+            <div className="flex items-center gap-3">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Active Status</label>
+              <button
+                type="button"
+                onClick={() => set('active', !form.active)}
+                className={cn('transition-colors', form.active ? 'text-green-600' : 'text-gray-400')}
+              >
+                {form.active ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+              </button>
+              <span className="text-sm font-bold text-gray-600">{form.active ? 'Visible in POS' : 'Hidden from POS'}</span>
+            </div>
+
+            {/* Batch Mode toggle inside form */}
+            {!initial.id && (
+              <label className="flex items-center gap-2 cursor-pointer text-sm font-bold text-green-700 bg-green-50 border border-green-200 px-3.5 py-2 rounded-xl hover:bg-green-100 transition-all select-none">
                 <input
                   type="checkbox"
-                  checked={!!form.requiresSerial}
-                  onChange={(e) => set('requiresSerial', e.target.checked)}
-                  className="w-4 h-4 text-blue-600 rounded"
+                  checked={batchMode}
+                  onChange={(e) => setBatchMode(e.target.checked)}
+                  className="w-4 h-4 text-green-600 rounded cursor-pointer"
                 />
-                This product requires Serial / IMEI tracking
+                ⚡ Batch Quick-Add Mode
               </label>
-              <p className="text-xs text-blue-600 mt-1 pl-6">
-                If checked, you must enter a specific serial number or IMEI when receiving stock (GRN) and during checkout.
-              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Right Side: Live preview & profit analyzer */}
+        <div className="md:col-span-2 flex flex-col gap-4 justify-between h-full">
+          {/* Dynamic Profit Margin Widget */}
+          <div className="rounded-2xl border border-gray-150 p-4 bg-white shadow-sm space-y-3">
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Gross Profit Analyzer</h4>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-medium text-gray-500">Margin Breakdown:</span>
+              {margin !== null ? (
+                <span className={cn(
+                  'text-xs font-bold px-2 py-0.5 rounded-full',
+                  parseFloat(margin) >= 30 ? 'bg-green-50 text-green-700 border border-green-200' :
+                  parseFloat(margin) > 0 ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' :
+                  'bg-red-50 text-red-700 border border-red-200'
+                )}>
+                  {parseFloat(margin) >= 30 ? '🔥 High Margin' :
+                   parseFloat(margin) > 0 ? '👍 Safe Margin' : '⚠️ No Profit'}
+                </span>
+              ) : <span className="text-xs text-gray-300">Enter cost & price</span>}
             </div>
-          </>
-        )}
-        <div className="flex items-center gap-3 pt-2">
-          <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Active</label>
-          <button
-            type="button"
-            onClick={() => set('active', !form.active)}
-            className={cn('transition-colors', form.active ? 'text-green-600' : 'text-gray-400')}
-          >
-            {form.active ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
-          </button>
-          <span className="text-sm text-gray-500">{form.active ? 'Visible in POS' : 'Hidden from POS'}</span>
+
+            <div className="p-3.5 rounded-xl border border-dashed" style={{
+              background: margin !== null && parseFloat(margin) < 0 ? '#fef2f2' :
+                          margin !== null && parseFloat(margin) >= 30 ? '#f0fdf4' : '#fafafa',
+              borderColor: margin !== null && parseFloat(margin) < 0 ? '#fecaca' :
+                           margin !== null && parseFloat(margin) >= 30 ? '#bbf7d0' : '#e5e7eb'
+            }}>
+              <div className="grid grid-cols-2 gap-2 text-center">
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Gross Profit</p>
+                  <p className={cn('text-lg font-black', profit < 0 ? 'text-red-600' : 'text-green-700')}>
+                    Rs. {profit.toFixed(2)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Margin %</p>
+                  <p className={cn('text-lg font-black', profit < 0 ? 'text-red-600' : 'text-green-700')}>
+                    {margin !== null ? `${margin}%` : '—'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Realistic Barcode Label Thermal Preview */}
+          <div className="rounded-2xl border border-gray-150 p-4 bg-white shadow-sm flex flex-col justify-between flex-1 min-h-[220px]">
+            <div>
+              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Barcode Label Preview</h4>
+              <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-4 flex flex-col items-center justify-center relative shadow-sm hover:scale-[1.02] transition-all" style={{ minHeight: 160 }}>
+                {/* Dotted cut marker */}
+                <div className="absolute top-0 bottom-0 left-0 right-0 border border-dotted border-gray-200 rounded-[14px] pointer-events-none" />
+                
+                <span className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-1">
+                  PAXXMO STORE LABEL
+                </span>
+                
+                <p className="text-sm font-extrabold text-gray-800 text-center max-w-[200px] truncate mb-0.5">
+                  {form.name || 'Unnamed Product'}
+                </p>
+                <p className="text-xs text-gray-500 font-bold mb-3">
+                  Unit: {form.unit || 'pcs'}
+                </p>
+
+                {/* Simulated Barcode */}
+                <div className="w-full max-w-[170px] mb-2 flex flex-col items-center">
+                  <div className="flex justify-center w-full gap-0.5 h-10 overflow-hidden">
+                    {(form.barcode || 'SCANNER').split('').flatMap((c, i) => {
+                      const num = c.charCodeAt(0) % 7
+                      return [
+                        <div key={`${i}p`} className="bg-gray-800" style={{ width: num % 2 === 0 ? 1 : 2, height: '100%', marginRight: 0.5, backgroundColor: '#1f2937' }} />,
+                      ]
+                    })}
+                  </div>
+                  <span className="font-mono text-[9px] tracking-[0.2em] font-semibold text-gray-500 mt-1">
+                    {form.barcode || 'NO-BARCODE'}
+                  </span>
+                </div>
+
+                <div className="text-lg font-black text-gray-800 tracking-tight mt-1">
+                  Rs. {priceVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400 text-center mt-2">
+              Standard 50mm x 30mm thermal label size.
+            </p>
+          </div>
         </div>
       </div>
-      <div className="flex gap-3 pt-2">
-        <button type="submit" className="btn-primary flex-1 justify-center">
+
+      <div className="flex gap-3 pt-2 border-t border-gray-100 mt-2">
+        <button type="submit" className="btn-primary flex-1 justify-center py-3 text-sm font-bold rounded-xl min-h-[46px]">
           {initial.id ? 'Save Changes' : 'Add Product'}
         </button>
-        <button type="button" className="btn-ghost" onClick={onCancel}>Cancel</button>
+        {!initial.id && (
+          <button
+            type="button"
+            className="btn-secondary py-3 text-sm font-bold rounded-xl min-h-[46px]"
+            onClick={() => handleSubmitForm(null, true)}
+            disabled={!form.name.trim()}
+          >
+            ⚡ Save & Add Another
+          </button>
+        )}
+        <button type="button" className="btn-ghost py-3 text-sm font-bold rounded-xl min-h-[46px]" onClick={onCancel}>Cancel</button>
       </div>
     </form>
   )
@@ -327,11 +676,12 @@ function ImportModal({ open, onClose, categories, activeModule }) {
 }
 
 function CategoryManagerModal({ open, onClose, moduleName }) {
-  const { getCategoriesForModule, addCategory, removeCategory } = useProductStore()
+  const { getCategoriesForModule, addCategory, removeCategory, products } = useProductStore()
   const { addLog } = useActivityStore()
   const { currentUser } = useAuthStore()
   const toast = useToast()
   const [categoryName, setCategoryName] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const categories = getCategoriesForModule(moduleName)
 
@@ -345,41 +695,81 @@ function CategoryManagerModal({ open, onClose, moduleName }) {
   }
 
   const handleRemove = (value) => {
+    const count = products.filter(p => p.category === value && p.module === moduleName).length
+    if (count > 0) {
+      toast.error(`Cannot remove: "${value}" has ${count} products assigned. Reassign them first.`, { duration: 4000 })
+      return
+    }
     removeCategory(moduleName, value)
     addLog('Removed Category', `${moduleName}: ${value}`, currentUser?.name)
     toast.success(`Category "${value}" removed`)
   }
 
+  const filteredCategories = categories.filter(c =>
+    c.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const moduleProducts = products.filter(p => p.module === moduleName)
+
   return (
-    <Modal open={open} onClose={onClose} title={`Manage ${String(moduleName || '').toUpperCase()} Categories`} maxWidth="max-w-xl">
-      <div className="space-y-4">
-        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+    <Modal open={open} onClose={onClose} title={`Manage ${String(moduleName || '').toUpperCase()} Categories`} maxWidth="max-w-2xl">
+      <div className="space-y-4 animate-scale-in">
+        {/* Quick Add Row */}
+        <div className="rounded-2xl border border-gray-150 bg-gray-50 p-4 space-y-3">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Create New Category</p>
           <div className="flex gap-2">
             <Input
               value={categoryName}
               onChange={(e) => setCategoryName(e.target.value)}
-              placeholder="New category name"
+              placeholder="e.g. Organic Grains"
+              className="flex-1"
+              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
             />
-            <button type="button" className="btn-primary" onClick={handleAdd} disabled={!String(categoryName || '').trim()}>
-              <Plus size={14} /> Add
+            <button type="button" className="btn-primary shrink-0" onClick={handleAdd} disabled={!String(categoryName || '').trim()}>
+              <Plus size={14} /> Add Category
             </button>
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          {categories.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-500 sm:col-span-2">
-              No categories defined for this module yet.
+        {/* Stats & Search */}
+        <div className="flex flex-col sm:flex-row items-center gap-3 justify-between border-t border-gray-100 pt-3">
+          <div className="text-xs font-semibold text-gray-500">
+            Total Categories: <span className="font-bold text-gray-700">{categories.length}</span> · Assigned Products: <span className="font-bold text-gray-700">{moduleProducts.length}</span>
+          </div>
+          <div className="w-full sm:w-60">
+            <SearchInput
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search categories..."
+            />
+          </div>
+        </div>
+
+        {/* Category List Grid */}
+        <div className="grid gap-2 sm:grid-cols-2 max-h-[300px] overflow-y-auto pr-1">
+          {filteredCategories.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500 sm:col-span-2">
+              {searchQuery ? 'No categories match your search.' : 'No categories defined yet.'}
             </div>
           ) : (
-            categories.map((category) => (
-              <div key={category} className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2">
-                <span className="text-sm font-semibold text-gray-800">{category}</span>
-                <button type="button" className="text-xs font-semibold text-red-500 hover:text-red-700" onClick={() => handleRemove(category)}>
-                  Remove
-                </button>
-              </div>
-            ))
+            filteredCategories.map((category) => {
+              const productCount = products.filter(p => p.category === category && p.module === moduleName).length
+              return (
+                <div key={category} className="flex items-center justify-between rounded-2xl border border-gray-150 bg-white p-3 hover:border-green-300 transition-all group">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-gray-800 truncate">{category}</p>
+                    <p className="text-xs text-gray-400 font-semibold">{productCount} {productCount === 1 ? 'product' : 'products'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs font-bold text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all px-2.5 py-1.5 rounded-lg hover:bg-red-50"
+                    onClick={() => handleRemove(category)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )
+            })
           )}
         </div>
       </div>
@@ -429,7 +819,7 @@ export default function Products() {
     })
   }, [products, search, catFilter, activeModule])
 
-  const handleSave = async (form) => {
+  const handleSave = async (form, keepOpen) => {
     if (editProduct) {
       const resolvedModule = inferProductModule(activeModule, form)
       const now = new Date().toISOString()
@@ -468,12 +858,14 @@ export default function Products() {
       toast.success(`"${form.name}" added to ${String(resolvedModule || '').toUpperCase()} products`)
     }
     await syncToCloud()
-    setShowModal(false)
-    setEditProduct(null)
+    if (!keepOpen) {
+      setShowModal(false)
+      setEditProduct(null)
+    }
   }
 
   return (
-    <div className="h-full overflow-y-auto p-5" style={{ background: `#f4f7f5` }} style={{ background: '#f4f7f5' }}>
+    <div className="h-full overflow-y-auto p-5" style={{ background: '#f4f7f5' }}>
       <SectionHeader
         title="Products"
         subtitle={`${products.length} products · ${moduleCategories.length} ${activeModule || ''} categories`}
@@ -639,7 +1031,7 @@ export default function Products() {
         open={showModal}
         onClose={() => { setShowModal(false); setEditProduct(null) }}
         title={editProduct ? 'Edit Product' : 'Add New Product'}
-        maxWidth="max-w-xl"
+        maxWidth="max-w-4xl"
       >
         <ProductForm
           initial={editProduct || PRODUCT_FORM_DEFAULT}
