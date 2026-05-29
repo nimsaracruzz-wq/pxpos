@@ -576,23 +576,27 @@ export default function POS() {
 
   // ── Global barcode scanner: handles BOTH product scans and cashier badge swipes ──
   useBarcodeScanner(useCallback(async (code) => {
-    // 1. Cashier badge switch — try this first (badges are typically long codes)
-    const cashierResult = await switchCashierByBarcode(code)
-    if (cashierResult?.success) {
-      toast.success(`Cashier switched to ${cashierResult.user?.name || cashierResult.user?.username || 'Staff'}`)
-      return
-    }
-
-    // 2. Product barcode lookup — add to cart
+    // 1. Product lookup first (fastest path — no IPC needed)
     const found = getByBarcode(code)
     if (found) {
       handleAddToCart(found)
       return
     }
 
-    // 3. Not found anywhere
-    toast.error(`No product found for barcode: ${code}`, { duration: 2500 })
-  }, [switchCashierByBarcode, getByBarcode]))
+    // 2. Cashier badge switch — only if running in Electron (IPC available)
+    //    Skipped in web/browser mode to avoid errors
+    if (typeof window !== 'undefined' && typeof window.require === 'function') {
+      const cashierResult = await switchCashierByBarcode(code)
+      if (cashierResult?.success) {
+        toast.success(`Cashier switched to ${cashierResult.user?.name || cashierResult.user?.username || 'Staff'}`)
+        return
+      }
+    }
+
+    // 3. Nothing matched
+    toast.error(`Barcode not found: ${code}`, { duration: 2000 })
+  }, [getByBarcode, switchCashierByBarcode]))
+
 
   // Manual search input — still supports typing a barcode and pressing Enter
   const handleSearchKey = useCallback((e) => {
