@@ -14,6 +14,7 @@ import { useToast } from '@/components/Toast'
 import { useI18n } from '@/lib/i18n'
 import { checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
 import { BRAND } from '@/lib/brand'
+import { useBarcodeScanner } from '@/lib/useBarcodeScanner'
 
 const CORE_NAV = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav_dashboard', permission: null },
@@ -78,71 +79,35 @@ export function Layout({ children }) {
   const location = useLocation()
   const { t } = useI18n()
 
-  // ── Global barcode scanner: works from any tab ──────────────────────────────
-  // Barcode scanners send chars very fast (< 50ms apart) ending with Enter.
-  // If the product is found and we're NOT already on /pos, navigate there & add to cart.
-  useEffect(() => {
-    let buffer = ''
-    let lastKeyTime = 0
-    const BARCODE_SPEED_MS = 60 // chars faster than this = scanner input
-    const MIN_BARCODE_LEN  = 3
+  // ── Global barcode scan: auto-jump to POS from any page ─────────────────────
+  // When on /pos the POS page handles the scan itself (adds to cart directly).
+  // On every other page, a valid product barcode navigates to /pos automatically.
+  const isOnPOS = location.pathname === '/pos'
+  useBarcodeScanner((code) => {
+    if (isOnPOS) return // POS has its own handler — don't interfere
 
-    const handleKey = (e) => {
-      const now = Date.now()
-      
-      // If Enter is pressed, check if we have a valid barcode in the buffer
-      if (e.key === 'Enter') {
-        const code = buffer.trim()
-        buffer = ''
-        
-        if (code.length < MIN_BARCODE_LEN) return
+    // Look up product in the main store
+    const product = useProductStore.getState().products.find(
+      (p) => p.active && p.barcode === code
+    )
 
-        let product = useProductStore.getState().products.find(
-          p => p.active && p.barcode === code
-        )
-        
-        // Fallback for electronics module products
-        if (!product) {
-          const elStore = useElectronicsStore.getState()
-          if (elStore && elStore.elProducts) {
-            product = elStore.elProducts.find(p => p.active && p.barcode === code)
-          }
-        }
-
-        if (product) {
-          e.preventDefault() // Prevent Enter from submitting forms if we caught a barcode
-          
-          if (product.stock <= 0) {
-            toast.error(`${product.name} is out of stock`, { duration: 2500 })
-            return
-          }
-
-          // If the user was focused on an input, the scanner typed the barcode into it.
-          // We clear it out so it doesn't leave garbage text.
-          const active = document.activeElement
-          if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
-            // Best effort to clear the injected barcode text
-            active.value = ''
-            active.blur()
-          }
-
-          // Navigate to POS and pass the scanned product
-          navigate('/pos', { state: { scannedProduct: product, timestamp: Date.now() } })
-          return
-        }
+    if (product) {
+      if (Number(product.stock || 0) <= 0) {
+        toast.error(`${product.name} is out of stock`, { duration: 2500 })
+        return
       }
-
-      // Track keystrokes for barcode buffer
-      if (e.key.length === 1) {
-        if (now - lastKeyTime > BARCODE_SPEED_MS * 3) buffer = '' // too slow — reset
-        buffer += e.key
-        lastKeyTime = now
-      }
+      toast.success(`Scanned: ${product.name} — opening POS`, { duration: 1500 })
+      navigate('/pos', { state: { scannedProduct: product, timestamp: Date.now() } })
+      return
     }
 
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [location.pathname, navigate, toast])
+    // Barcode not found — only show error when NOT on a page that has its own search
+    // (e.g. Products/Inventory pages manage their own UI for unknown barcodes)
+    const silentPages = ['/products', '/inventory', '/barcodes']
+    if (!silentPages.some(p => location.pathname.startsWith(p))) {
+      toast.error(`Barcode not found: ${code}`, { duration: 2000 })
+    }
+  }, !isOnPOS)
 
   const handleManualSync = async () => {
     if (isSyncing) return
