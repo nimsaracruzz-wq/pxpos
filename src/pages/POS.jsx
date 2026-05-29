@@ -21,6 +21,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { generateHelaQRPayment, checkHelaQRPaymentStatus, getHelaQRConfigStatus } from '@/lib/helaqr'
 import { QRCodeSVG } from 'qrcode.react'
 import { clearCustomerDisplay, publishCustomerDisplay } from '@/lib/customerDisplayChannel'
+import { useBarcodeScanner } from '@/lib/useBarcodeScanner'
 
 const ALL_CATEGORIES = ['All', 'Grains', 'Oils', 'Groceries', 'Dairy', 'Beverages', 'Personal Care', 'Pharmacy', 'Condiments']
 const EMPTY_SERIALS = []
@@ -390,7 +391,6 @@ const ProductSkeleton = () => (
 // ─── Main POS Component ──────────────────────────────────────────────────────
 export default function POS() {
   const [search, setSearch] = useState('')
-  const [cashierBarcode, setCashierBarcode] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
   const [showPayment, setShowPayment] = useState(false)
   const [paymentInitMethod, setPaymentInitMethod] = useState('cash')
@@ -527,17 +527,37 @@ export default function POS() {
     return matchM && matchS && matchC
   })
 
-  const handleSearchKey = useCallback((e) => {
-    if (e.key === 'Enter' && search.trim()) {
-      const found = getByBarcode(search.trim())
-      if (found) {
-        handleAddToCart(found)
-        setSearch('')
-      } else {
-        toast.error('Product not found for this barcode', { duration: 2000 })
-      }
+  // ── Global barcode scanner: handles BOTH product scans and cashier badge swipes ──
+  useBarcodeScanner(useCallback(async (code) => {
+    // 1. Cashier badge switch — try this first (badges are typically long codes)
+    const cashierResult = await switchCashierByBarcode(code)
+    if (cashierResult?.success) {
+      toast.success(`Cashier switched to ${cashierResult.user?.name || cashierResult.user?.username || 'Staff'}`)
+      return
     }
-  }, [search, getByBarcode, cart])
+
+    // 2. Product barcode lookup — add to cart
+    const found = getByBarcode(code)
+    if (found) {
+      handleAddToCart(found)
+      return
+    }
+
+    // 3. Not found anywhere
+    toast.error(`No product found for barcode: ${code}`, { duration: 2500 })
+  }, [switchCashierByBarcode, getByBarcode]))
+
+  // Manual search input — still supports typing a barcode and pressing Enter
+  const handleSearchKey = useCallback((e) => {
+    if (e.key !== 'Enter' || !search.trim()) return
+    const found = getByBarcode(search.trim())
+    if (found) {
+      handleAddToCart(found)
+      setSearch('')
+    } else {
+      toast.error('Product not found for this barcode', { duration: 2000 })
+    }
+  }, [search, getByBarcode])
 
   function handleAddToCart(p) {
     // ── Block expired products ───────────────────────────────────────────────
@@ -615,22 +635,6 @@ export default function POS() {
       return
     }
     updateQty(item.cartItemId || item.id, item.qty + 1)
-  }
-
-  const handleCashierBarcodeKey = async (e) => {
-    if (e.key !== 'Enter') return
-
-    const code = String(cashierBarcode || '').trim()
-    if (!code) return
-
-    const result = await switchCashierByBarcode(code)
-    if (result?.success) {
-      setCashierBarcode('')
-      toast.success(`Cashier switched to ${result.user?.name || result.user?.username || 'Staff'}`)
-      return
-    }
-
-    toast.error(result?.error || 'Unable to switch cashier')
   }
 
   const handleCompleteSale = async (method, cashGiven = 0, change = 0, helaQRResult = null) => {
@@ -1000,23 +1004,15 @@ export default function POS() {
 
         <div className="px-4 py-2.5 border-b border-gray-100 bg-white">
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Active Cashier</p>
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
               <User size={13} />
             </div>
             <p className="text-xs font-semibold text-gray-700">{currentUser?.name || currentUser?.username || 'Unknown'}</p>
           </div>
-          <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-1">
-            <Barcode size={14} className="text-gray-400 shrink-0" />
-            <input
-              value={cashierBarcode}
-              onChange={(e) => setCashierBarcode(e.target.value)}
-              onKeyDown={handleCashierBarcodeKey}
-              placeholder="Scan cashier badge and press Enter"
-              className="flex-1 min-w-0 bg-transparent border-0 outline-none text-xs text-gray-700 placeholder:text-gray-400 py-1.5"
-            />
-          </div>
-          <p className="text-[10px] text-gray-400 mt-1.5">No password required. Cashier accounts only.</p>
+          <p className="text-[10px] text-gray-400 mt-1.5 flex items-center gap-1">
+            <Barcode size={10} /> Scan cashier badge anytime — no need to click anything.
+          </p>
         </div>
 
         {/* Cart items */}
