@@ -630,6 +630,11 @@ export default function POS() {
   const [autoPrintPending, setAutoPrintPending] = useState(false)
   const [quickAddBarcode, setQuickAddBarcode] = useState('')
   const [showQuickAddModal, setShowQuickAddModal] = useState(false)
+  const [qtyEditId, setQtyEditId] = useState(null)
+  const [qtyEditVal, setQtyEditVal] = useState('')
+  const qtyInputRef = useRef(null)
+  const [showExpiryWarning, setShowExpiryWarning] = useState(false)
+  const [expiryWarningProduct, setExpiryWarningProduct] = useState(null)
   const hiddenReceiptRef = useRef(null)
   const searchRef = useRef(null)
   const toast = useToast()
@@ -814,6 +819,29 @@ export default function POS() {
     toast.info(`Unlisted barcode scanned: ${code}. Opening Quick Add...`, { duration: 2500 })
   }, [getByBarcode, switchCashierByBarcode]))
 
+  // ── Expiry helpers ──────────────────────────────────────────────────────────────
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const getExpiryStatus = (expiry) => {
+    if (!expiry) return null
+    const exp = new Date(expiry)
+    if (isNaN(exp)) return null
+    const daysLeft = Math.ceil((exp - today) / (1000 * 60 * 60 * 24))
+    if (daysLeft < 0) return { status: 'expired', daysLeft, label: `Expired ${Math.abs(daysLeft)}d ago` }
+    if (daysLeft === 0) return { status: 'expires_today', daysLeft, label: 'Expires TODAY' }
+    if (daysLeft <= 7) return { status: 'critical', daysLeft, label: `Expires in ${daysLeft}d` }
+    if (daysLeft <= 30) return { status: 'near', daysLeft, label: `Expires in ${daysLeft}d` }
+    return { status: 'ok', daysLeft, label: null }
+  }
+
+  const nearExpiryProducts = useMemo(() => {
+    return products.filter(p => {
+      if (!p.active || !p.expiry) return false
+      const st = getExpiryStatus(p.expiry)
+      return st && (st.status === 'expired' || st.status === 'expires_today' || st.status === 'critical' || st.status === 'near')
+    }).sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
+  }, [products])
 
   // Manual search input — still supports typing a barcode and pressing Enter
   const handleSearchKey = useCallback((e) => {
@@ -828,24 +856,30 @@ export default function POS() {
   }, [search, getByBarcode])
 
   function handleAddToCart(p) {
-    // ── Block expired products ───────────────────────────────────────────────
-    if (p.expiry) {
-      const expDate = new Date(p.expiry)
-      if (!isNaN(expDate) && expDate < new Date()) {
-        toast.error(
-          `❌ Cannot sell — "${p.name}" expired on ${p.expiry}`,
-          { duration: 4000 }
-        )
-        return
-      }
+    const expInfo = getExpiryStatus(p.expiry)
+
+    // ── BLOCK: fully expired ─────────────────────────────────────────────────
+    if (expInfo?.status === 'expired') {
+      playTone('success')
+      toast.error(`❌ EXPIRED — "${p.name}" expired on ${p.expiry}. Cannot sell!`, { duration: 5000 })
+      return
     }
 
-    // Check if it's an electronics item (either by activeModule, category, or by checking the electronics store)
-    const isElectronicsItem = activeModule === 'electronics' || 
-                              p.category === 'Smartphones' || 
-                              p.category === 'Laptops' ||
-                              useElectronicsStore.getState().elProducts?.some(ep => ep.id === p.id);
+    // ── WARN: near expiry (within 30 days) — show confirm modal ─────────────
+    if (expInfo && expInfo.status !== 'ok') {
+      setExpiryWarningProduct(p)
+      setShowExpiryWarning(true)
+      return
+    }
 
+    _doAddToCart(p)
+  }
+
+  function _doAddToCart(p) {
+    const isElectronicsItem = activeModule === 'electronics' ||
+                              p.category === 'Smartphones' ||
+                              p.category === 'Laptops' ||
+                              useElectronicsStore.getState().elProducts?.some(ep => ep.id === p.id)
     if (isElectronicsItem) {
       setSerialProduct(p)
       setSerialForm({ serial: '', imei: '', warrantyMonths: p.warrantyMonths || 0 })
@@ -857,7 +891,7 @@ export default function POS() {
     if (stock <= currentQty) { toast.error(`${p.name} is out of stock`); return }
     addToCart(p)
     playTone('tick')
-    toast.success(`${p.name} added to cart`, { duration: 1200 })
+    toast.success(`${p.name} added`, { duration: 1000 })
   }
 
   useEffect(() => {
@@ -1115,6 +1149,37 @@ export default function POS() {
           </div>
         </div>
 
+        {/* ── Near-Expiry Alert Banner ────────────────────────────────────── */}
+        {nearExpiryProducts.length > 0 && (
+          <div style={{ background: '#fffbeb', borderBottom: '1px solid #fde68a', padding: '6px 16px' }}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+              <span className="text-xs font-bold text-amber-700">EXPIRY ALERT:</span>
+              {nearExpiryProducts.slice(0, 5).map(p => {
+                const st = getExpiryStatus(p.expiry)
+                const isExp = st?.status === 'expired'
+                const isCritical = st?.status === 'expires_today' || st?.status === 'critical'
+                return (
+                  <span
+                    key={p.id}
+                    className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{
+                      background: isExp ? '#fee2e2' : isCritical ? '#ffedd5' : '#fef9c3',
+                      color: isExp ? '#b91c1c' : isCritical ? '#c2410c' : '#854d0e',
+                      border: `1px solid ${isExp ? '#fca5a5' : isCritical ? '#fdba74' : '#fde047'}`,
+                    }}
+                  >
+                    {p.name} — {st?.label}
+                  </span>
+                )
+              })}
+              {nearExpiryProducts.length > 5 && (
+                <span className="text-[11px] text-amber-600 font-semibold">+{nearExpiryProducts.length - 5} more</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Category pills */}
         <div
           className="px-4 py-2.5 flex gap-2 overflow-x-auto shrink-0"
@@ -1295,63 +1360,126 @@ export default function POS() {
             </div>
           ) : (
             <div className="p-3 flex flex-col gap-2">
-              {cart.map((item, idx) => (
-                <div key={item.id}>
-                  <div
-                    className={cn(
-                      'cart-item-row cursor-pointer',
-                      selectedCartItem === (item.cartItemId || item.id) && 'border-green-400 bg-green-50'
-                    )}
-                    onClick={() => setSelectedCartItem(selectedCartItem === (item.cartItemId || item.id) ? null : (item.cartItemId || item.id))}
-                  >
+              {cart.map((item, idx) => {
+                const itemKey = item.cartItemId || item.id
+                const isSelected = selectedCartItem === itemKey
+                const isEditingQty = qtyEditId === itemKey
+                const WEIGHT_UNITS = ['kg', 'g', 'L', 'ml', 'liter', 'litre', 'gram', 'kilo', 'oz', 'lb']
+                const isWeightUnit = WEIGHT_UNITS.includes(String(item.unit || '').toLowerCase())
+                const qtyStep = isWeightUnit ? 0.001 : 1
+                const qtyDisplay = isWeightUnit
+                  ? (parseFloat(item.qty) % 1 === 0 ? item.qty : parseFloat(item.qty).toFixed(3).replace(/\.?0+$/, ''))
+                  : item.qty
+
+                const commitQtyEdit = () => {
+                  const parsed = parseFloat(qtyEditVal)
+                  if (!isNaN(parsed) && parsed > 0) updateQty(itemKey, parsed)
+                  else if (!isNaN(parsed) && parsed <= 0) removeFromCart(itemKey)
+                  setQtyEditId(null)
+                  setQtyEditVal('')
+                }
+
+                return (
+                  <div key={itemKey}>
                     <div
-                      className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                      style={{ background: selectedCartItem === (item.cartItemId || item.id) ? '#dcfce7' : '#f8fafb' }}
-                    >
-                      <CatIcon cat={item.category} size={18} className={selectedCartItem === (item.cartItemId || item.id) ? 'text-green-600' : 'text-gray-500'} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
-                      {item.isUnique && (
-                        <p className="text-[10px] text-gray-500 mt-0.5 flex gap-2">
-                          {item.serial && <span>S/N: <span className="font-mono text-gray-700">{item.serial}</span></span>}
-                          {item.imei && <span>IMEI: <span className="font-mono text-gray-700">{item.imei}</span></span>}
-                          {item.warrantyMonths > 0 && <span className="text-blue-600 flex items-center gap-0.5"><ShieldCheck size={10} />{item.warrantyMonths}m Warranty</span>}
-                        </p>
+                      className={cn(
+                        'cart-item-row cursor-pointer',
+                        isSelected && 'border-green-400 bg-green-50'
                       )}
-                      <p className="text-xs text-gray-400 mt-0.5">{formatCurrency(item.salePrice)} × {item.qty}</p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); updateQty(item.cartItemId || item.id, item.qty - 1) }}
-                        className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-red-100 text-red-400 transition-all active:scale-90 border border-red-100"
-                      >
-                        <Minus size={12} />
-                      </button>
-                      <span className="w-7 text-center text-sm font-black text-gray-800">{item.qty}</span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleIncreaseQty(item) }}
-                        className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-green-100 text-green-600 transition-all active:scale-90 border border-green-100"
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
-                    <p className="text-sm font-black text-green-700 w-20 text-right shrink-0">
-                      {formatCurrency(item.salePrice * item.qty)}
-                    </p>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeFromCart(item.cartItemId || item.id); if (selectedCartItem === (item.cartItemId || item.id)) setSelectedCartItem(null) }}
-                      className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-100 transition-all active:scale-90"
-                      title="Remove item from cart"
+                      onClick={() => {
+                        if (isEditingQty) return
+                        setSelectedCartItem(isSelected ? null : itemKey)
+                      }}
                     >
-                      <Trash2 size={14} />
-                    </button>
+                      <div
+                        className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                        style={{ background: isSelected ? '#dcfce7' : '#f8fafb' }}
+                      >
+                        <CatIcon cat={item.category} size={18} className={isSelected ? 'text-green-600' : 'text-gray-500'} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
+                        {item.isUnique && (
+                          <p className="text-[10px] text-gray-500 mt-0.5 flex gap-2">
+                            {item.serial && <span>S/N: <span className="font-mono text-gray-700">{item.serial}</span></span>}
+                            {item.imei && <span>IMEI: <span className="font-mono text-gray-700">{item.imei}</span></span>}
+                            {item.warrantyMonths > 0 && <span className="text-blue-600 flex items-center gap-0.5"><ShieldCheck size={10} />{item.warrantyMonths}m Warranty</span>}
+                          </p>
+                        )}
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {formatCurrency(item.salePrice)} × {qtyDisplay}{item.unit ? ` ${item.unit}` : ''}
+                        </p>
+                      </div>
+
+                      {/* Qty editor */}
+                      <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => updateQty(itemKey, Math.max(0, parseFloat(item.qty) - (isWeightUnit ? 0.5 : 1)))}
+                          className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-red-100 text-red-400 transition-all active:scale-90 border border-red-100"
+                        >
+                          <Minus size={12} />
+                        </button>
+
+                        {isEditingQty ? (
+                          <input
+                            ref={qtyInputRef}
+                            type="number"
+                            min={isWeightUnit ? '0.001' : '1'}
+                            step={qtyStep}
+                            value={qtyEditVal}
+                            onChange={e => setQtyEditVal(e.target.value)}
+                            onBlur={commitQtyEdit}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') { e.preventDefault(); commitQtyEdit() }
+                              if (e.key === 'Escape') { setQtyEditId(null); setQtyEditVal('') }
+                            }}
+                            className="w-14 text-center text-sm font-black text-gray-900 border-2 border-green-400 rounded-lg outline-none bg-white px-1 py-0.5"
+                            style={{ minHeight: 28 }}
+                          />
+                        ) : (
+                          <button
+                            title={isWeightUnit ? `Tap to set exact ${item.unit} quantity` : 'Tap to set exact quantity'}
+                            onClick={() => {
+                              setQtyEditId(itemKey)
+                              setQtyEditVal(String(item.qty))
+                              setTimeout(() => qtyInputRef.current?.select(), 30)
+                            }}
+                            className={cn(
+                              'min-w-[28px] px-2 h-7 text-center text-sm font-black rounded-lg border transition-all active:scale-90',
+                              isWeightUnit
+                                ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                                : 'bg-gray-50 border-gray-200 text-gray-800 hover:bg-gray-100'
+                            )}
+                          >
+                            {qtyDisplay}
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => handleIncreaseQty(item)}
+                          className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-green-100 text-green-600 transition-all active:scale-90 border border-green-100"
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
+
+                      <p className="text-sm font-black text-green-700 w-20 text-right shrink-0">
+                        {formatCurrency(item.salePrice * parseFloat(item.qty))}
+                      </p>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeFromCart(itemKey); if (isSelected) setSelectedCartItem(null); if (isEditingQty) setQtyEditId(null) }}
+                        className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-100 transition-all active:scale-90"
+                        title="Remove item from cart"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    {idx < cart.length - 1 && (
+                      <div style={{ height: 1, background: 'linear-gradient(90deg,transparent,#f0f0f0,transparent)', margin: '0 8px' }} />
+                    )}
                   </div>
-                  {idx < cart.length - 1 && (
-                    <div style={{ height: 1, background: 'linear-gradient(90deg,transparent,#f0f0f0,transparent)', margin: '0 8px' }} />
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -1475,6 +1603,95 @@ export default function POS() {
         categories={moduleCategories}
         onSave={handlePOSQuickAddSave}
       />
+
+      {/* ── Near-Expiry Confirm Modal ──────────────────────────────────────── */}
+      {showExpiryWarning && expiryWarningProduct && (() => {
+        const p = expiryWarningProduct
+        const st = getExpiryStatus(p.expiry)
+        const isExpiresToday = st?.status === 'expires_today'
+        const isCritical = isExpiresToday || st?.status === 'critical'
+        return (
+          <div className="modal-overlay" style={{ zIndex: 9999 }}>
+            <div
+              className="animate-fade-in"
+              style={{
+                background: 'white',
+                borderRadius: 20,
+                width: 420,
+                overflow: 'hidden',
+                boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
+                border: `2px solid ${isCritical ? '#f97316' : '#eab308'}`,
+              }}
+            >
+              {/* Header */}
+              <div style={{ background: isCritical ? '#fff7ed' : '#fefce8', padding: '20px 24px 16px', borderBottom: `1px solid ${isCritical ? '#fed7aa' : '#fef08a'}` }}>
+                <div className="flex items-center gap-3">
+                  <div style={{ background: isCritical ? '#f97316' : '#eab308', borderRadius: 12, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <AlertTriangle size={22} color="white" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: isCritical ? '#c2410c' : '#854d0e' }}>
+                      {isExpiresToday ? '⚠️ Expires TODAY!' : `⚠️ Near Expiry — ${st?.daysLeft} days left`}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Confirm before selling</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div style={{ padding: '20px 24px' }}>
+                <div style={{ background: '#f9fafb', borderRadius: 12, padding: '14px 16px', marginBottom: 16, border: '1px solid #e5e7eb' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#111' }}>{p.name}</div>
+                  {p.barcode && <div style={{ fontSize: 11, color: '#9ca3af', fontFamily: 'monospace', marginTop: 2 }}>{p.barcode}</div>}
+                  <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase' }}>Expiry Date</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: isCritical ? '#dc2626' : '#d97706', marginTop: 2 }}>{p.expiry}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase' }}>Days Left</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: isCritical ? '#dc2626' : '#d97706', marginTop: 2 }}>{st?.daysLeft === 0 ? 'TODAY' : `${st?.daysLeft} days`}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase' }}>Price</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#111', marginTop: 2 }}>{formatCurrency(p.salePrice || p.price)}</div>
+                    </div>
+                  </div>
+                </div>
+                <p style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.6, margin: 0 }}>
+                  This product is approaching its expiry date. Do you want to proceed with the sale?
+                  The expiry date will be printed on the receipt.
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 10, padding: '0 24px 20px' }}>
+                <button
+                  onClick={() => {
+                    setShowExpiryWarning(false)
+                    setExpiryWarningProduct(null)
+                  }}
+                  style={{ flex: 1, padding: '12px 0', borderRadius: 12, border: '1px solid #e5e7eb', background: 'white', fontWeight: 700, fontSize: 14, cursor: 'pointer', color: '#374151' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const prod = expiryWarningProduct
+                    setShowExpiryWarning(false)
+                    setExpiryWarningProduct(null)
+                    _doAddToCart(prod)
+                  }}
+                  style={{ flex: 1.5, padding: '12px 0', borderRadius: 12, border: 'none', background: isCritical ? 'linear-gradient(135deg,#f97316,#ea580c)' : 'linear-gradient(135deg,#eab308,#ca8a04)', fontWeight: 800, fontSize: 14, cursor: 'pointer', color: 'white' }}
+                >
+                  ✅ Yes, Sell It
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       <Modal open={showSerialModal} onClose={() => setShowSerialModal(false)} title={`Provide Details: ${serialProduct?.name}`}>
         <form onSubmit={handleSerialSubmit} className="flex flex-col gap-4 pt-2">
           <datalist id={`serials-${serialProduct?.id}`}>

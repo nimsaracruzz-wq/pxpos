@@ -20,6 +20,7 @@ const MODULE_OPTIONS = [
   { key: 'pharmacy', label: 'Pharmacy' },
   { key: 'wholesale', label: 'Wholesale' },
   { key: 'online', label: 'Online' },
+  { key: 'electronics', label: 'Computer & Mobile' },
 ]
 
 function normalizeLicenseModules(modules = {}) {

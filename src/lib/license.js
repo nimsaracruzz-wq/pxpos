@@ -24,7 +24,7 @@ function normalizeLicenseKey(key) {
   return String(key || '').trim().toUpperCase()
 }
 
-const MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online']
+const MODULE_KEYS = ['grocery', 'restaurant', 'clothing', 'pharmacy', 'wholesale', 'online', 'electronics']
 
 function normalizeDeploymentMode(value) {
   return String(value || '').trim().toLowerCase() === 'cloud' ? 'cloud' : 'local'

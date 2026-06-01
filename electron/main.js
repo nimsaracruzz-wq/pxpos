@@ -566,6 +566,51 @@ ipcMain.handle('helaqr-fetch', async (event, { url, method = 'POST', headers = {
   }
 });
 
+// ─── Global Barcode Lookup (CORS-free via Node.js) ──────────────────────────
+// Queries Open Food Facts → UPCitemdb and returns { found, name, category, source }
+ipcMain.handle('barcode-lookup', async (event, { barcode }) => {
+  const code = String(barcode || '').trim()
+  if (!code) return { found: false }
+
+  try {
+    // 1. Open Food Facts — covers food/grocery products worldwide
+    const offRes = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}?fields=product_name,brands,categories_tags,quantity`,
+      { headers: { 'User-Agent': 'PaxxmoPOS/1.0 - pos@paxxmo.app' } }
+    )
+    if (offRes.ok) {
+      const offData = await offRes.json().catch(() => ({}))
+      if (offData.status === 1 && offData.product?.product_name) {
+        const p = offData.product
+        const name = [p.brands, p.product_name, p.quantity].filter(Boolean).join(' ').trim()
+        const rawCat = (p.categories_tags || []).find(c => !c.includes(':')) ||
+          (p.categories_tags || [])[0]?.replace(/^[a-z]{2}:/, '') || ''
+        const cat = rawCat.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+        return { found: true, name, category: cat, source: 'Open Food Facts' }
+      }
+    }
+
+    // 2. UPCitemdb — covers general consumer products (100 req/day free)
+    const upcRes = await fetch(
+      `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(code)}`,
+      { headers: { 'Accept': 'application/json', 'User-Agent': 'PaxxmoPOS/1.0' } }
+    )
+    if (upcRes.ok) {
+      const upcData = await upcRes.json().catch(() => ({}))
+      const item = (upcData.items || [])[0]
+      if (item?.title) {
+        const name = [item.brand, item.title].filter(Boolean).join(' ').trim()
+        const cat = (item.category || '').replace(/[>|]/g, '/').split('/')[0].trim()
+        return { found: true, name, category: cat, source: 'UPCitemdb' }
+      }
+    }
+
+    return { found: false }
+  } catch (err) {
+    return { found: false, error: String(err?.message || err) }
+  }
+})
+
 // ─── Silent Receipt Printing (no pop-up windows) ───────────────────────────
 let printerWorkerWindow = null;
 

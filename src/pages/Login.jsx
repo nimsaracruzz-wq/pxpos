@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useCallback } from 'react'
 import { Lock, ScanBarcode, User, Loader2, Zap, Eye, EyeOff, Check, AlertCircle } from 'lucide-react'
 import { useAuthStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { BRAND } from '@/lib/brand'
+import { useBarcodeScanner } from '@/lib/useBarcodeScanner'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -16,53 +17,23 @@ export default function Login() {
   const toast = useToast()
   const passwordRef = React.useRef(null)
 
-  // Background barcode scanner listener
-  useEffect(() => {
-    let buffer = ''
-    let lastKeyTime = 0
-    const BARCODE_SPEED_MS = 60 // chars faster than this = scanner input
-    const MIN_BARCODE_LEN  = 3
-
-    const handleKeyDown = async (e) => {
-      const now = Date.now()
-      
-      if (e.key === 'Enter') {
-        const code = buffer.trim()
-        buffer = ''
-        
-        if (code.length < MIN_BARCODE_LEN) return
-        
-        e.preventDefault()
-        
-        const active = document.activeElement
-        if (active && active.tagName.toLowerCase() === 'input') {
-          active.value = ''
-          active.blur()
-        }
-
-        const ok = await loginByBarcode(code)
-        if (!ok) {
-          toast.error(`Unrecognized barcode: ${code}`)
-          setErrorText(`Barcode "${code}" is not linked to any active user.`)
-        } else {
-          setUsername('')
-          setPassword('')
-          setErrorText('')
-          setShowPassword(false)
-        }
-        return
-      }
-
-      if (e.key.length === 1) {
-        if (now - lastKeyTime > BARCODE_SPEED_MS * 3) buffer = '' // too slow — reset
-        buffer += e.key
-        lastKeyTime = now
-      }
+  // ── Barcode scanner: uses the global hook (same as POS) ───────────────────
+  const handleBarcodeScan = useCallback(async (code) => {
+    setScanPulse(true)
+    setTimeout(() => setScanPulse(false), 1500)
+    const ok = await loginByBarcode(code)
+    if (!ok) {
+      toast.error(`Unrecognized badge: ${code}`)
+      setErrorText(`Badge "${code}" is not linked to any active user.`)
+    } else {
+      setUsername('')
+      setPassword('')
+      setErrorText('')
+      setShowPassword(false)
     }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [loginByBarcode, toast])
+
+  useBarcodeScanner(handleBarcodeScan)
 
   const handleLogin = async (e) => {
     e.preventDefault()

@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app'
 import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection, writeBatch, addDoc, onSnapshot, query, where, updateDoc, serverTimestamp, limit } from 'firebase/firestore'
-import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore } from '@/store'
+import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore, useElectronicsStore } from '@/store'
 import { DEFAULT_FIREBASE_CONFIG } from '@/lib/defaultFirebaseConfig'
 
 // ─── Paxxmo POS – Firebase Project Config ───────────────────────────────────
@@ -104,6 +104,7 @@ export async function syncToCloud() {
     const { logs }         = useActivityStore.getState()
     const { recipes }      = useRecipeStore.getState()
     const { users }        = useAuthStore.getState()
+    const { elProducts, serials, elSuppliers, elGRNs, elSales, repairJobs, elCustomers, warranties } = useElectronicsStore.getState()
     const { businessInfo, licenseKey, cloudSubscription } = useAppStore.getState()
 
     // Removed strict subscription checks so developers/users can always 
@@ -198,6 +199,71 @@ export async function syncToCloud() {
       entries.push({ ref: doc(usersRef, String(item.id)), data: item })
     })
 
+    // Electronics collections
+    const elProductsRef = collection(db, 'stores', storeId, 'electronics_products')
+    if (Array.isArray(elProducts)) {
+      elProducts.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(elProductsRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
+    const serialsRef = collection(db, 'stores', storeId, 'electronics_serials')
+    if (Array.isArray(serials)) {
+      serials.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(serialsRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
+    const elSuppliersRef = collection(db, 'stores', storeId, 'electronics_suppliers')
+    if (Array.isArray(elSuppliers)) {
+      elSuppliers.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(elSuppliersRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
+    const elGRNsRef = collection(db, 'stores', storeId, 'electronics_grns')
+    if (Array.isArray(elGRNs)) {
+      elGRNs.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(elGRNsRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
+    const elSalesRef = collection(db, 'stores', storeId, 'electronics_sales')
+    if (Array.isArray(elSales)) {
+      elSales.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(elSalesRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
+    const repairJobsRef = collection(db, 'stores', storeId, 'electronics_repair_jobs')
+    if (Array.isArray(repairJobs)) {
+      repairJobs.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(repairJobsRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
+    const elCustomersRef = collection(db, 'stores', storeId, 'electronics_customers')
+    if (Array.isArray(elCustomers)) {
+      elCustomers.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(elCustomersRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
+    const warrantiesRef = collection(db, 'stores', storeId, 'electronics_warranties')
+    if (Array.isArray(warranties)) {
+      warranties.forEach((item) => {
+        if (!item?.id) return
+        entries.push({ ref: doc(warrantiesRef, String(item.id)), data: { ...item, storeId } })
+      })
+    }
+
     await commitSetEntriesInChunks(entries, 350)
     return true
   } catch (error) {
@@ -239,7 +305,10 @@ export async function pullFromCloud() {
       return false
     }
 
-    const [appSettingsSnap, products, sales, tables, kots, customers, logs, recipesDocs, users] = await Promise.all([
+    const [
+      appSettingsSnap, products, sales, tables, kots, customers, logs, recipesDocs, users,
+      elProducts, serials, elSuppliers, elGRNs, elSales, repairJobs, elCustomers, warranties
+    ] = await Promise.all([
       getDoc(doc(activeDb, 'stores', storeId, 'settings', 'app')),
       readCollectionDocs(activeDb, storeId, 'products', 4000),
       readCollectionDocs(activeDb, storeId, 'sales', 4000),
@@ -249,6 +318,14 @@ export async function pullFromCloud() {
       readCollectionDocs(activeDb, storeId, 'activity_logs', 4000),
       readCollectionDocs(activeDb, storeId, 'recipes', 1200),
       readCollectionDocs(activeDb, storeId, 'users', 500),
+      readCollectionDocs(activeDb, storeId, 'electronics_products', 4000),
+      readCollectionDocs(activeDb, storeId, 'electronics_serials', 4000),
+      readCollectionDocs(activeDb, storeId, 'electronics_suppliers', 4000),
+      readCollectionDocs(activeDb, storeId, 'electronics_grns', 4000),
+      readCollectionDocs(activeDb, storeId, 'electronics_sales', 4000),
+      readCollectionDocs(activeDb, storeId, 'electronics_repair_jobs', 4000),
+      readCollectionDocs(activeDb, storeId, 'electronics_customers', 4000),
+      readCollectionDocs(activeDb, storeId, 'electronics_warranties', 4000),
     ])
 
     if (appSettingsSnap.exists()) {
@@ -275,6 +352,19 @@ export async function pullFromCloud() {
     if (customers.length > 0) useCustomerStore.setState((state) => ({ ...state, customers }))
     if (logs.length > 0) useActivityStore.setState((state) => ({ ...state, logs }))
     if (users.length > 0) useAuthStore.setState((state) => ({ ...state, users }))
+
+    // Update electronics store state
+    useElectronicsStore.setState((state) => ({
+      ...state,
+      elProducts: elProducts.length > 0 ? elProducts : state.elProducts,
+      serials: serials.length > 0 ? serials : state.serials,
+      elSuppliers: elSuppliers.length > 0 ? elSuppliers : state.elSuppliers,
+      elGRNs: elGRNs.length > 0 ? elGRNs : state.elGRNs,
+      elSales: elSales.length > 0 ? elSales : state.elSales,
+      repairJobs: repairJobs.length > 0 ? repairJobs : state.repairJobs,
+      elCustomers: elCustomers.length > 0 ? elCustomers : state.elCustomers,
+      warranties: warranties.length > 0 ? warranties : state.warranties,
+    }))
 
     if (recipesDocs.length > 0) {
       const recipes = recipesDocs.reduce((acc, row) => {

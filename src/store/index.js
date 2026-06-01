@@ -1342,17 +1342,13 @@ export const useAuthStore = create(
         return false
       },
 
-      // POS quick-switch: allow barcode switch only for cashier/staff accounts.
+      // POS quick-switch: allow any active user to switch by barcode scan.
       switchCashierByBarcode: async (barcode) => {
         const renderer = ipc()
         if (!renderer) return { success: false, error: 'No IPC' }
 
         const user = await renderer.invoke('auth-barcode', { barcode })
         if (!user) return { success: false, error: 'No user found for this barcode' }
-
-        if (user.role !== 'staff') {
-          return { success: false, error: 'Only cashier accounts can be switched by barcode' }
-        }
 
         set({ currentUser: user })
         return { success: true, user }

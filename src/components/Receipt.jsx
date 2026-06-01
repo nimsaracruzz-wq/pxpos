@@ -153,7 +153,23 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
                     {item.warrantyMonths ? `Warranty: ${item.warrantyMonths}m` : ''}
                   </div>
                 )}
-                <div style={{ fontSize: '11px', fontWeight: 700 }}>{item.qty} x {formatCurrency(item.salePrice || item.price)}</div>
+                <div style={{ fontSize: '11px', fontWeight: 700 }}>
+                  {(() => {
+                    const WEIGHT_UNITS = ['kg', 'g', 'L', 'ml', 'liter', 'litre', 'gram', 'kilo', 'oz', 'lb']
+                    const unit = String(item.unit || '').trim()
+                    const isWeightUnit = WEIGHT_UNITS.includes(unit.toLowerCase())
+                    const qty = parseFloat(item.qty) || 0
+                    const qtyDisplay = isWeightUnit
+                      ? (qty % 1 === 0 ? qty : qty.toFixed(3).replace(/\.?0+$/, ''))
+                      : qty
+                    return `${qtyDisplay}${unit ? ' ' + unit : ''} x ${formatCurrency(item.salePrice || item.price)}`
+                  })()}
+                </div>
+                {item.expiry && (
+                  <div style={{ fontSize: '10px', fontWeight: 700, marginTop: 1, color: '#555' }}>
+                    Exp: {item.expiry}
+                  </div>
+                )}
               </td>
               <td style={{ padding: '2px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 900, fontSize: 13, verticalAlign: 'top' }}>{formatCurrency((item.salePrice || item.price) * item.qty)}</td>
             </tr>
