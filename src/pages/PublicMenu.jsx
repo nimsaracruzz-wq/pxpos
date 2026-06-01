@@ -156,7 +156,12 @@ export default function PublicMenu() {
   const guests = Number(searchParams.get('guests') || 0) || 0
   const rawSession = String(searchParams.get('session') || '').trim()
   const qrToken = String(searchParams.get('token') || '').trim()
-  const effectiveSession = rawSession && rawSession !== 'static' ? rawSession : `table-${tableNo || 'na'}`
+
+  const [resolvedSession, setResolvedSession] = useState(rawSession && rawSession !== 'static' ? rawSession : '')
+  const [resolvedToken, setResolvedToken] = useState(qrToken)
+
+  const effectiveSession = resolvedSession || rawSession || `table-${tableNo || 'na'}`
+  const effectiveToken = resolvedToken || qrToken
 
   const { products } = useProductStore()
   const appStore = useAppStore()
@@ -187,7 +192,7 @@ export default function PublicMenu() {
 
   const t = I18N[lang]
   const quickNotes = [t.lessSpicy, t.noOnions, t.extraSauce, t.noSugar]
-  const invalidQr = !decodedStoreId || !tableNo || !qrToken || sessionState === 'invalid'
+  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid'
 
   const spiceOptions = useMemo(
     () => [
@@ -301,23 +306,28 @@ export default function PublicMenu() {
   }, [decodedStoreId, effectiveSession, tableNo])
 
   useEffect(() => {
-    if (!decodedStoreId || !tableNo || !qrToken) {
+    if (!decodedStoreId || !tableNo) {
       setSessionState('invalid')
       return () => {}
     }
 
     setSessionState('loading')
     let retryTimer = null
-    const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (session) => {
-      if (!session) {
-        // Fallback: try a one-time fetch in case the realtime listener fired before
-        // the session doc was created/propagated. This avoids incorrectly marking
-        // freshly generated QR links as expired.
+    const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (sessionDoc) => {
+      if (!sessionDoc) {
+        // Fallback: try a one-time fetch
         try {
           const fetched = await getTableQrSession(decodedStoreId, tableNo)
-          if (fetched && String(fetched.token || '') === qrToken) {
-            setSessionState('valid')
-            return
+          const fetchedToken = String(fetched?.token || '').trim()
+          const fetchedSession = String(fetched?.session || '').trim()
+          const fetchedStatus = String(fetched?.status || '').trim()
+          if (fetched && fetchedToken && fetchedSession && fetchedStatus === 'occupied') {
+            if (!qrToken || qrToken === fetchedToken) {
+              setResolvedToken(fetchedToken)
+              setResolvedSession(fetchedSession)
+              setSessionState('valid')
+              return
+            }
           }
         } catch (_) {}
 
@@ -330,14 +340,33 @@ export default function PublicMenu() {
         return
       }
 
-      const isMoved = String(session.status || '') === 'moved'
-      const movedToTable = String(session.movedToTable || '').trim()
+      const dbToken = String(sessionDoc.token || '').trim()
+      const dbSession = String(sessionDoc.session || '').trim()
+      const dbStatus = String(sessionDoc.status || '').trim()
+
+      if (dbStatus === 'available' || !dbToken || !dbSession) {
+        setSessionState('invalid')
+        return
+      }
+
+      // If the URL provided a token, validate that it matches the database
+      if (qrToken && qrToken !== dbToken) {
+        setSessionState('invalid')
+        return
+      }
+
+      // Automatically resolve session and token from the database
+      setResolvedToken(dbToken)
+      setResolvedSession(dbSession)
+
+      const isMoved = String(sessionDoc.status || '') === 'moved'
+      const movedToTable = String(sessionDoc.movedToTable || '').trim()
       if (
         isMoved &&
         movedToTable &&
         movedToTable !== tableNo &&
-        String(session.session || '') === effectiveSession &&
-        String(session.token || '') === qrToken
+        dbSession === (resolvedSession || dbSession) &&
+        dbToken === (resolvedToken || dbToken)
       ) {
         setSessionState('loading')
         const nextUrl = new URL(window.location.href)
@@ -346,18 +375,14 @@ export default function PublicMenu() {
         return
       }
 
-      // Allow continuous orders: only validate token, not table status
-      const matches =
-        String(session.token || '') === qrToken
-
-      setSessionState(matches ? 'valid' : 'invalid')
+      setSessionState('valid')
     })
 
     return () => {
       if (retryTimer) clearTimeout(retryTimer)
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [decodedStoreId, tableNo, effectiveSession, qrToken, sessionRetry])
+  }, [decodedStoreId, tableNo, qrToken, sessionRetry, resolvedSession, resolvedToken])
 
   const getCustomization = (itemId) => customizations[itemId] || defaultCustomization()
 
@@ -482,7 +507,7 @@ export default function PublicMenu() {
       toast.error(t.missingStore)
       return
     }
-    if (!qrToken) {
+    if (!effectiveToken) {
       toast.error(t.invalidQr)
       return
     }
@@ -509,7 +534,7 @@ export default function PublicMenu() {
       storeId: decodedStoreId,
       tableNumber: tableNo,
       session: effectiveSession,
-      token: qrToken,
+      token: effectiveToken,
       guests,
       customerName: customerName || 'Guest',
       notes: normalizedNotes,
