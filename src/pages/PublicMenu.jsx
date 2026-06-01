@@ -314,48 +314,44 @@ export default function PublicMenu() {
     setSessionState('loading')
     let retryTimer = null
     const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (sessionDoc) => {
-      if (!sessionDoc) {
-        // Fallback: try a one-time fetch
-        try {
-          const fetched = await getTableQrSession(decodedStoreId, tableNo)
-          const fetchedToken = String(fetched?.token || '').trim()
-          const fetchedSession = String(fetched?.session || '').trim()
-          const fetchedStatus = String(fetched?.status || '').trim()
-          if (fetched && fetchedToken && fetchedSession && fetchedStatus === 'occupied') {
-            if (!qrToken || qrToken === fetchedToken) {
-              setResolvedToken(fetchedToken)
-              setResolvedSession(fetchedSession)
-              setSessionState('valid')
-              return
-            }
-          }
-        } catch (_) {}
+      const dbStatus = String(sessionDoc?.status || '').trim()
+      const dbToken = String(sessionDoc?.token || '').trim()
+      const dbSession = String(sessionDoc?.session || '').trim()
 
-        if (sessionRetry < 2) {
-          retryTimer = setTimeout(() => setSessionRetry((prev) => prev + 1), 700)
-          return
+      const isSessionActive = sessionDoc && dbStatus === 'occupied' && dbToken && dbSession
+
+      if (!isSessionActive) {
+        // If the scanned QR has no token (it's the static permanent QR), start a new session!
+        if (!qrToken) {
+          const newSessionId = `session-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`
+          const newQrToken = `token-${Math.random().toString(36).substring(2, 10)}`
+          try {
+            const { publishTableQrSession } = await import('@/lib/firebase')
+            await publishTableQrSession(decodedStoreId, tableNo, newSessionId, newQrToken, { guests: guests || 1 })
+            setResolvedToken(newQrToken)
+            setResolvedSession(newSessionId)
+            setSessionState('valid')
+            return
+          } catch (error) {
+            console.error('[PublicMenu] Failed to auto-create session:', error)
+            setSessionState('invalid')
+            return
+          }
         }
 
+        // If the scanned QR HAS a token (it's a dynamic link), it has expired!
         setSessionState('invalid')
         return
       }
 
-      const dbToken = String(sessionDoc.token || '').trim()
-      const dbSession = String(sessionDoc.session || '').trim()
-      const dbStatus = String(sessionDoc.status || '').trim()
-
-      if (dbStatus === 'available' || !dbToken || !dbSession) {
-        setSessionState('invalid')
-        return
-      }
-
-      // If the URL provided a token, validate that it matches the database
+      // If a session is active in the database:
+      // If the scanned QR has a token, validate that it matches the active database session!
       if (qrToken && qrToken !== dbToken) {
         setSessionState('invalid')
         return
       }
 
-      // Automatically resolve session and token from the database
+      // Automatically adopt the active session
       setResolvedToken(dbToken)
       setResolvedSession(dbSession)
 

@@ -172,6 +172,20 @@ export function Layout({ children }) {
       const tableStore = useTableStore.getState()
       const matchingTable = tableStore.tables.find((t) => String(t.number) === tableNo)
 
+      const isNewSessionOnEmptyTable = matchingTable && matchingTable.status === 'available' && sessionId && qrToken
+      if (isNewSessionOnEmptyTable) {
+        tableStore.updateTable(matchingTable.id, {
+          status: 'occupied',
+          guests: Number(incoming.guests || 1),
+          sessionId,
+          qrToken,
+          order: { items: [], notes: '', subtotal: 0, tax: 0, serviceCharge: 0, total: 0 }
+        })
+        matchingTable.status = 'occupied'
+        matchingTable.sessionId = sessionId
+        matchingTable.qrToken = qrToken
+      }
+
       // Security/validity gate: only accept orders for the currently active table session.
       // After settlement, session is cleared/rotated so old QR links are automatically invalid.
       if (!matchingTable || matchingTable.status !== 'occupied' || String(matchingTable.sessionId || '') !== sessionId || String(matchingTable.qrToken || '') !== qrToken) {
