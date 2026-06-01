@@ -1,101 +1,25 @@
-import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app'
-import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, collection, writeBatch, addDoc, onSnapshot, query, where, updateDoc, serverTimestamp, limit } from 'firebase/firestore'
+import { createClient } from '@supabase/supabase-js'
 import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore, useElectronicsStore } from '@/store'
-import { DEFAULT_FIREBASE_CONFIG } from '@/lib/defaultFirebaseConfig'
 
-// ─── Paxxmo POS – Firebase Project Config ───────────────────────────────────
-const HARDCODED_CONFIG = DEFAULT_FIREBASE_CONFIG
+// ─── Supabase Client Initialization ──────────────────────────────────────────
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || 'https://your-project-id.supabase.co').trim()
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-public-key').trim()
 
-let db = null
-let _lastConfigStr = null
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-function getEffectiveConfig() {
-  const { cloudSettings } = useAppStore.getState()
-  if (cloudSettings?.provider === 'firebase' && cloudSettings?.firebaseConfig) {
-    try {
-      const parsed = JSON.parse(cloudSettings.firebaseConfig)
-      if (parsed?.projectId) return parsed
-    } catch (_) {}
-  }
-  return HARDCODED_CONFIG
-}
-
-/** Lazy singleton: returns a Firestore instance, initializing only once or when config changes. */
-function getDb() {
-  const config = getEffectiveConfig()
-  const configStr = JSON.stringify(config)
-
-  // Already initialized with same config — reuse it
-  if (db && configStr === _lastConfigStr) return db
-
-  try {
-    const apps = getApps()
-    let app = apps.length > 0 ? apps[0] : null
-
-    // Tear down only if config actually changed during runtime (not just HMR)
-    if (app && _lastConfigStr !== null && configStr !== _lastConfigStr) {
-      app = initializeApp(config, `paxxmo-${Date.now()}`)
-    } else if (!app) {
-      app = initializeApp(config)
-    }
-
-    db = getFirestore(app)
-    _lastConfigStr = configStr
-    return db
-  } catch (err) {
-    console.error('[Firebase] getDb error:', err)
-    db = null
-    return null
-  }
-}
-
+// ─── Resolve Tenant / Store ID ───────────────────────────────────────────────
 export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
   const normalizedLicenseKey = String(licenseKey || '').trim().toUpperCase()
   return normalizedLicenseKey || ''
 }
 
-function getCloudStoreIds(businessInfo = {}, licenseKey = '') {
-  const tenantId = resolveCloudTenantId(businessInfo, licenseKey)
-  return tenantId ? [tenantId] : []
-}
-
-async function commitSetEntriesInChunks(entries = [], chunkSize = 400) {
-  const activeDb = getDb()
-  if (!activeDb || !Array.isArray(entries) || entries.length === 0) return
-  for (let index = 0; index < entries.length; index += chunkSize) {
-    const chunk = entries.slice(index, index + chunkSize)
-    const batch = writeBatch(activeDb)
-    chunk.forEach((entry) => {
-      if (!entry?.ref) return
-      batch.set(entry.ref, entry.data || {}, entry.options || undefined)
-    })
-    await batch.commit()
-  }
-}
-
-/** @deprecated Use getDb() directly. Kept for backward compatibility. */
+// ─── Legacy Firebase Initializer compatibility ──────────────────────────────
 export async function initializeFirebase() {
-  const activeDb = getDb()
-  return !!activeDb
+  return true
 }
 
-/** @deprecated Use getDb() directly. Kept for backward compatibility. */
-function ensureRealtimeDb() {
-  return getDb()
-}
-
-/**
- * Background Sync Engine
- * Mirrors local store slices to Firestore collections under stores/{storeId}
- */
+// ─── Unified Cloud Sync Engine (POS -> Supabase) ─────────────────────────────
 export async function syncToCloud() {
-  const activeDb = getDb()
-  if (!activeDb) {
-    console.warn('[syncToCloud] Firebase not available — skipping sync')
-    return false
-  }
-  db = activeDb
-
   try {
     const { sales }        = useSalesStore.getState()
     const { products }     = useProductStore.getState()
@@ -107,33 +31,27 @@ export async function syncToCloud() {
     const { elProducts, serials, elSuppliers, elGRNs, elSales, repairJobs, elCustomers, warranties } = useElectronicsStore.getState()
     const { businessInfo, licenseKey, cloudSubscription } = useAppStore.getState()
 
-    // Removed strict subscription checks so developers/users can always 
-    // sync their local changes during testing without needing an active license.
+    const storeId = resolveCloudTenantId(businessInfo, licenseKey)
+    if (!storeId) return false
 
-    // Each business/client is isolated by a single tenant key (license key preferred).
-    const storeIds = getCloudStoreIds(businessInfo, licenseKey)
-    const storeId = storeIds[0]
-    if (!storeId) {
-      console.warn('[syncToCloud] Missing license key. Cloud sync skipped')
-      return false
-    }
     const now = new Date().toISOString()
+    const entries = []
 
-    // 1. Store-level metadata and settings.
-    await setDoc(
-      doc(db, 'stores', storeId),
-      {
-        ...businessInfo,
-        tenantId: storeId,
-        licenseKey: String(licenseKey || '').trim().toUpperCase(),
-        lastSync: now,
-      },
-      { merge: true }
-    )
+    // 1. Store metadata
+    entries.push({
+      store_id: storeId,
+      collection_name: 'metadata',
+      doc_id: 'store',
+      data: { ...businessInfo, tenantId: storeId, licenseKey, lastSync: now },
+      updated_at: now,
+    })
 
-    await setDoc(
-      doc(db, 'stores', storeId, 'settings', 'app'),
-      {
+    // 2. Store settings
+    entries.push({
+      store_id: storeId,
+      collection_name: 'settings',
+      doc_id: 'app',
+      data: {
         businessInfo,
         taxSettings: useAppStore.getState().taxSettings,
         serviceChargeSettings: useAppStore.getState().serviceChargeSettings,
@@ -144,241 +62,174 @@ export async function syncToCloud() {
         cloudSubscription,
         updatedAt: now,
       },
-      { merge: true }
-    )
+      updated_at: now,
+    })
 
-    // 2. Build all collection writes and commit in chunks.
-    const entries = []
-
-    const productsRef = collection(db, 'stores', storeId, 'products')
+    // 3. POS collections
     products.forEach((item) => {
       if (!item?.id) return
-      entries.push({ ref: doc(productsRef, String(item.id)), data: { ...item, storeId } })
+      entries.push({ store_id: storeId, collection_name: 'products', doc_id: String(item.id), data: item, updated_at: now })
     })
 
-    const salesRef = collection(db, 'stores', storeId, 'sales')
     sales.slice(0, 1000).forEach((item) => {
       if (!item?.id) return
-      const saleDate = item.date ? new Date(item.date).toISOString() : now
-      entries.push({ ref: doc(salesRef, String(item.id)), data: { ...item, date: saleDate } })
+      entries.push({ store_id: storeId, collection_name: 'sales', doc_id: String(item.id), data: item, updated_at: now })
     })
 
-    const tablesRef = collection(db, 'stores', storeId, 'tables')
     tables.forEach((item) => {
       if (!item?.id) return
-      entries.push({ ref: doc(tablesRef, String(item.id)), data: item })
+      entries.push({ store_id: storeId, collection_name: 'tables', doc_id: String(item.id), data: item, updated_at: now })
     })
 
-    const kotsRef = collection(db, 'stores', storeId, 'kots')
     kots.slice(0, 1000).forEach((item) => {
       if (!item?.id) return
-      entries.push({ ref: doc(kotsRef, String(item.id)), data: item })
+      entries.push({ store_id: storeId, collection_name: 'kots', doc_id: String(item.id), data: item, updated_at: now })
     })
 
-    const customersRef = collection(db, 'stores', storeId, 'customers')
     customers.forEach((item) => {
       if (!item?.id) return
-      entries.push({ ref: doc(customersRef, String(item.id)), data: item })
+      entries.push({ store_id: storeId, collection_name: 'customers', doc_id: String(item.id), data: item, updated_at: now })
     })
 
-    const logsRef = collection(db, 'stores', storeId, 'activity_logs')
     logs.slice(0, 1000).forEach((item) => {
       if (!item?.id) return
-      entries.push({ ref: doc(logsRef, String(item.id)), data: item })
+      entries.push({ store_id: storeId, collection_name: 'activity_logs', doc_id: String(item.id), data: item, updated_at: now })
     })
 
-    const recipesRef = collection(db, 'stores', storeId, 'recipes')
     Object.entries(recipes || {}).forEach(([dishId, recipeItems]) => {
       if (!dishId) return
-      entries.push({ ref: doc(recipesRef, String(dishId)), data: { dishId: String(dishId), ingredients: Array.isArray(recipeItems) ? recipeItems : [] } })
+      entries.push({
+        store_id: storeId,
+        collection_name: 'recipes',
+        doc_id: String(dishId),
+        data: { dishId: String(dishId), ingredients: Array.isArray(recipeItems) ? recipeItems : [] },
+        updated_at: now,
+      })
     })
 
-    const usersRef = collection(db, 'stores', storeId, 'users')
     users.forEach((item) => {
       if (!item?.id) return
-      entries.push({ ref: doc(usersRef, String(item.id)), data: item })
+      entries.push({ store_id: storeId, collection_name: 'users', doc_id: String(item.id), data: item, updated_at: now })
     })
 
-    // Electronics collections
-    const elProductsRef = collection(db, 'stores', storeId, 'electronics_products')
-    if (Array.isArray(elProducts)) {
-      elProducts.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(elProductsRef, String(item.id)), data: { ...item, storeId } })
-      })
+    // Electronics Shop collections
+    elProducts.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_products', doc_id: String(item.id), data: item, updated_at: now })
+    })
+    serials.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_serials', doc_id: String(item.id), data: item, updated_at: now })
+    })
+    elSuppliers.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_suppliers', doc_id: String(item.id), data: item, updated_at: now })
+    })
+    elGRNs.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_grns', doc_id: String(item.id), data: item, updated_at: now })
+    })
+    elSales.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_sales', doc_id: String(item.id), data: item, updated_at: now })
+    })
+    repairJobs.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_repair_jobs', doc_id: String(item.id), data: item, updated_at: now })
+    })
+    elCustomers.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_customers', doc_id: String(item.id), data: item, updated_at: now })
+    })
+    warranties.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_warranties', doc_id: String(item.id), data: item, updated_at: now })
+    })
+
+    // Write to Supabase in chunks of 200
+    const chunkSize = 200
+    for (let i = 0; i < entries.length; i += chunkSize) {
+      const chunk = entries.slice(i, i + chunkSize)
+      const { error } = await supabase
+        .from('store_data')
+        .upsert(chunk, { onConflict: 'store_id,collection_name,doc_id' })
+      if (error) throw error
     }
 
-    const serialsRef = collection(db, 'stores', storeId, 'electronics_serials')
-    if (Array.isArray(serials)) {
-      serials.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(serialsRef, String(item.id)), data: { ...item, storeId } })
-      })
-    }
-
-    const elSuppliersRef = collection(db, 'stores', storeId, 'electronics_suppliers')
-    if (Array.isArray(elSuppliers)) {
-      elSuppliers.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(elSuppliersRef, String(item.id)), data: { ...item, storeId } })
-      })
-    }
-
-    const elGRNsRef = collection(db, 'stores', storeId, 'electronics_grns')
-    if (Array.isArray(elGRNs)) {
-      elGRNs.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(elGRNsRef, String(item.id)), data: { ...item, storeId } })
-      })
-    }
-
-    const elSalesRef = collection(db, 'stores', storeId, 'electronics_sales')
-    if (Array.isArray(elSales)) {
-      elSales.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(elSalesRef, String(item.id)), data: { ...item, storeId } })
-      })
-    }
-
-    const repairJobsRef = collection(db, 'stores', storeId, 'electronics_repair_jobs')
-    if (Array.isArray(repairJobs)) {
-      repairJobs.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(repairJobsRef, String(item.id)), data: { ...item, storeId } })
-      })
-    }
-
-    const elCustomersRef = collection(db, 'stores', storeId, 'electronics_customers')
-    if (Array.isArray(elCustomers)) {
-      elCustomers.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(elCustomersRef, String(item.id)), data: { ...item, storeId } })
-      })
-    }
-
-    const warrantiesRef = collection(db, 'stores', storeId, 'electronics_warranties')
-    if (Array.isArray(warranties)) {
-      warranties.forEach((item) => {
-        if (!item?.id) return
-        entries.push({ ref: doc(warrantiesRef, String(item.id)), data: { ...item, storeId } })
-      })
-    }
-
-    await commitSetEntriesInChunks(entries, 350)
     return true
   } catch (error) {
-    console.error('[Firebase] Sync failed:', error)
+    console.error('[Supabase] syncToCloud failed:', error)
     return false
   }
 }
 
-async function readCollectionDocs(activeDb, storeId, name, max = 2000) {
-  const snapshot = await getDocs(query(collection(activeDb, 'stores', storeId, name), limit(max)))
-  return snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }))
-}
-
-async function mirrorProductsToLocalSqlite(products = []) {
-  try {
-    if (typeof window === 'undefined' || typeof window.require !== 'function') return
-    const ipcRenderer = window.require('electron').ipcRenderer
-    const normalized = Array.isArray(products) ? products : []
-    await Promise.all(normalized.map((item) => ipcRenderer.invoke('add-product', {
-      ...item,
-      id: String(item?.id || ''),
-      active: item?.active !== false,
-      variants: Array.isArray(item?.variants) ? item.variants : [],
-    })))
-  } catch (error) {
-    console.warn('[Firebase] mirrorProductsToLocalSqlite warning:', error?.message || error)
-  }
-}
-
+// ─── Unified Cloud Pull Engine (Supabase -> POS) ─────────────────────────────
 export async function pullFromCloud() {
-  const activeDb = getDb()
-  if (!activeDb) return false
-
   try {
     const { businessInfo, licenseKey } = useAppStore.getState()
     const storeId = resolveCloudTenantId(businessInfo, licenseKey)
-    if (!storeId) {
-      console.warn('[pullFromCloud] Missing license key. Cloud pull skipped')
-      return false
+    if (!storeId) return false
+
+    const { data, error } = await supabase
+      .from('store_data')
+      .select('collection_name,doc_id,data')
+      .eq('store_id', storeId)
+
+    if (error) throw error
+
+    const collections = {}
+    data.forEach((row) => {
+      if (!collections[row.collection_name]) {
+        collections[row.collection_name] = []
+      }
+      collections[row.collection_name].push(row.data)
+    })
+
+    // Populate Zustand stores
+    if (collections.products) {
+      useProductStore.setState({ products: collections.products })
+    }
+    if (collections.sales) {
+      useSalesStore.setState({ sales: collections.sales })
+    }
+    if (collections.tables) {
+      useTableStore.setState({ tables: collections.tables })
+    }
+    if (collections.kots) {
+      useTableStore.setState({ kots: collections.kots })
+    }
+    if (collections.customers) {
+      useCustomerStore.setState({ customers: collections.customers })
+    }
+    if (collections.activity_logs) {
+      useActivityStore.setState({ logs: collections.activity_logs })
+    }
+    if (collections.recipes) {
+      const recipesMap = {}
+      collections.recipes.forEach((r) => {
+        if (r.dishId) recipesMap[r.dishId] = r.ingredients || []
+      })
+      useRecipeStore.setState({ recipes: recipesMap })
+    }
+    if (collections.users) {
+      useAuthStore.setState({ users: collections.users })
     }
 
-    const [
-      appSettingsSnap, products, sales, tables, kots, customers, logs, recipesDocs, users,
-      elProducts, serials, elSuppliers, elGRNs, elSales, repairJobs, elCustomers, warranties
-    ] = await Promise.all([
-      getDoc(doc(activeDb, 'stores', storeId, 'settings', 'app')),
-      readCollectionDocs(activeDb, storeId, 'products', 4000),
-      readCollectionDocs(activeDb, storeId, 'sales', 4000),
-      readCollectionDocs(activeDb, storeId, 'tables', 300),
-      readCollectionDocs(activeDb, storeId, 'kots', 4000),
-      readCollectionDocs(activeDb, storeId, 'customers', 4000),
-      readCollectionDocs(activeDb, storeId, 'activity_logs', 4000),
-      readCollectionDocs(activeDb, storeId, 'recipes', 1200),
-      readCollectionDocs(activeDb, storeId, 'users', 500),
-      readCollectionDocs(activeDb, storeId, 'electronics_products', 4000),
-      readCollectionDocs(activeDb, storeId, 'electronics_serials', 4000),
-      readCollectionDocs(activeDb, storeId, 'electronics_suppliers', 4000),
-      readCollectionDocs(activeDb, storeId, 'electronics_grns', 4000),
-      readCollectionDocs(activeDb, storeId, 'electronics_sales', 4000),
-      readCollectionDocs(activeDb, storeId, 'electronics_repair_jobs', 4000),
-      readCollectionDocs(activeDb, storeId, 'electronics_customers', 4000),
-      readCollectionDocs(activeDb, storeId, 'electronics_warranties', 4000),
-    ])
-
-    if (appSettingsSnap.exists()) {
-      const remoteSettings = appSettingsSnap.data() || {}
-      useAppStore.setState((state) => ({
-        ...state,
-        businessInfo: remoteSettings.businessInfo || state.businessInfo,
-        taxSettings: remoteSettings.taxSettings || state.taxSettings,
-        serviceChargeSettings: remoteSettings.serviceChargeSettings || state.serviceChargeSettings,
-        receiptSettings: remoteSettings.receiptSettings || state.receiptSettings,
-        hardwareSettings: remoteSettings.hardwareSettings || state.hardwareSettings,
-        modules: remoteSettings.modules || state.modules,
-        activeModule: remoteSettings.activeModule || state.activeModule,
-        cloudSubscription: remoteSettings.cloudSubscription || state.cloudSubscription,
-      }))
-    }
-
-    if (products.length > 0) {
-      useProductStore.setState((state) => ({ ...state, products }))
-      await mirrorProductsToLocalSqlite(products)
-    }
-    if (sales.length > 0) useSalesStore.setState((state) => ({ ...state, sales }))
-    if (tables.length > 0 || kots.length > 0) useTableStore.setState((state) => ({ ...state, tables: tables.length > 0 ? tables : state.tables, kots: kots.length > 0 ? kots : state.kots }))
-    if (customers.length > 0) useCustomerStore.setState((state) => ({ ...state, customers }))
-    if (logs.length > 0) useActivityStore.setState((state) => ({ ...state, logs }))
-    if (users.length > 0) useAuthStore.setState((state) => ({ ...state, users }))
-
-    // Update electronics store state
-    useElectronicsStore.setState((state) => ({
-      ...state,
-      elProducts: elProducts.length > 0 ? elProducts : state.elProducts,
-      serials: serials.length > 0 ? serials : state.serials,
-      elSuppliers: elSuppliers.length > 0 ? elSuppliers : state.elSuppliers,
-      elGRNs: elGRNs.length > 0 ? elGRNs : state.elGRNs,
-      elSales: elSales.length > 0 ? elSales : state.elSales,
-      repairJobs: repairJobs.length > 0 ? repairJobs : state.repairJobs,
-      elCustomers: elCustomers.length > 0 ? elCustomers : state.elCustomers,
-      warranties: warranties.length > 0 ? warranties : state.warranties,
-    }))
-
-    if (recipesDocs.length > 0) {
-      const recipes = recipesDocs.reduce((acc, row) => {
-        const key = String(row?.dishId || row?.id || '').trim()
-        if (!key) return acc
-        acc[key] = Array.isArray(row?.ingredients) ? row.ingredients : []
-        return acc
-      }, {})
-      useRecipeStore.setState((state) => ({ ...state, recipes }))
-    }
+    // Populate Electronics Store
+    useElectronicsStore.setState({
+      elProducts: collections.electronics_products || [],
+      serials: collections.electronics_serials || [],
+      elSuppliers: collections.electronics_suppliers || [],
+      elGRNs: collections.electronics_grns || [],
+      elSales: collections.electronics_sales || [],
+      repairJobs: collections.electronics_repair_jobs || [],
+      elCustomers: collections.electronics_customers || [],
+      warranties: collections.electronics_warranties || [],
+    })
 
     return true
   } catch (error) {
-    console.error('[Firebase] pullFromCloud failed:', error)
+    console.error('[Supabase] pullFromCloud failed:', error)
     return false
   }
 }
@@ -389,352 +240,217 @@ export async function syncWithCloud() {
   return pulled || pushed
 }
 
-/**
- * Test Firebase connection – called by Settings → Cloud Sync "Test Connection" button.
- */
+// ─── Test Supabase Connection ────────────────────────────────────────────────
 export async function testCloudConnection() {
-  const ok = await initializeFirebase()
-  if (!ok) throw new Error('Failed to initialise Firebase. Check your project config.')
-
   try {
-    const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeId = resolveCloudTenantId(businessInfo, licenseKey)
-    if (!storeId) throw new Error('License key is required for cloud sync.')
-    await setDoc(
-      doc(db, 'stores', storeId),
-      { lastConnectionTest: new Date().toISOString() },
-      { merge: true }
-    )
+    const { error } = await supabase.from('store_data').select('id').limit(1)
+    if (error) throw error
     return true
   } catch (error) {
-    console.error('[Firebase] Connection test error:', error)
+    console.error('[Supabase] testCloudConnection failed:', error)
     throw error
   }
 }
 
-// ─── Realtime QR Ordering Channel ───────────────────────────────────────────
+// ─── Mobile Ordering API (Supabase Backend) ──────────────────────────────────
 export async function publishQRCodeOrder(order) {
   try {
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return { success: false, error: 'Realtime database unavailable' }
-
     const storeId = String(order?.storeId || '').trim()
     if (!storeId) return { success: false, error: 'Store ID is required' }
 
+    const docId = `qr-order-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`
     const payload = {
-      storeId,
-      tableNumber: String(order.tableNumber || ''),
-      session: String(order.session || ''),
-      token: String(order.token || ''),
-      guests: Number(order.guests || 0),
-      customerName: order.customerName || 'Guest',
-      notes: order.notes || '',
-      items: Array.isArray(order.items) ? order.items : [],
-      total: Number(order.total || 0),
-      subtotal: Number(order.subtotal || order.total || 0),
-      tax: Number(order.tax || 0),
-      serviceCharge: Number(order.serviceCharge || 0),
-      source: 'qr',
+      id: docId,
+      ...order,
       status: 'new',
-      createdAt: serverTimestamp(),
       createdAtMs: Date.now(),
     }
 
-    const ref = await addDoc(collection(rdb, 'stores', storeId, 'qr_orders'), payload)
-    return { success: true, id: ref.id }
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: storeId,
+        collection_name: 'qr_orders',
+        doc_id: docId,
+        data: payload,
+        updated_at: new Date().toISOString()
+      })
+
+    if (error) throw error
+    return { success: true, id: docId }
   } catch (error) {
-    console.error('[Firebase] publishQRCodeOrder failed:', error)
-    return { success: false, error: error?.message || 'Failed to publish QR order' }
+    console.error('[Supabase] publishQRCodeOrder failed:', error)
+    return { success: false, error: error.message }
   }
 }
 
 export async function publishPOSOrderToQRCodeHistory(order) {
   try {
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return { success: false, error: 'Realtime database unavailable' }
-
     const storeId = String(order?.storeId || '').trim()
-    if (!storeId) return { success: false, error: 'Store ID is required' }
+    if (!storeId || !order?.id) return { success: false }
 
-    const payload = {
-      storeId,
-      tableNumber: String(order.tableNumber || ''),
-      session: String(order.session || ''),
-      token: String(order.token || ''),
-      guests: Number(order.guests || 0),
-      customerName: order.customerName || 'Table Service',
-      notes: order.notes || '',
-      items: Array.isArray(order.items) ? order.items : [],
-      subtotal: Number(order.subtotal || 0),
-      tax: Number(order.tax || 0),
-      serviceCharge: Number(order.serviceCharge || 0),
-      total: Number(order.total || 0),
-      source: 'pos',
-      status: String(order.status || 'accepted'),
-      createdAt: serverTimestamp(),
-      createdAtMs: Date.now(),
-      processedAt: serverTimestamp(),
-      processedAtMs: Date.now(),
-      processedBy: String(order.processedBy || 'desktop-pos'),
-    }
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: storeId,
+        collection_name: 'qr_orders',
+        doc_id: String(order.id),
+        data: order,
+        updated_at: new Date().toISOString()
+      })
 
-    const ref = await addDoc(collection(rdb, 'stores', storeId, 'qr_orders'), payload)
-    return { success: true, id: ref.id }
+    if (error) throw error
+    return { success: true }
   } catch (error) {
-    console.error('[Firebase] publishPOSOrderToQRCodeHistory failed:', error)
-    return { success: false, error: error?.message || 'Failed to publish POS order history' }
+    console.error('[Supabase] publishPOSOrderToQRCodeHistory failed:', error)
+    return { success: false }
   }
 }
 
 export async function overwriteQRCodeHistoryWithPOSKOT(storeId, session, order) {
   try {
     const key = String(storeId || '').trim()
-    const sessionKey = String(session || '').trim()
-    if (!key || !sessionKey) return { success: false, error: 'Store ID and session are required' }
+    if (!key || !order?.id) return false
+    
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'qr_orders',
+        doc_id: String(order.id),
+        data: order,
+        updated_at: new Date().toISOString()
+      })
 
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return { success: false, error: 'Realtime database unavailable' }
-
-    // 1. Fetch all existing qr_orders for this session
-    const q = query(collection(rdb, 'stores', key, 'qr_orders'), where('session', '==', sessionKey))
-    const snapshot = await getDocs(q)
-    
-    // 2. Delete them using a batch
-    const batch = writeBatch(rdb)
-    snapshot.docs.forEach((docSnap) => {
-      batch.delete(docSnap.ref)
-    })
-    
-    // 3. Create the new consolidated one from the POS
-    const newRef = doc(collection(rdb, 'stores', key, 'qr_orders'))
-    batch.set(newRef, {
-      ...order,
-      storeId: key,
-      session: sessionKey,
-      source: 'pos_adjustment',
-      status: 'accepted',
-      createdAt: serverTimestamp(),
-      createdAtMs: Date.now(),
-      processedAt: serverTimestamp(),
-      processedAtMs: Date.now(),
-    })
-    
-    await batch.commit()
-    return { success: true, id: newRef.id }
+    if (error) throw error
+    return true
   } catch (error) {
-    console.error('[Firebase] overwriteQRCodeHistoryWithPOSKOT failed:', error)
-    return { success: false, error: error?.message || 'Failed to overwrite POS logic' }
-  }
-}
-
-export function subscribeToStoreProducts(storeId, onProducts) {
-  try {
-    const key = String(storeId || '').trim()
-    if (!key) return () => {}
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
-
-    const q = query(collection(rdb, 'stores', key, 'products'), limit(1000))
-    return onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
-      onProducts(items)
-    })
-  } catch (error) {
-    console.error('[Firebase] subscribeToStoreProducts failed:', error)
-    return () => {}
+    console.error('[Supabase] overwriteQRCodeHistoryWithPOSKOT failed:', error)
+    return false
   }
 }
 
 export async function publishStoreProductUpsert(product) {
   try {
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return { success: false, error: 'Realtime database unavailable' }
+    const storeId = String(product?.storeId || '').trim()
+    if (!storeId || !product?.id) return false
 
-    const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeIds = getCloudStoreIds(businessInfo, licenseKey)
-    if (!storeIds.length) return { success: false, error: 'Store ID is required' }
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: storeId,
+        collection_name: 'products',
+        doc_id: String(product.id),
+        data: product,
+        updated_at: new Date().toISOString()
+      })
 
-    const productId = String(product?.id || '').trim()
-    if (!productId) return { success: false, error: 'Product ID is required' }
-
-    await Promise.all(storeIds.map((storeId) => setDoc(doc(rdb, 'stores', storeId, 'products', productId), {
-      ...product,
-      id: productId,
-      storeId,
-      module: String(product?.module || '').trim(),
-      name: String(product?.name || '').trim(),
-      category: String(product?.category || '').trim(),
-      barcode: String(product?.barcode || '').trim(),
-      updatedAt: serverTimestamp(),
-      updatedAtMs: Date.now(),
-    }, { merge: true })))
-
-    return { success: true, id: productId }
+    if (error) throw error
+    return true
   } catch (error) {
-    console.error('[Firebase] publishStoreProductUpsert failed:', error)
-    return { success: false, error: error?.message || 'Failed to publish product' }
+    console.error('[Supabase] publishStoreProductUpsert failed:', error)
+    return false
   }
 }
 
 export async function publishStoreProductDelete(productId) {
   try {
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return { success: false, error: 'Realtime database unavailable' }
-
     const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeIds = getCloudStoreIds(businessInfo, licenseKey)
-    if (!storeIds.length || !productId) return { success: false, error: 'Store ID and product ID are required' }
+    const storeId = resolveCloudTenantId(businessInfo, licenseKey)
+    if (!storeId || !productId) return false
 
-    await Promise.all(storeIds.map((storeId) => deleteDoc(doc(rdb, 'stores', storeId, 'products', String(productId)))))
-    return { success: true }
+    const { error } = await supabase
+      .from('store_data')
+      .delete()
+      .match({ store_id: storeId, collection_name: 'products', doc_id: String(productId) })
+
+    if (error) throw error
+    return true
   } catch (error) {
-    console.error('[Firebase] publishStoreProductDelete failed:', error)
-    return { success: false, error: error?.message || 'Failed to delete product' }
-  }
-}
-
-export function subscribeToQRCodeOrders(storeId, onOrder) {
-  try {
-    const key = String(storeId || '').trim()
-    if (!key) return () => {}
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
-
-    const q = query(
-      collection(rdb, 'stores', key, 'qr_orders'),
-      limit(100)
-    )
-
-    return onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => Number(a.createdAtMs || 0) - Number(b.createdAtMs || 0))
-
-      docs.forEach((order) => {
-        const status = String(order.status || '').trim().toLowerCase()
-        const alreadyProcessed = !!order.processedAt || !!order.processedAtMs
-        if (status === 'completed' || status === 'expired' || alreadyProcessed) return
-        onOrder(order)
-      })
-    })
-  } catch (error) {
-    console.error('[Firebase] subscribeToQRCodeOrders failed:', error)
-    return () => {}
-  }
-}
-
-export async function markQRCodeOrderProcessed(storeId, orderId, meta = {}) {
-  try {
-    const key = String(storeId || '').trim()
-    if (!key || !orderId) return
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return
-
-    await updateDoc(doc(rdb, 'stores', key, 'qr_orders', orderId), {
-      status: 'accepted',
-      processedAt: serverTimestamp(),
-      processedBy: meta.processedBy || 'desktop-pos',
-      processedAtMs: Date.now(),
-    })
-  } catch (error) {
-    console.error('[Firebase] markQRCodeOrderProcessed failed:', error)
+    console.error('[Supabase] publishStoreProductDelete failed:', error)
+    return false
   }
 }
 
 export async function updateQRCodeOrderStatus(storeId, orderId, status, meta = {}) {
   try {
     const key = String(storeId || '').trim()
-    if (!key || !orderId || !status) return
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return
-
-    await updateDoc(doc(rdb, 'stores', key, 'qr_orders', orderId), {
-      status,
-      statusUpdatedAt: serverTimestamp(),
-      statusUpdatedAtMs: Date.now(),
-      ...meta,
-    })
-  } catch (error) {
-    console.error('[Firebase] updateQRCodeOrderStatus failed:', error)
-  }
-}
-
-export function subscribeToQRCodeOrderStatus(storeId, orderId, onStatus) {
-  try {
-    const key = String(storeId || '').trim()
     const id = String(orderId || '').trim()
-    if (!key || !id) return () => {}
+    if (!key || !id) return false
 
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
+    const { data: rows, error: getErr } = await supabase
+      .from('store_data')
+      .select('data')
+      .match({ store_id: key, collection_name: 'qr_orders', doc_id: id })
+      .limit(1)
 
-    return onSnapshot(doc(rdb, 'stores', key, 'qr_orders', id), (snap) => {
-      if (!snap.exists()) return
-      onStatus({ id: snap.id, ...snap.data() })
-    })
-  } catch (error) {
-    console.error('[Firebase] subscribeToQRCodeOrderStatus failed:', error)
-    return () => {}
-  }
-}
+    if (getErr) throw getErr
 
-export function subscribeToQRCodeOrderHistory(storeId, { session, tableNumber }, onHistory) {
-  try {
-    const key = String(storeId || '').trim()
-    if (!key) return () => {}
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
-
-    let q = query(collection(rdb, 'stores', key, 'qr_orders'), limit(100))
-    if (session) {
-      q = query(collection(rdb, 'stores', key, 'qr_orders'), where('session', '==', String(session)), limit(100))
-    } else if (tableNumber) {
-      q = query(collection(rdb, 'stores', key, 'qr_orders'), where('tableNumber', '==', String(tableNumber)), limit(100))
+    const existingOrder = rows?.[0]?.data || { id }
+    const updatedOrder = {
+      ...existingOrder,
+      status: String(status || 'new'),
+      updatedAtMs: Date.now(),
+      ...meta
     }
 
-    return onSnapshot(q, (snapshot) => {
-      const history = snapshot.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0))
-      onHistory(history)
-    })
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'qr_orders',
+        doc_id: id,
+        data: updatedOrder,
+        updated_at: new Date().toISOString()
+      })
+
+    if (error) throw error
+    return true
   } catch (error) {
-    console.error('[Firebase] subscribeToQRCodeOrderHistory failed:', error)
-    return () => {}
+    console.error('[Supabase] updateQRCodeOrderStatus failed:', error)
+    return false
   }
 }
 
+export async function markQRCodeOrderProcessed(storeId, orderId, meta = {}) {
+  return updateQRCodeOrderStatus(storeId, orderId, 'accepted', {
+    processedAt: new Date().toISOString(),
+    processedAtMs: Date.now(),
+    ...meta
+  })
+}
+
+// ─── Table Sessions and QR Management ───────────────────────────────────────
 export async function publishTableQrSession(storeId, tableNumber, session, token, meta = {}) {
   try {
     const key = String(storeId || '').trim()
     const tableKey = String(tableNumber || '').trim()
-    const sessionKey = String(session || '').trim()
-    const tokenKey = String(token || '').trim()
-    if (!key || !tableKey || !sessionKey || !tokenKey) return false
+    if (!key || !tableKey || !session || !token) return false
 
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return false
-
-    await setDoc(doc(rdb, 'stores', key, 'table_sessions', tableKey), {
+    const payload = {
       storeId: key,
       tableNumber: tableKey,
-      session: sessionKey,
-      token: tokenKey,
+      session,
+      token,
       status: 'occupied',
       guests: Number(meta.guests || 0),
-      updatedAt: serverTimestamp(),
       updatedAtMs: Date.now(),
-    }, { merge: true })
+    }
+
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'table_sessions',
+        doc_id: tableKey,
+        data: payload,
+        updated_at: new Date().toISOString()
+      })
+
+    if (error) throw error
     return true
   } catch (error) {
-    console.error('[Firebase] publishTableQrSession failed:', error)
+    console.error('[Supabase] publishTableQrSession failed:', error)
     return false
   }
 }
@@ -745,80 +461,32 @@ export async function clearTableQrSession(storeId, tableNumber, meta = {}) {
     const tableKey = String(tableNumber || '').trim()
     if (!key || !tableKey) return false
 
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return false
-
-    const nextStatus = String(meta.status || 'available')
-    const nextSession = meta.session !== undefined ? meta.session : null
-    const nextToken = meta.token !== undefined ? meta.token : null
-    const nextGuests = meta.guests !== undefined ? Number(meta.guests || 0) : 0
-    const movedToTable = meta.movedToTable !== undefined ? String(meta.movedToTable || '') : ''
-
-    await setDoc(doc(rdb, 'stores', key, 'table_sessions', tableKey), {
+    const payload = {
       storeId: key,
       tableNumber: tableKey,
-      session: nextSession,
-      token: nextToken,
-      status: nextStatus,
-      guests: nextGuests,
-      movedToTable,
-      updatedAt: serverTimestamp(),
+      session: meta.session !== undefined ? meta.session : null,
+      token: meta.token !== undefined ? meta.token : null,
+      status: String(meta.status || 'available'),
+      guests: meta.guests !== undefined ? Number(meta.guests || 0) : 0,
+      movedToTable: meta.movedToTable !== undefined ? String(meta.movedToTable || '') : '',
       updatedAtMs: Date.now(),
-    }, { merge: true })
+    }
+
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'table_sessions',
+        doc_id: tableKey,
+        data: payload,
+        updated_at: new Date().toISOString()
+      })
+
+    if (error) throw error
     return true
   } catch (error) {
-    console.error('[Firebase] clearTableQrSession failed:', error)
+    console.error('[Supabase] clearTableQrSession failed:', error)
     return false
-  }
-}
-
-export function subscribeToTableQrSession(storeId, tableNumber, onSession) {
-  try {
-    const key = String(storeId || '').trim()
-    const tableKey = String(tableNumber || '').trim()
-    if (!key || !tableKey) return () => {}
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
-
-    return onSnapshot(doc(rdb, 'stores', key, 'table_sessions', tableKey), (snap) => {
-      if (!snap.exists()) {
-        onSession(null)
-        return
-      }
-      onSession({ id: snap.id, ...snap.data() })
-    })
-  } catch (error) {
-    console.error('[Firebase] subscribeToTableQrSession failed:', error)
-    return () => {}
-  }
-}
-
-export function subscribeToLiveTableOrder(storeId, tableNumber, onOrder) {
-  try {
-    const key = String(storeId || '').trim()
-    const tableKey = String(tableNumber || '').trim()
-    if (!key || !tableKey) return () => {}
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
-
-    const q = query(
-      collection(rdb, 'stores', key, 'tables'),
-      where('number', 'in', [tableKey, Number(tableKey) || 0])
-    )
-
-    return onSnapshot(q, (snapshot) => {
-      if (!snapshot.empty) {
-        const tableDoc = snapshot.docs[0].data()
-        onOrder(tableDoc?.order || null)
-      } else {
-        onOrder(null)
-      }
-    })
-  } catch (error) {
-    console.error('[Firebase] subscribeToLiveTableOrder failed:', error)
-    return () => {}
   }
 }
 
@@ -828,104 +496,307 @@ export async function getTableQrSession(storeId, tableNumber) {
     const tableKey = String(tableNumber || '').trim()
     if (!key || !tableKey) return null
 
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return null
+    const { data: rows, error } = await supabase
+      .from('store_data')
+      .select('data')
+      .match({ store_id: key, collection_name: 'table_sessions', doc_id: tableKey })
+      .limit(1)
 
-    const snap = await getDoc(doc(rdb, 'stores', key, 'table_sessions', tableKey))
-    if (!snap.exists()) return null
-    return { id: snap.id, ...snap.data() }
+    if (error) throw error
+    return rows?.[0]?.data || null
   } catch (error) {
-    console.error('[Firebase] getTableQrSession failed:', error)
+    console.error('[Supabase] getTableQrSession failed:', error)
     return null
-  }
-}
-
-export function subscribeToStoreSettings(storeId, onSettings) {
-  try {
-    const key = String(storeId || '').trim()
-    if (!key) return () => {}
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
-
-    return onSnapshot(doc(rdb, 'stores', key, 'settings', 'app'), (snap) => {
-      if (!snap.exists()) return
-      onSettings(snap.data())
-    })
-  } catch (error) {
-    console.error('[Firebase] subscribeToStoreSettings failed:', error)
-    return () => {}
-  }
-}
-
-export function subscribeToStoreNotifications(storeId, onNotification) {
-  try {
-    const key = String(storeId || '').trim()
-    if (!key) return () => {}
-
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return () => {}
-
-    const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000)
-
-    const q = query(
-      collection(rdb, 'stores', key, 'notifications'),
-      where('createdAtMs', '>=', threeDaysAgo),
-      limit(20)
-    )
-
-    return onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0))
-      
-      onNotification(docs)
-    })
-  } catch (error) {
-    console.error('[Firebase] subscribeToStoreNotifications failed:', error)
-    return () => {}
   }
 }
 
 export async function markNotificationRead(storeId, notificationId) {
   try {
     const key = String(storeId || '').trim()
-    if (!key || !notificationId) return
+    const id = String(notificationId || '').trim()
+    if (!key || !id) return false
 
-    const rdb = ensureRealtimeDb()
-    if (!rdb) return
+    const { data: rows, error: getErr } = await supabase
+      .from('store_data')
+      .select('data')
+      .match({ store_id: key, collection_name: 'notifications', doc_id: id })
+      .limit(1)
 
-    await updateDoc(doc(rdb, 'stores', key, 'notifications', notificationId), {
+    if (getErr) throw getErr
+
+    const existingNotification = rows?.[0]?.data || { id }
+    const updatedNotification = {
+      ...existingNotification,
       read: true,
-      readAt: serverTimestamp(),
-      readAtMs: Date.now(),
-    })
+      readAt: new Date().toISOString(),
+    }
+
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'notifications',
+        doc_id: id,
+        data: updatedNotification,
+        updated_at: new Date().toISOString()
+      })
+
+    if (error) throw error
+    return true
   } catch (error) {
-    console.error('[Firebase] markNotificationRead failed:', error)
+    console.error('[Supabase] markNotificationRead failed:', error)
+    return false
   }
 }
 
 export async function sendNotificationToBusiness(storeId, message, type = 'info', title = 'Portal Alert') {
   try {
     const key = String(storeId || '').trim()
-    if (!key || !message) return false
+    if (!key) return false
 
-    const activeDb = typeof getApps === 'function' && getApps().length > 0 ? getApp() : null
-    const rdb = activeDb ? getFirestore(activeDb) : getDb()
-    if (!rdb) return false
-
-    await addDoc(collection(rdb, 'stores', key, 'notifications'), {
-      message,
-      type,
-      title,
+    const docId = `notif-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`
+    const payload = {
+      id: docId,
+      message: String(message),
+      type: String(type),
+      title: String(title),
       read: false,
-      createdAt: serverTimestamp(),
-      createdAtMs: Date.now(),
-    })
+      createdAt: new Date().toISOString(),
+    }
+
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'notifications',
+        doc_id: docId,
+        data: payload,
+        updated_at: new Date().toISOString()
+      })
+
+    if (error) throw error
     return true
   } catch (error) {
-    console.error('[Firebase] sendNotificationToBusiness failed:', error)
+    console.error('[Supabase] sendNotificationToBusiness failed:', error)
     return false
   }
 }
 
+// ─── Realtime Subscriptions Helper (Collection-Level Realtime) ──────────────
+function subscribeToCollection(storeId, collectionName, callback) {
+  const key = String(storeId || '').trim()
+  if (!key) return () => {}
+
+  // 1. Initial collection fetch
+  supabase
+    .from('store_data')
+    .select('data')
+    .match({ store_id: key, collection_name: collectionName })
+    .then(({ data, error }) => {
+      if (!error && data) {
+        callback(data.map((row) => row.data))
+      }
+    })
+
+  // 2. Setup PostgreSQL Realtime Change channel
+  const channel = supabase
+    .channel(`realtime_${key}_${collectionName}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'store_data',
+        filter: `store_id=eq.${key}`,
+      },
+      async (payload) => {
+        // Re-fetch the complete collection to deliver a fresh sorted array
+        const { data, error } = await supabase
+          .from('store_data')
+          .select('data')
+          .match({ store_id: key, collection_name: collectionName })
+        if (!error && data) {
+          callback(data.map((row) => row.data))
+        }
+      }
+    )
+    .subscribe()
+
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}
+
+export function subscribeToStoreProducts(storeId, onProducts) {
+  return subscribeToCollection(storeId, 'products', onProducts)
+}
+
+export function subscribeToQRCodeOrders(storeId, onOrder) {
+  const ingestedIds = new Set()
+  return subscribeToCollection(storeId, 'qr_orders', (orders) => {
+    orders
+      .sort((a, b) => Number(a.createdAtMs || 0) - Number(b.createdAtMs || 0))
+      .forEach((order) => {
+        const status = String(order.status || '').trim().toLowerCase()
+        const alreadyProcessed = !!order.processedAt || !!order.processedAtMs
+        if (status === 'completed' || status === 'expired' || alreadyProcessed) return
+
+        if (!ingestedIds.has(order.id)) {
+          ingestedIds.add(order.id)
+          onOrder(order)
+        }
+      })
+  })
+}
+
+export function subscribeToQRCodeOrderStatus(storeId, orderId, onStatus) {
+  const key = String(storeId || '').trim()
+  const id = String(orderId || '').trim()
+  if (!key || !id) return () => {}
+
+  // Initial fetch
+  supabase
+    .from('store_data')
+    .select('data')
+    .match({ store_id: key, collection_name: 'qr_orders', doc_id: id })
+    .then(({ data, error }) => {
+      if (!error && data?.[0]?.data) {
+        onStatus(data[0].data)
+      }
+    })
+
+  // Realtime change listener
+  const channel = supabase
+    .channel(`order_status_${id}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'store_data',
+        filter: `store_id=eq.${key}`,
+      },
+      async (payload) => {
+        if (payload.new && payload.new.collection_name === 'qr_orders' && payload.new.doc_id === id) {
+          onStatus(payload.new.data)
+        }
+      }
+    )
+    .subscribe()
+
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}
+
+export function subscribeToQRCodeOrderHistory(storeId, { session, tableNumber }, onHistory) {
+  return subscribeToCollection(storeId, 'qr_orders', (orders) => {
+    let filtered = orders
+    if (session) {
+      filtered = orders.filter((o) => String(o.session || '') === String(session))
+    } else if (tableNumber) {
+      filtered = orders.filter((o) => String(o.tableNumber || '') === String(tableNumber))
+    }
+    onHistory(filtered.sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0)))
+  })
+}
+
+export function subscribeToTableQrSession(storeId, tableNumber, onSession) {
+  const key = String(storeId || '').trim()
+  const tableKey = String(tableNumber || '').trim()
+  if (!key || !tableKey) return () => {}
+
+  // Initial fetch
+  supabase
+    .from('store_data')
+    .select('data')
+    .match({ store_id: key, collection_name: 'table_sessions', doc_id: tableKey })
+    .then(({ data, error }) => {
+      if (!error && data?.[0]?.data) {
+        onSession(data[0].data)
+      } else {
+        onSession(null)
+      }
+    })
+
+  // Realtime listener
+  const channel = supabase
+    .channel(`table_session_${tableKey}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'store_data',
+        filter: `store_id=eq.${key}`,
+      },
+      async (payload) => {
+        if (payload.new && payload.new.collection_name === 'table_sessions' && payload.new.doc_id === tableKey) {
+          onSession(payload.new.data)
+        } else if (payload.eventType === 'DELETE' && payload.old && payload.old.doc_id === tableKey) {
+          onSession(null)
+        }
+      }
+    )
+    .subscribe()
+
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}
+
+export function subscribeToLiveTableOrder(storeId, tableNumber, onOrder) {
+  const key = String(storeId || '').trim()
+  const tableKey = String(tableNumber || '').trim()
+  if (!key || !tableKey) return () => {}
+
+  return subscribeToCollection(storeId, 'tables', (tables) => {
+    const matching = tables.find((t) => String(t.number) === tableKey)
+    onOrder(matching?.order || null)
+  })
+}
+
+export function subscribeToStoreSettings(storeId, onSettings) {
+  const key = String(storeId || '').trim()
+  if (!key) return () => {}
+
+  // Initial fetch
+  supabase
+    .from('store_data')
+    .select('data')
+    .match({ store_id: key, collection_name: 'settings', doc_id: 'app' })
+    .then(({ data, error }) => {
+      if (!error && data?.[0]?.data) {
+        onSettings(data[0].data)
+      }
+    })
+
+  // Realtime listener
+  const channel = supabase
+    .channel(`store_settings_${key}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'store_data',
+        filter: `store_id=eq.${key}`,
+      },
+      async (payload) => {
+        if (payload.new && payload.new.collection_name === 'settings' && payload.new.doc_id === 'app') {
+          onSettings(payload.new.data)
+        }
+      }
+    )
+    .subscribe()
+
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}
+
+export function subscribeToStoreNotifications(storeId, onNotification) {
+  return subscribeToCollection(storeId, 'notifications', (notifs) => {
+    onNotification(notifs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
+  })
+}
