@@ -270,11 +270,19 @@ export const useAppStore = create(
             ? state.activeModule
             : (LICENSED_MODULE_KEYS.find((moduleName) => modules[moduleName]) || 'grocery')
 
+          const updatedBusinessInfo = {
+            ...state.businessInfo,
+            name: profile?.businessName || state.businessInfo.name,
+            email: profile?.businessEmail || state.businessInfo.email,
+            ownerName: profile?.ownerName || state.businessInfo.ownerName || '',
+          }
+
           return {
             licenseKey: normalizedKey,
             licenseActive: true,
             modules,
             activeModule: nextActiveModule,
+            businessInfo: updatedBusinessInfo,
             cloudSubscription: {
               ...state.cloudSubscription,
               deploymentMode,
@@ -297,9 +305,17 @@ export const useAppStore = create(
             ? state.activeModule
             : (LICENSED_MODULE_KEYS.find((moduleName) => modules[moduleName]) || 'grocery')
 
+          const updatedBusinessInfo = {
+            ...state.businessInfo,
+            name: profile?.businessName || state.businessInfo.name,
+            email: profile?.businessEmail || state.businessInfo.email,
+            ownerName: profile?.ownerName || state.businessInfo.ownerName || '',
+          }
+
           return {
             modules,
             activeModule: nextActiveModule,
+            businessInfo: updatedBusinessInfo,
             cloudSubscription: {
               ...state.cloudSubscription,
               deploymentMode,

@@ -284,6 +284,8 @@ export async function validateLicense(key) {
     return {
       valid:        true,
       businessName: data.businessName || 'My Store',
+      businessEmail: data.businessEmail || '',
+      ownerName:    data.ownerName    || '',
       plan:         data.plan         || 'basic',
       expiresAt:    data.expiresAt    || null,
       deploymentMode: normalizeDeploymentMode(data.deploymentMode),
