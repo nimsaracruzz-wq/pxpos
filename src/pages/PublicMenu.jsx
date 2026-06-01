@@ -4,7 +4,7 @@ import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Sear
 import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
-import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings, getTableQrSession } from '@/lib/firebase'
+import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings, getTableQrSession, subscribeToLiveTableOrder } from '@/lib/firebase'
 
 const I18N = {
   en: {
@@ -189,6 +189,7 @@ export default function PublicMenu() {
   const [sessionRetry, setSessionRetry] = useState(0)
   const [cloudProducts, setCloudProducts] = useState([])
   const [cloudProductsLoaded, setCloudProductsLoaded] = useState(false)
+  const [posTableOrder, setPosTableOrder] = useState(null)
 
   const t = I18N[lang]
   const quickNotes = [t.lessSpicy, t.noOnions, t.extraSauce, t.noSugar]
@@ -245,6 +246,14 @@ export default function PublicMenu() {
     })
     return () => unsubscribe()
   }, [decodedStoreId])
+
+  useEffect(() => {
+    if (!decodedStoreId || !tableNo) return () => {}
+    const unsubscribe = subscribeToLiveTableOrder(decodedStoreId, tableNo, (order) => {
+      setPosTableOrder(order)
+    })
+    return () => unsubscribe()
+  }, [decodedStoreId, tableNo])
 
   // Detect if running inside Electron (POS desktop app) vs mobile browser.
   // In Electron, local products are always fresh from SQLite — use them.
@@ -492,13 +501,14 @@ export default function PublicMenu() {
   const serviceRate = serviceChargeSettings?.enabled ? Number(serviceChargeSettings.rate || 0) : 0
   const serviceCharge = serviceRate > 0 ? Math.round((subtotal * serviceRate) / 100 * 100) / 100 : 0
   const grandTotal = Math.round((subtotal + tax + serviceCharge) * 100) / 100
-  const outstandingHistoryTotal = useMemo(
-    () =>
-      orderHistory
-        .filter((order) => !['completed', 'expired'].includes(String(order.status || '')))
-        .reduce((sum, order) => sum + Number(order.total || 0), 0),
-    [orderHistory]
-  )
+  const outstandingHistoryTotal = useMemo(() => {
+    if (posTableOrder) {
+      return Number(posTableOrder.total || 0)
+    }
+    return orderHistory
+      .filter((order) => !['completed', 'expired'].includes(String(order.status || '')))
+      .reduce((sum, order) => sum + Number(order.total || 0), 0)
+  }, [posTableOrder, orderHistory])
   const paidBeforeTotal = useMemo(
     () =>
       orderHistory

@@ -794,6 +794,34 @@ export function subscribeToTableQrSession(storeId, tableNumber, onSession) {
   }
 }
 
+export function subscribeToLiveTableOrder(storeId, tableNumber, onOrder) {
+  try {
+    const key = String(storeId || '').trim()
+    const tableKey = String(tableNumber || '').trim()
+    if (!key || !tableKey) return () => {}
+
+    const rdb = ensureRealtimeDb()
+    if (!rdb) return () => {}
+
+    const q = query(
+      collection(rdb, 'stores', key, 'tables'),
+      where('number', 'in', [tableKey, Number(tableKey) || 0])
+    )
+
+    return onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const tableDoc = snapshot.docs[0].data()
+        onOrder(tableDoc?.order || null)
+      } else {
+        onOrder(null)
+      }
+    })
+  } catch (error) {
+    console.error('[Firebase] subscribeToLiveTableOrder failed:', error)
+    return () => {}
+  }
+}
+
 export async function getTableQrSession(storeId, tableNumber) {
   try {
     const key = String(storeId || '').trim()

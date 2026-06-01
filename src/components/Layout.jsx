@@ -170,7 +170,7 @@ export function Layout({ children }) {
       const receiptNo = generateReceiptNumber()
 
       const tableStore = useTableStore.getState()
-      const matchingTable = tableStore.tables.find((t) => String(t.number) === tableNo)
+      let matchingTable = tableStore.tables.find((t) => String(t.number) === tableNo)
 
       const isNewSessionOnEmptyTable = matchingTable && matchingTable.status === 'available' && sessionId && qrToken
       if (isNewSessionOnEmptyTable) {
@@ -181,9 +181,8 @@ export function Layout({ children }) {
           qrToken,
           order: { items: [], notes: '', subtotal: 0, tax: 0, serviceCharge: 0, total: 0 }
         })
-        matchingTable.status = 'occupied'
-        matchingTable.sessionId = sessionId
-        matchingTable.qrToken = qrToken
+        // Re-fetch from the store to get the updated immutable state reference!
+        matchingTable = tableStore.tables.find((t) => String(t.number) === tableNo)
       }
 
       // Security/validity gate: only accept orders for the currently active table session.
@@ -350,6 +349,9 @@ export function Layout({ children }) {
       })
 
       await markQRCodeOrderProcessed(storeId, incoming.id)
+      
+      // Trigger instant cloud sync to push the updated table order state to Firebase!
+      import('@/lib/firebase').then((m) => m.syncToCloud?.())
     })
 
     return () => {
