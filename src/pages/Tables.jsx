@@ -511,6 +511,7 @@ function QRModal({ table, onClose }) {
   const tokenQuery = encodeURIComponent(String(table.qrToken || ''))
   // Use hash route to avoid hosting rewrite issues on static deployments (Vercel/Netlify).
   const menuUrl = `${baseOrigin}/#/menu/${storeId}?table=${tableQuery}&session=${sessionQuery}&guests=${guestsQuery}&token=${tokenQuery}`
+  const staticMenuUrl = `${baseOrigin}/#/menu/${storeId}?table=${tableQuery}`
   const needsLanHint = !configuredBase && /localhost|127\.0\.0\.1/i.test(browserOrigin)
   const missingStoreId = !storeKey
 
@@ -551,12 +552,12 @@ function QRModal({ table, onClose }) {
         const pngUrl = canvas.toDataURL('image/png')
         const a = document.createElement('a')
         a.href = pngUrl
-        a.download = `table-${table.number}-qr.png`
+        a.download = `table-${table.number}-static-qr.png`
         document.body.appendChild(a)
         a.click()
         a.remove()
         URL.revokeObjectURL(svgUrl)
-        toast.success(`Table ${table.number} QR downloaded`)
+        toast.success(`Table ${table.number} Static QR downloaded`)
       }
 
       image.onerror = () => {
@@ -574,7 +575,7 @@ function QRModal({ table, onClose }) {
     <div className="modal-overlay" style={{ zIndex: 110 }} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="animate-fade-in card p-8 flex flex-col items-center bg-white dark:bg-zinc-900" style={{ width: 340 }}>
         <h2 className="text-xl font-black text-gray-800 dark:text-zinc-100 mb-1">Table {table.number} QR</h2>
-        <p className="text-sm text-gray-500 mb-5 text-center">Scan to open digital menu</p>
+        <p className="text-sm text-gray-500 mb-5 text-center">Static QR sticker for table placement</p>
         {missingStoreId && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2 mb-3 text-center">
             Store ID not initialized. Please restart the app.
@@ -585,12 +586,13 @@ function QRModal({ table, onClose }) {
           <div className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center border-4 border-white">
             <QrCode size={12} />
           </div>
-          <QRCodeSVG value={missingStoreId ? 'about:blank' : menuUrl} size={200} level="H" />
+          <QRCodeSVG value={missingStoreId ? 'about:blank' : staticMenuUrl} size={200} level="H" />
         </div>
 
+        <p className="text-[10px] uppercase font-bold tracking-wider text-green-600 mb-1">Permanent Table QR Link (Static)</p>
         {!missingStoreId && (
-          <p className="text-[11px] text-gray-500 break-all bg-gray-50 border border-gray-200 rounded-lg p-2 mb-3 w-full text-center">
-            {menuUrl}
+          <p className="text-[11px] text-gray-500 break-all bg-gray-50 border border-gray-200 rounded-lg p-2 mb-4 w-full text-center">
+            {staticMenuUrl}
           </p>
         )}
 
@@ -605,7 +607,7 @@ function QRModal({ table, onClose }) {
           disabled={missingStoreId}
           onClick={downloadQr}
         >
-          Download QR
+          Download Static QR
         </button>
         
         <button 
@@ -617,10 +619,10 @@ function QRModal({ table, onClose }) {
               return
             }
             navigator.clipboard.writeText(menuUrl)
-            toast.success('Menu URL copied to clipboard')
+            toast.success('Active Session URL copied to clipboard')
           }}
         >
-          Copy Link
+          Copy Active Session Link
         </button>
         <button className="btn-ghost w-full justify-center" onClick={onClose}>
           Close
