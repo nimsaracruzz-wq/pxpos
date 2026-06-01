@@ -278,9 +278,13 @@ export default function PublicMenu() {
       if (!p?.active) return false
       if (!isRestaurantProduct(p)) return false
 
-      // On mobile (cloud products): filter by storeId so each store sees only its own menu
+      // On mobile (cloud products): filter by storeId so each store sees only its own menu.
+      // Since database queries already filter by store_id, we only filter here if storeId is explicitly defined on the product.
       if (!isElectron && decodedStoreId) {
-        return String(p.storeId || '').trim() === decodedStoreId
+        const pStoreId = String(p.storeId || p.store_id || '').trim()
+        if (pStoreId && pStoreId !== decodedStoreId) {
+          return false
+        }
       }
       return true
     })
