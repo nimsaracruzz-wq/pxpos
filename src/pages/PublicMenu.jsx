@@ -193,7 +193,8 @@ export default function PublicMenu() {
 
   const t = I18N[lang]
   const quickNotes = [t.lessSpicy, t.noOnions, t.extraSauce, t.noSugar]
-  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid'
+  const isExpiredParam = searchParams.get('expired') === 'true'
+  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid' || isExpiredParam
 
   const spiceOptions = useMemo(
     () => [
@@ -335,19 +336,19 @@ export default function PublicMenu() {
 
       if (!isSessionActive) {
         // If the session was settled/cleared in the POS, clean up browser URL search parameters
-        // by doing a hard replace/reload. This guarantees a complete state reset and resolves
-        // any React Router lifecycle/race conditions.
+        // by doing a hard replace/reload and setting the 'expired' flag to show the session closed screen.
         const nextUrl = new URL(window.location.href)
         const hadParams = nextUrl.searchParams.has('session') || nextUrl.searchParams.has('token')
         if (hadParams) {
           nextUrl.searchParams.delete('session')
           nextUrl.searchParams.delete('token')
+          nextUrl.searchParams.set('expired', 'true')
           window.location.replace(nextUrl.pathname + nextUrl.search + nextUrl.hash)
           return
         }
 
-        // If the scanned QR has no token (or we just reloaded to a clean static URL because the table was settled), start a new session!
-        if (!qrToken) {
+        // If the scanned QR has no token and it's not marked as expired/closed, start a new session!
+        if (!qrToken && !isExpiredParam) {
           const newSessionId = `session-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`
           const newQrToken = `token-${Math.random().toString(36).substring(2, 10)}`
           try {
@@ -656,6 +657,7 @@ export default function PublicMenu() {
       const nextUrl = new URL(window.location.href)
       nextUrl.searchParams.delete('session')
       nextUrl.searchParams.delete('token')
+      nextUrl.searchParams.delete('expired')
       window.location.replace(nextUrl.pathname + nextUrl.search + nextUrl.hash)
     }
 
