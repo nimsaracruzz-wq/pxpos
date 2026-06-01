@@ -335,23 +335,19 @@ export default function PublicMenu() {
 
       if (!isSessionActive) {
         // If the session was settled/cleared in the POS, clean up browser URL search parameters
-        // and local order state so we don't get stuck on an "expired" view.
+        // by doing a hard replace/reload. This guarantees a complete state reset and resolves
+        // any React Router lifecycle/race conditions.
         const nextUrl = new URL(window.location.href)
         const hadParams = nextUrl.searchParams.has('session') || nextUrl.searchParams.has('token')
         if (hadParams) {
           nextUrl.searchParams.delete('session')
           nextUrl.searchParams.delete('token')
-          window.history.replaceState(null, '', nextUrl.pathname + nextUrl.search + nextUrl.hash)
-          
-          setResolvedToken('')
-          setResolvedSession('')
-          setCart([])
-          setLastOrder(null)
-          setOrderHistory([])
+          window.location.replace(nextUrl.pathname + nextUrl.search + nextUrl.hash)
+          return
         }
 
-        // If the scanned QR has no token (or we just cleared it because the table was settled), start a new session!
-        if (!qrToken || hadParams) {
+        // If the scanned QR has no token (or we just reloaded to a clean static URL because the table was settled), start a new session!
+        if (!qrToken) {
           const newSessionId = `session-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`
           const newQrToken = `token-${Math.random().toString(36).substring(2, 10)}`
           try {
@@ -656,19 +652,34 @@ export default function PublicMenu() {
   }
 
   if (invalidQr) {
+    const handleForceReset = () => {
+      const nextUrl = new URL(window.location.href)
+      nextUrl.searchParams.delete('session')
+      nextUrl.searchParams.delete('token')
+      window.location.replace(nextUrl.pathname + nextUrl.search + nextUrl.hash)
+    }
+
     return (
       <div
         className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <div className="w-full max-w-md rounded-3xl border border-red-200 bg-white p-6 text-center shadow-lg">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-100 text-red-600">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-100 text-red-600 animate-pulse">
             <UtensilsCrossed size={24} />
           </div>
           <h1 className="text-xl font-black text-gray-900">{t.invalidQr}</h1>
-          <p className="mt-2 text-sm text-gray-500">
+          <p className="mt-2 text-sm text-gray-500 mb-6">
             No ordering is available from this link. Please scan the new QR code from the table.
           </p>
+          <button
+            type="button"
+            onClick={handleForceReset}
+            className="w-full py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] transition-all text-white text-sm font-bold shadow-md shadow-emerald-600/10 flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Clock3 size={16} />
+            Start Fresh Session
+          </button>
         </div>
       </div>
     )
