@@ -10,7 +10,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 // ─── Resolve Tenant / Store ID ───────────────────────────────────────────────
 export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
   const normalizedLicenseKey = String(licenseKey || '').trim().toUpperCase()
-  return normalizedLicenseKey || ''
+  return normalizedLicenseKey || String(businessInfo?.storeId || '').trim() || ''
 }
 
 // ─── Legacy Firebase Initializer compatibility ──────────────────────────────
@@ -582,7 +582,6 @@ export async function sendNotificationToBusiness(storeId, message, type = 'info'
   }
 }
 
-// ─── Realtime Subscriptions Helper (Collection-Level Realtime) ──────────────
 function subscribeToCollection(storeId, collectionName, callback) {
   const key = String(storeId || '').trim()
   if (!key) return () => {}
@@ -598,7 +597,7 @@ function subscribeToCollection(storeId, collectionName, callback) {
       }
     })
 
-  // 2. Setup PostgreSQL Realtime Change channel
+  // 2. Setup PostgreSQL Realtime Change channel (unfiltered to support UUIDs/dashes)
   const channel = supabase
     .channel(`realtime_${key}_${collectionName}`)
     .on(
@@ -607,16 +606,18 @@ function subscribeToCollection(storeId, collectionName, callback) {
         event: '*',
         schema: 'public',
         table: 'store_data',
-        filter: `store_id=eq.${key}`,
       },
       async (payload) => {
-        // Re-fetch the complete collection to deliver a fresh sorted array
-        const { data, error } = await supabase
-          .from('store_data')
-          .select('data')
-          .match({ store_id: key, collection_name: collectionName })
-        if (!error && data) {
-          callback(data.map((row) => row.data))
+        const row = payload.new || payload.old
+        if (row && String(row.store_id).trim() === key && row.collection_name === collectionName) {
+          // Re-fetch the complete collection to deliver a fresh sorted array
+          const { data, error } = await supabase
+            .from('store_data')
+            .select('data')
+            .match({ store_id: key, collection_name: collectionName })
+          if (!error && data) {
+            callback(data.map((row) => row.data))
+          }
         }
       }
     )
@@ -665,7 +666,7 @@ export function subscribeToQRCodeOrderStatus(storeId, orderId, onStatus) {
       }
     })
 
-  // Realtime change listener
+  // Realtime change listener (unfiltered to support UUIDs/dashes)
   const channel = supabase
     .channel(`order_status_${id}`)
     .on(
@@ -674,11 +675,11 @@ export function subscribeToQRCodeOrderStatus(storeId, orderId, onStatus) {
         event: '*',
         schema: 'public',
         table: 'store_data',
-        filter: `store_id=eq.${key}`,
       },
       async (payload) => {
-        if (payload.new && payload.new.collection_name === 'qr_orders' && payload.new.doc_id === id) {
-          onStatus(payload.new.data)
+        const row = payload.new || payload.old
+        if (row && String(row.store_id).trim() === key && row.collection_name === 'qr_orders' && row.doc_id === id) {
+          onStatus(row.data)
         }
       }
     )
@@ -719,7 +720,7 @@ export function subscribeToTableQrSession(storeId, tableNumber, onSession) {
       }
     })
 
-  // Realtime listener
+  // Realtime listener (unfiltered to support UUIDs/dashes)
   const channel = supabase
     .channel(`table_session_${tableKey}`)
     .on(
@@ -728,13 +729,15 @@ export function subscribeToTableQrSession(storeId, tableNumber, onSession) {
         event: '*',
         schema: 'public',
         table: 'store_data',
-        filter: `store_id=eq.${key}`,
       },
       async (payload) => {
-        if (payload.new && payload.new.collection_name === 'table_sessions' && payload.new.doc_id === tableKey) {
-          onSession(payload.new.data)
-        } else if (payload.eventType === 'DELETE' && payload.old && payload.old.doc_id === tableKey) {
-          onSession(null)
+        const row = payload.new || payload.old
+        if (row && String(row.store_id).trim() === key && row.collection_name === 'table_sessions' && row.doc_id === tableKey) {
+          if (payload.eventType === 'DELETE') {
+            onSession(null)
+          } else {
+            onSession(row.data)
+          }
         }
       }
     )
@@ -771,7 +774,7 @@ export function subscribeToStoreSettings(storeId, onSettings) {
       }
     })
 
-  // Realtime listener
+  // Realtime listener (unfiltered to support UUIDs/dashes)
   const channel = supabase
     .channel(`store_settings_${key}`)
     .on(
@@ -780,11 +783,11 @@ export function subscribeToStoreSettings(storeId, onSettings) {
         event: '*',
         schema: 'public',
         table: 'store_data',
-        filter: `store_id=eq.${key}`,
       },
       async (payload) => {
-        if (payload.new && payload.new.collection_name === 'settings' && payload.new.doc_id === 'app') {
-          onSettings(payload.new.data)
+        const row = payload.new || payload.old
+        if (row && String(row.store_id).trim() === key && row.collection_name === 'settings' && row.doc_id === 'app') {
+          onSettings(row.data)
         }
       }
     )
