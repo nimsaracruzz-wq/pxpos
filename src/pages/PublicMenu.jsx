@@ -334,8 +334,24 @@ export default function PublicMenu() {
       const isSessionActive = sessionDoc && dbStatus === 'occupied' && dbToken && dbSession
 
       if (!isSessionActive) {
-        // If the scanned QR has no token (it's the static permanent QR), start a new session!
-        if (!qrToken) {
+        // If the session was settled/cleared in the POS, clean up browser URL search parameters
+        // and local order state so we don't get stuck on an "expired" view.
+        const nextUrl = new URL(window.location.href)
+        const hadParams = nextUrl.searchParams.has('session') || nextUrl.searchParams.has('token')
+        if (hadParams) {
+          nextUrl.searchParams.delete('session')
+          nextUrl.searchParams.delete('token')
+          window.history.replaceState(null, '', nextUrl.pathname + nextUrl.search + nextUrl.hash)
+          
+          setResolvedToken('')
+          setResolvedSession('')
+          setCart([])
+          setLastOrder(null)
+          setOrderHistory([])
+        }
+
+        // If the scanned QR has no token (or we just cleared it because the table was settled), start a new session!
+        if (!qrToken || hadParams) {
           const newSessionId = `session-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`
           const newQrToken = `token-${Math.random().toString(36).substring(2, 10)}`
           try {
@@ -343,10 +359,10 @@ export default function PublicMenu() {
             await publishTableQrSession(decodedStoreId, tableNo, newSessionId, newQrToken, { guests: guests || 1 })
             
             // Rewrite browser URL to include session and token parameters
-            const nextUrl = new URL(window.location.href)
-            nextUrl.searchParams.set('session', newSessionId)
-            nextUrl.searchParams.set('token', newQrToken)
-            window.history.replaceState(null, '', nextUrl.pathname + nextUrl.search + nextUrl.hash)
+            const nextUrlWithNew = new URL(window.location.href)
+            nextUrlWithNew.searchParams.set('session', newSessionId)
+            nextUrlWithNew.searchParams.set('token', newQrToken)
+            window.history.replaceState(null, '', nextUrlWithNew.pathname + nextUrlWithNew.search + nextUrlWithNew.hash)
             
             setResolvedToken(newQrToken)
             setResolvedSession(newSessionId)
