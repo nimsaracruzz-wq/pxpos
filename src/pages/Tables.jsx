@@ -589,7 +589,7 @@ function QRModal({ table, onClose }) {
           <QRCodeSVG value={missingStoreId ? 'about:blank' : staticMenuUrl} size={200} level="H" />
         </div>
 
-        <p className="text-[10px] uppercase font-bold tracking-wider text-green-600 mb-1">Permanent Table QR Link (Static)</p>
+        <p className="text-[10px] uppercase font-bold tracking-wider text-green-600 mb-1">Permanent Table Link (Static)</p>
         {!missingStoreId && (
           <p className="text-[11px] text-gray-500 break-all bg-gray-50 border border-gray-200 rounded-lg p-2 mb-4 w-full text-center">
             {staticMenuUrl}
@@ -618,12 +618,30 @@ function QRModal({ table, onClose }) {
               toast.error('Store ID not initialized. Please restart the app.')
               return
             }
-            navigator.clipboard.writeText(menuUrl)
-            toast.success('Active Session URL copied to clipboard')
+            navigator.clipboard.writeText(staticMenuUrl)
+            toast.success('Static QR URL copied to clipboard')
           }}
         >
-          Copy Active Session Link
+          Copy Permanent Link
         </button>
+
+        {table.status === 'occupied' && (
+          <button 
+            className="btn-secondary w-full justify-center mb-2 border-dashed border-emerald-500 text-emerald-600 dark:text-emerald-400" 
+            disabled={missingStoreId}
+            onClick={() => {
+              if (missingStoreId) {
+                toast.error('Store ID not initialized. Please restart the app.')
+                return
+              }
+              navigator.clipboard.writeText(menuUrl)
+              toast.success('Active Session URL copied to clipboard')
+            }}
+          >
+            Copy Active Session Link
+          </button>
+        )}
+
         <button className="btn-ghost w-full justify-center" onClick={onClose}>
           Close
         </button>

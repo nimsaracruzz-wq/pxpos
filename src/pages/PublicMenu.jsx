@@ -328,6 +328,13 @@ export default function PublicMenu() {
           try {
             const { publishTableQrSession } = await import('@/lib/firebase')
             await publishTableQrSession(decodedStoreId, tableNo, newSessionId, newQrToken, { guests: guests || 1 })
+            
+            // Rewrite browser URL to include session and token parameters
+            const nextUrl = new URL(window.location.href)
+            nextUrl.searchParams.set('session', newSessionId)
+            nextUrl.searchParams.set('token', newQrToken)
+            window.history.replaceState(null, '', nextUrl.pathname + nextUrl.search + nextUrl.hash)
+            
             setResolvedToken(newQrToken)
             setResolvedSession(newSessionId)
             setSessionState('valid')
@@ -354,6 +361,14 @@ export default function PublicMenu() {
       // Automatically adopt the active session
       setResolvedToken(dbToken)
       setResolvedSession(dbSession)
+
+      // Rewrite browser URL to append the active session and token if they weren't in the scanned URL
+      if (!qrToken) {
+        const nextUrl = new URL(window.location.href)
+        nextUrl.searchParams.set('session', dbSession)
+        nextUrl.searchParams.set('token', dbToken)
+        window.history.replaceState(null, '', nextUrl.pathname + nextUrl.search + nextUrl.hash)
+      }
 
       const isMoved = String(sessionDoc.status || '') === 'moved'
       const movedToTable = String(sessionDoc.movedToTable || '').trim()
