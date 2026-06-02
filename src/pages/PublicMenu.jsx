@@ -46,7 +46,7 @@ const I18N = {
     failed: 'Failed to send order. Please try again.',
     outOfStock: 'This item is out of stock',
     limitedStock: 'Only {count} left in stock',
-    invalidQr: 'This QR has expired or is invalid. Ask staff for a fresh table QR.',
+    invalidQr: 'This QR link is invalid. Please scan the table QR code again.',
     lessSpicy: 'Less spicy',
     noOnions: 'No onions',
     extraSauce: 'Extra sauce',
@@ -109,7 +109,7 @@ const I18N = {
     failed: 'යැවීම අසාර්ථකයි. නැවත උත්සාහ කරන්න.',
     outOfStock: 'මෙම අයිතමය stock නැත',
     limitedStock: 'stock එකේ {count} පමණයි',
-    invalidQr: 'මෙම QR එක කල් ඉකුත් වී ඇත හෝ වලංගු නොවේ. කරුණාකර නව table QR එකක් ලබා ගන්න.',
+    invalidQr: 'මෙම QR සබැඳිය වලංගු නොවේ. කරුණාකර මේසයේ ඇති QR කේතය නැවත ස්කෑන් කරන්න.',
     lessSpicy: 'තියුණු අඩු',
     noOnions: 'ලූනු නැතිව',
     extraSauce: 'සෝස් වැඩිපුර',
@@ -392,7 +392,8 @@ export default function PublicMenu() {
 
   // ── Real-time Order Session Expiry Monitor ───────────────────────────────
   // Subscribes to the active session. When the POS settles payment and marks
-  // the session as 'expired', this shows the "Session Ended" screen.
+  // the session as 'expired' or 'closed', this resets the expired session
+  // and starts a fresh table session automatically.
   useEffect(() => {
     if (!decodedStoreId || !activeSessionId || sessionState !== 'valid') return () => {}
 
@@ -402,7 +403,10 @@ export default function PublicMenu() {
         setCart([])
         setOrderHistory([])
         setLastOrder(null)
-        setSessionState('ended')
+        setActiveTab('menu')
+        setSessionState('loading')
+        setActiveSessionId('')
+        setInitKey((prev) => prev + 1)
       }
     })
 
@@ -601,49 +605,6 @@ export default function PublicMenu() {
     if (status === 'accepted') return 'bg-teal-100 text-teal-700'
     if (status === 'expired') return 'bg-red-100 text-red-700'
     return 'bg-gray-100 text-gray-700'
-  }
-
-  // ── Session Ended Screen ─────────────────────────────────────────────────
-  // Shown when the POS settles payment and the session expires.
-  // Displays a beautiful, branded, permanent "Session Ended / Thank You" screen.
-  if (sessionState === 'ended') {
-    return (
-      <div
-        className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-[#f7f8f6] via-white to-[#f7f8f6] px-4"
-        style={{ WebkitOverflowScrolling: 'touch', fontFamily: 'DM Sans, Inter, system-ui, sans-serif' }}
-      >
-        <div className="relative w-full max-w-[400px] rounded-[32px] border border-emerald-100 bg-white p-8 text-center shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
-          {/* Language Toggle */}
-          <div className="absolute right-4 top-4">
-            <button
-              type="button"
-              onClick={() => setLang((prev) => (prev === 'en' ? 'si' : 'en'))}
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-gray-50 text-gray-500 transition-all hover:bg-gray-100 hover:text-gray-700 active:scale-95 border border-gray-100"
-            >
-              <Languages size={15} />
-            </button>
-          </div>
-
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#e8f5ee] text-[#1a7a4a]">
-            <CheckCircle2 size={32} />
-          </div>
-
-          <h1 className="text-[24px] font-bold text-gray-900 tracking-tight" style={{ fontFamily: 'Playfair Display, Georgia, serif' }}>
-            {t.sessionEndedTitle}
-          </h1>
-
-          <p className="mt-4 text-[14px] text-gray-500 leading-relaxed">
-            {t.sessionEndedDesc}
-          </p>
-
-          <div className="mt-8 border-t border-gray-100 pt-6">
-            <p className="text-[11px] font-semibold uppercase tracking-[1.5px] text-gray-400">
-              {t.table} {tableNo}
-            </p>
-          </div>
-        </div>
-      </div>
-    )
   }
 
   if (invalidQr) {
