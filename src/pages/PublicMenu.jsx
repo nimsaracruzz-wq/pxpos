@@ -67,6 +67,8 @@ const I18N = {
       completed: 'Completed',
       expired: 'Completed',
     },
+    sessionEndedTitle: 'Session Ended',
+    sessionEndedDesc: 'This ordering session has ended. Thank you for dining with us! To place a new order, please scan the table QR code again.',
   },
   si: {
     table: 'මේසය',
@@ -128,6 +130,8 @@ const I18N = {
       completed: 'සම්පූර්ණයි',
       expired: 'සම්පූර්ණ විය',
     },
+    sessionEndedTitle: 'සැසිය අවසන් විය',
+    sessionEndedDesc: 'මෙම ඇණවුම් සැසිය අවසන් වී ඇත. අප සමඟ රැඳී සිටීම ගැන ස්තූතියි! අලුත් ඇණවුමක් ලබා දීමට, කරුණාකර මේසයේ ඇති QR කේතය නැවත ස්කෑන් කරන්න.',
   },
 }
 
@@ -388,29 +392,17 @@ export default function PublicMenu() {
 
   // ── Real-time Order Session Expiry Monitor ───────────────────────────────
   // Subscribes to the active session. When the POS settles payment and marks
-  // the session as 'expired', this shows the "Session Ended" screen and
-  // auto-recovers after 3.5 seconds by re-running the init effect (via initKey).
+  // the session as 'expired', this shows the "Session Ended" screen.
   useEffect(() => {
     if (!decodedStoreId || !activeSessionId || sessionState !== 'valid') return () => {}
 
-    let recovering = false
-
     const unsubscribe = subscribeToOrderSession(decodedStoreId, activeSessionId, (sessionDoc) => {
-      if (recovering) return
       const status = String(sessionDoc?.status || '').trim()
       if (status === 'expired' || status === 'closed') {
-        recovering = true
         setCart([])
         setOrderHistory([])
         setLastOrder(null)
         setSessionState('ended')
-
-        // After 3.5 s, reset and re-run init to get a fresh session
-        setTimeout(() => {
-          recovering = false
-          setActiveSessionId('')
-          setInitKey((k) => k + 1) // triggers re-init
-        }, 3500)
       }
     })
 
@@ -613,24 +605,41 @@ export default function PublicMenu() {
 
   // ── Session Ended Screen ─────────────────────────────────────────────────
   // Shown when the POS settles payment and the session expires.
-  // Displays a loader and automatically redirects to a fresh new session for this table.
+  // Displays a beautiful, branded, permanent "Session Ended / Thank You" screen.
   if (sessionState === 'ended') {
     return (
       <div
-        className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-amber-50 via-white to-amber-50/40 px-4"
-        style={{ WebkitOverflowScrolling: 'touch' }}
+        className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-[#f7f8f6] via-white to-[#f7f8f6] px-4"
+        style={{ WebkitOverflowScrolling: 'touch', fontFamily: 'DM Sans, Inter, system-ui, sans-serif' }}
       >
-        <div className="w-full max-w-md rounded-3xl border border-amber-200 bg-white p-8 text-center shadow-lg">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-600">
-            <CheckCircle2 size={28} />
+        <div className="relative w-full max-w-[400px] rounded-[32px] border border-emerald-100 bg-white p-8 text-center shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+          {/* Language Toggle */}
+          <div className="absolute right-4 top-4">
+            <button
+              type="button"
+              onClick={() => setLang((prev) => (prev === 'en' ? 'si' : 'en'))}
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-gray-50 text-gray-500 transition-all hover:bg-gray-100 hover:text-gray-700 active:scale-95 border border-gray-100"
+            >
+              <Languages size={15} />
+            </button>
           </div>
-          <h1 className="text-2xl font-black text-gray-900">Session Ended</h1>
-          <p className="mt-3 text-sm text-gray-500 leading-relaxed">
-            This ordering session has ended. We are preparing a fresh ordering session for your table...
+
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#e8f5ee] text-[#1a7a4a]">
+            <CheckCircle2 size={32} />
+          </div>
+
+          <h1 className="text-[24px] font-bold text-gray-900 tracking-tight" style={{ fontFamily: 'Playfair Display, Georgia, serif' }}>
+            {t.sessionEndedTitle}
+          </h1>
+
+          <p className="mt-4 text-[14px] text-gray-500 leading-relaxed">
+            {t.sessionEndedDesc}
           </p>
-          <div className="mt-6 flex items-center justify-center gap-2 text-sm text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 p-4 rounded-2xl">
-            <Loader2 size={16} className="animate-spin text-emerald-600" />
-            <span>Redirecting to fresh session...</span>
+
+          <div className="mt-8 border-t border-gray-100 pt-6">
+            <p className="text-[11px] font-semibold uppercase tracking-[1.5px] text-gray-400">
+              {t.table} {tableNo}
+            </p>
           </div>
         </div>
       </div>
