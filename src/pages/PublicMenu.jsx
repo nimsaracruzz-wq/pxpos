@@ -4,7 +4,7 @@ import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Sear
 import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
-import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings, subscribeToLiveTableOrder, subscribeToOrderSession, createOrderSession } from '@/lib/firebase'
+import { supabase, publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToStoreSettings, subscribeToLiveTableOrder, subscribeToOrderSession, createOrderSession } from '@/lib/firebase'
 
 const I18N = {
   en: {
@@ -65,7 +65,7 @@ const I18N = {
       preparing: 'Preparing',
       ready: 'Ready for serving',
       completed: 'Completed',
-      expired: 'Expired (ask staff for fresh QR)',
+      expired: 'Completed',
     },
   },
   si: {
@@ -126,7 +126,7 @@ const I18N = {
       preparing: 'සකස් වෙමින්',
       ready: 'පිළිගැනීමට සූදානම්',
       completed: 'සම්පූර්ණයි',
-      expired: 'කල් ඉකුත් විය (නව QR එකක් ලබා ගන්න)',
+      expired: 'සම්පූර්ණ විය',
     },
   },
 }
@@ -182,33 +182,16 @@ export default function PublicMenu() {
   const [expandedItemId, setExpandedItemId] = useState('')
   const [customizations, setCustomizations] = useState({})
   const [sessionState, setSessionState] = useState('loading') // 'loading' | 'valid' | 'ended' | 'invalid'
-  const [verifyingStoredSession, setVerifyingStoredSession] = useState(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const key = decodedStoreId && tableNo ? `qr_sess_${decodedStoreId}_${tableNo}` : ''
-        if (key) {
-          const stored = sessionStorage.getItem(key)
-          if (stored) {
-            const parsed = JSON.parse(stored)
-            return Boolean(parsed?.sessionId)
-          }
-        }
-      }
-    } catch (_) {}
-    return false
-  })
+  // initKey is bumped after session expiry to re-trigger the session init effect
+  const [initKey, setInitKey] = useState(0)
   const [cloudProducts, setCloudProducts] = useState([])
   const [cloudProductsLoaded, setCloudProductsLoaded] = useState(false)
   const [posTableOrder, setPosTableOrder] = useState(null)
 
   const t = I18N[lang]
   const quickNotes = [t.lessSpicy, t.noOnions, t.extraSauce, t.noSugar]
-  // A ref to prevent auto-creating a new session on this tab after the current session ends.
-  // Without this, the table_sessions realtime event (activeSessionId: null) would trigger
-  // a new session creation on the OLD customer's already-open browser tab.
-  const sessionEndedRef = React.useRef(false)
 
-  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid'
+  const invalidQr = !decodedStoreId || !tableNo
 
   const spiceOptions = useMemo(
     () => [
@@ -333,225 +316,108 @@ export default function PublicMenu() {
     return () => unsubscribe()
   }, [decodedStoreId, activeSessionId, tableNo])
 
-  // ── Table Session Pointer Subscription ────────────────────────────────────
-  // Watches table_sessions[tableNumber].activeSessionId in Supabase.
-  // - If a session is active → adopt it (join as this customer or staff-opened session).
-  // - If no session → auto-create one (customer self-service scan).
-  // - Only runs when we are NOT verifying a stored session.
+  // ── Session Init (runs on mount and after session recovery) ─────────────
+  // Directly queries the DB to determine the correct session for this table.
+  // Never blocked by any ref — always runs fresh when initKey changes.
+  // Order of priority:
+  //   1. If table has an active (non-expired) session → adopt it
+  //   2. If table has no session, or its session is expired → auto-create a new one
   useEffect(() => {
-    if (!decodedStoreId || !tableNo) {
-      setSessionState('invalid')
-      return () => {}
-    }
+    if (!decodedStoreId || !tableNo) return () => {}
 
-    if (verifyingStoredSession) return () => {}
-
+    let cancelled = false
     setSessionState('loading')
-    sessionEndedRef.current = false
+    setActiveSessionId('')
 
-    const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (tableDoc) => {
-      if (sessionEndedRef.current) return
+    const initSession = async () => {
+      try {
+        // Fetch the table pointer
+        const { data: tableRows } = await supabase
+          .from('store_data')
+          .select('data')
+          .match({ store_id: decodedStoreId, collection_name: 'table_sessions', doc_id: tableNo })
+          .limit(1)
 
-      // Support both new format (activeSessionId) and legacy format (session/status:occupied)
-      const dbActiveSessionId = String(
-        tableDoc?.activeSessionId || tableDoc?.session || ''
-      ).trim()
-      const isActive =
-        tableDoc?.status === 'active' || tableDoc?.status === 'occupied'
+        if (cancelled) return
 
-      if (isActive && dbActiveSessionId) {
-        // Fetch status of the active session pointer to check if it's stale
-        try {
+        const tableDoc = tableRows?.[0]?.data
+        const dbActiveSessionId = String(tableDoc?.activeSessionId || tableDoc?.session || '').trim()
+
+        if (dbActiveSessionId) {
+          // Verify the session is truly active (not stale)
           const { data: sessRows } = await supabase
             .from('store_data')
             .select('data')
             .match({ store_id: decodedStoreId, collection_name: 'order_sessions', doc_id: dbActiveSessionId })
             .limit(1)
 
-          const sessData = sessRows?.[0]?.data
-          const sessStatus = String(sessData?.status || '').trim()
+          if (cancelled) return
 
-          if (sessStatus === 'expired' || sessStatus === 'closed') {
-            // Stale expired pointer in the database! Auto-create a fresh new session
-            const newSessionId = await createOrderSession(decodedStoreId, tableNo, guests || 1)
-            if (newSessionId) {
-              try {
-                if (sessionStorageKey) {
-                  sessionStorage.setItem(
-                    sessionStorageKey,
-                    JSON.stringify({ sessionId: newSessionId, createdAtMs: Date.now() })
-                  )
-                }
-              } catch (_) {}
-              setActiveSessionId(newSessionId)
-              setSessionState('valid')
-            } else {
-              setSessionState('invalid')
-            }
-          } else {
-            // Adopt the valid active session from database
-            try {
-              if (sessionStorageKey) {
-                sessionStorage.setItem(
-                  sessionStorageKey,
-                  JSON.stringify({ sessionId: dbActiveSessionId, createdAtMs: Date.now() })
-                )
-              }
-            } catch (_) {}
+          const sessStatus = String(sessRows?.[0]?.data?.status || '').trim()
+
+          if (!sessStatus || sessStatus === 'active') {
+            // Good active session — adopt it
             setActiveSessionId(dbActiveSessionId)
             setSessionState('valid')
+            return
           }
-        } catch (err) {
-          console.error('[PublicMenu] Failed to verify DB active session:', err)
-          // Fallback to adopting it in case of transient query error
-          setActiveSessionId(dbActiveSessionId)
+          // Session is expired/closed — fall through to create a new one
+        }
+
+        // No active session or expired → create a fresh one
+        const newSessionId = await createOrderSession(decodedStoreId, tableNo, guests || 1)
+        if (cancelled) return
+
+        if (newSessionId) {
+          setActiveSessionId(newSessionId)
           setSessionState('valid')
+        } else {
+          console.error('[PublicMenu] createOrderSession returned null')
+          setSessionState('loading') // Keep retrying via manual refresh
         }
-      } else if (!activeSessionId) {
-        // No active session in DB, and this tab doesn't have one either → auto-create
-        try {
-          const newSessionId = await createOrderSession(decodedStoreId, tableNo, guests || 1)
-          if (newSessionId) {
-            try {
-              if (sessionStorageKey) {
-                sessionStorage.setItem(
-                  sessionStorageKey,
-                  JSON.stringify({ sessionId: newSessionId, createdAtMs: Date.now() })
-                )
-              }
-            } catch (_) {}
-            setActiveSessionId(newSessionId)
-            setSessionState('valid')
-          } else {
-            setSessionState('invalid')
-          }
-        } catch (err) {
-          console.error('[PublicMenu] Failed to auto-create session:', err)
-          setSessionState('invalid')
-        }
+      } catch (err) {
+        if (cancelled) return
+        console.error('[PublicMenu] initSession error:', err)
+        setSessionState('loading')
+      }
+    }
+
+    initSession()
+    return () => { cancelled = true }
+  }, [decodedStoreId, tableNo, guests, initKey])
+
+  // ── Real-time Order Session Expiry Monitor ───────────────────────────────
+  // Subscribes to the active session. When the POS settles payment and marks
+  // the session as 'expired', this shows the "Session Ended" screen and
+  // auto-recovers after 3.5 seconds by re-running the init effect (via initKey).
+  useEffect(() => {
+    if (!decodedStoreId || !activeSessionId || sessionState !== 'valid') return () => {}
+
+    let recovering = false
+
+    const unsubscribe = subscribeToOrderSession(decodedStoreId, activeSessionId, (sessionDoc) => {
+      if (recovering) return
+      const status = String(sessionDoc?.status || '').trim()
+      if (status === 'expired' || status === 'closed') {
+        recovering = true
+        setCart([])
+        setOrderHistory([])
+        setLastOrder(null)
+        setSessionState('ended')
+
+        // After 3.5 s, reset and re-run init to get a fresh session
+        setTimeout(() => {
+          recovering = false
+          setActiveSessionId('')
+          setInitKey((k) => k + 1) // triggers re-init
+        }, 3500)
       }
     })
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [decodedStoreId, tableNo, sessionStorageKey, guests, activeSessionId, verifyingStoredSession])
-
-  // ── Order Session Expiry & Stored Verification ───────────────────────────
-  // 1. On mount: If a stored sessionId exists, checks status in DB.
-  //    - If expired/closed → immediately shows "Session Ended" and auto-redirects after 3.5s.
-  //    - If active → adopts it and marks verification complete.
-  //    - If not found or error → resets verification to false to fresh-init.
-  // 2. Real-time: Listens to the current session status.
-  //    - The instant the POS settles payment, status changes to "expired" / "closed".
-  //    - Wipes cart/history, shows "Session Ended" screen, and auto-redirects after 3.5s.
-  useEffect(() => {
-    if (!decodedStoreId) return () => {}
-
-    // Find the stored session ID from sessionStorage
-    let storedSessionId = ''
-    try {
-      if (sessionStorageKey) {
-        const stored = sessionStorage.getItem(sessionStorageKey)
-        if (stored) {
-          const parsed = JSON.parse(stored)
-          storedSessionId = String(parsed?.sessionId || '').trim()
-        }
-      }
-    } catch (_) {}
-
-    let isRedirecting = false
-    let unsubscribe = null
-
-    const checkStoredAndSubscribe = async () => {
-      const targetSessionId = activeSessionId || storedSessionId
-      if (!targetSessionId) {
-        if (verifyingStoredSession) setVerifyingStoredSession(false)
-        return
-      }
-
-      // If we are verifying on mount, perform a fast direct fetch first
-      if (verifyingStoredSession && storedSessionId) {
-        try {
-          const { data, error } = await supabase
-            .from('store_data')
-            .select('data')
-            .match({ store_id: decodedStoreId, collection_name: 'order_sessions', doc_id: storedSessionId })
-            .limit(1)
-
-          if (error || !data?.[0]?.data) {
-            // Stored session not found (or error) -> bypass verification to start fresh
-            setVerifyingStoredSession(false)
-            return
-          }
-
-          const status = String(data[0].data?.status || '').trim()
-          if (status === 'expired' || status === 'closed') {
-            isRedirecting = true
-            sessionEndedRef.current = true
-            setCart([])
-            setOrderHistory([])
-            setLastOrder(null)
-            setSessionState('ended')
-
-            setTimeout(() => {
-              try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
-              isRedirecting = false
-              sessionEndedRef.current = false
-              setVerifyingStoredSession(false)
-              setActiveSessionId('')
-            }, 3500)
-            return
-          } else {
-            setActiveSessionId(storedSessionId)
-            setSessionState('valid')
-            setVerifyingStoredSession(false)
-          }
-        } catch (err) {
-          console.error('[PublicMenu] Verification check failed:', err)
-          setVerifyingStoredSession(false)
-          return
-        }
-      }
-
-      // Set up real-time subscription for active session
-      const activeId = activeSessionId || storedSessionId
-      if (activeId) {
-        unsubscribe = subscribeToOrderSession(decodedStoreId, activeId, (sessionDoc) => {
-          if (isRedirecting) return
-
-          const status = String(sessionDoc?.status || '').trim()
-          if (status === 'expired' || status === 'closed') {
-            isRedirecting = true
-            sessionEndedRef.current = true
-
-            // Clear all cart and temporary order data
-            setCart([])
-            setOrderHistory([])
-            setLastOrder(null)
-            setSessionState('ended')
-
-            // Auto-redirect to a fresh empty session for this table after 3.5 seconds
-            const timer = setTimeout(() => {
-              try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
-              isRedirecting = false
-              sessionEndedRef.current = false
-              setVerifyingStoredSession(false)
-              setActiveSessionId('') // Triggers table pointer subscription to create fresh session
-            }, 3500)
-
-            return () => clearTimeout(timer)
-          }
-        })
-      }
-    }
-
-    checkStoredAndSubscribe()
-
-    return () => {
-      if (typeof unsubscribe === 'function') unsubscribe()
-    }
-  }, [decodedStoreId, activeSessionId, sessionStorageKey, verifyingStoredSession])
+  }, [decodedStoreId, activeSessionId, sessionState])
 
   const getCustomization = (itemId) => customizations[itemId] || defaultCustomization()
 
