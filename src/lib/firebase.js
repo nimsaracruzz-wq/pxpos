@@ -274,7 +274,7 @@ export async function publishQRCodeOrder(order) {
         doc_id: docId,
         data: payload,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return { success: true, id: docId }
@@ -297,7 +297,7 @@ export async function publishPOSOrderToQRCodeHistory(order) {
         doc_id: String(order.id),
         data: order,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return { success: true }
@@ -320,7 +320,7 @@ export async function overwriteQRCodeHistoryWithPOSKOT(storeId, session, order) 
         doc_id: String(order.id),
         data: order,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return true
@@ -343,7 +343,7 @@ export async function publishStoreProductUpsert(product) {
         doc_id: String(product.id),
         data: product,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return true
@@ -402,7 +402,7 @@ export async function updateQRCodeOrderStatus(storeId, orderId, status, meta = {
         doc_id: id,
         data: updatedOrder,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return true
@@ -445,7 +445,7 @@ export async function publishTableQrSession(storeId, tableNumber, session, token
         doc_id: tableKey,
         data: payload,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return true
@@ -480,7 +480,7 @@ export async function clearTableQrSession(storeId, tableNumber, meta = {}) {
         doc_id: tableKey,
         data: payload,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return true
@@ -539,7 +539,7 @@ export async function markNotificationRead(storeId, notificationId) {
         doc_id: id,
         data: updatedNotification,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return true
@@ -572,7 +572,7 @@ export async function sendNotificationToBusiness(storeId, message, type = 'info'
         doc_id: docId,
         data: payload,
         updated_at: new Date().toISOString()
-      })
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
     return true
