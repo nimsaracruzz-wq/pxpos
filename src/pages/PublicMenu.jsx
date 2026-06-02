@@ -441,6 +441,7 @@ export default function PublicMenu() {
   // 1. On mount: If a stored sessionId exists, checks status in DB.
   //    - If expired/closed → immediately shows "Session Ended" and auto-redirects after 3.5s.
   //    - If active → adopts it and marks verification complete.
+  //    - If not found or error → resets verification to false to fresh-init.
   // 2. Real-time: Listens to the current session status.
   //    - The instant the POS settles payment, status changes to "expired" / "closed".
   //    - Wipes cart/history, shows "Session Ended" screen, and auto-redirects after 3.5s.
@@ -459,47 +460,93 @@ export default function PublicMenu() {
       }
     } catch (_) {}
 
-    const targetSessionId = activeSessionId || storedSessionId
-    if (!targetSessionId) {
-      if (verifyingStoredSession) setVerifyingStoredSession(false)
-      return () => {}
+    let isRedirecting = false
+    let unsubscribe = null
+
+    const checkStoredAndSubscribe = async () => {
+      const targetSessionId = activeSessionId || storedSessionId
+      if (!targetSessionId) {
+        if (verifyingStoredSession) setVerifyingStoredSession(false)
+        return
+      }
+
+      // If we are verifying on mount, perform a fast direct fetch first
+      if (verifyingStoredSession && storedSessionId) {
+        try {
+          const { data, error } = await supabase
+            .from('store_data')
+            .select('data')
+            .match({ store_id: decodedStoreId, collection_name: 'order_sessions', doc_id: storedSessionId })
+            .limit(1)
+
+          if (error || !data?.[0]?.data) {
+            // Stored session not found (or error) -> bypass verification to start fresh
+            setVerifyingStoredSession(false)
+            return
+          }
+
+          const status = String(data[0].data?.status || '').trim()
+          if (status === 'expired' || status === 'closed') {
+            isRedirecting = true
+            sessionEndedRef.current = true
+            setCart([])
+            setOrderHistory([])
+            setLastOrder(null)
+            setSessionState('ended')
+
+            setTimeout(() => {
+              try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
+              isRedirecting = false
+              sessionEndedRef.current = false
+              setVerifyingStoredSession(false)
+              setActiveSessionId('')
+            }, 3500)
+            return
+          } else {
+            setActiveSessionId(storedSessionId)
+            setSessionState('valid')
+            setVerifyingStoredSession(false)
+          }
+        } catch (err) {
+          console.error('[PublicMenu] Verification check failed:', err)
+          setVerifyingStoredSession(false)
+          return
+        }
+      }
+
+      // Set up real-time subscription for active session
+      const activeId = activeSessionId || storedSessionId
+      if (activeId) {
+        unsubscribe = subscribeToOrderSession(decodedStoreId, activeId, (sessionDoc) => {
+          if (isRedirecting) return
+
+          const status = String(sessionDoc?.status || '').trim()
+          if (status === 'expired' || status === 'closed') {
+            isRedirecting = true
+            sessionEndedRef.current = true
+
+            // Clear all cart and temporary order data
+            setCart([])
+            setOrderHistory([])
+            setLastOrder(null)
+            setSessionState('ended')
+
+            // Auto-redirect to a fresh empty session for this table after 3.5 seconds
+            const timer = setTimeout(() => {
+              try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
+              isRedirecting = false
+              sessionEndedRef.current = false
+              setVerifyingStoredSession(false)
+              setActiveSessionId('') // Triggers table pointer subscription to create fresh session
+            }, 3500)
+
+            return () => clearTimeout(timer)
+          }
+        })
+      }
     }
 
-    let isRedirecting = false
-
-    const unsubscribe = subscribeToOrderSession(decodedStoreId, targetSessionId, (sessionDoc) => {
-      if (isRedirecting) return
-
-      const status = String(sessionDoc?.status || '').trim()
-      if (status === 'expired' || status === 'closed') {
-        isRedirecting = true
-        sessionEndedRef.current = true
-
-        // Clear all cart and temporary order data
-        setCart([])
-        setOrderHistory([])
-        setLastOrder(null)
-        setSessionState('ended')
-
-        // Auto-redirect to a fresh empty session for this table after 3.5 seconds
-        const timer = setTimeout(() => {
-          try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
-          isRedirecting = false
-          sessionEndedRef.current = false
-          setVerifyingStoredSession(false)
-          setActiveSessionId('') // Triggers table pointer subscription to create fresh session
-        }, 3500)
-
-        return () => clearTimeout(timer)
-      } else {
-        // Session is still active and valid! Use it.
-        if (storedSessionId && !activeSessionId) {
-          setActiveSessionId(storedSessionId)
-          setSessionState('valid')
-        }
-        if (verifyingStoredSession) setVerifyingStoredSession(false)
-      }
-    })
+    checkStoredAndSubscribe()
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
