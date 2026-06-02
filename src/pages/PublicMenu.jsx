@@ -439,17 +439,6 @@ export default function PublicMenu() {
     const config = getCustomization(item.id)
     setCart((prev) => {
       const ex = prev.find((i) => i.id === item.id)
-      const availableStock = Number(item?.stock || 0)
-      const currentQty = Number(ex?.qty || 0)
-
-      if (availableStock <= currentQty) {
-        toast.error(
-          availableStock <= 0
-            ? t.outOfStock
-            : t.limitedStock.replace('{count}', String(availableStock))
-        )
-        return prev
-      }
 
       if (ex) {
         return prev.map((i) =>
@@ -465,20 +454,6 @@ export default function PublicMenu() {
   const getItemQty = (id) => cart.find((item) => item.id === id)?.qty || 0
 
   const changeQty = (id, delta) => {
-    if (delta > 0) {
-      const item = menuItems.find((p) => p.id === id)
-      const availableStock = Number(item?.stock || 0)
-      const currentQty = Number(cart.find((i) => i.id === id)?.qty || 0)
-      if (availableStock <= currentQty) {
-        toast.error(
-          availableStock <= 0
-            ? t.outOfStock
-            : t.limitedStock.replace('{count}', String(availableStock))
-        )
-        return
-      }
-    }
-
     setCart((prev) =>
       prev
         .map((i) => (i.id === id ? { ...i, qty: i.qty + delta } : i))
@@ -547,20 +522,7 @@ export default function PublicMenu() {
       return
     }
 
-    const invalidStockItem = cart.find((cartItem) => {
-      const product = menuItems.find((m) => m.id === cartItem.id)
-      return !product || Number(cartItem.qty || 0) > Number(product.stock || 0)
-    })
-    if (invalidStockItem) {
-      const product = menuItems.find((m) => m.id === invalidStockItem.id)
-      const stock = Number(product?.stock || 0)
-      toast.error(
-        stock <= 0
-          ? `${invalidStockItem.name}: ${t.outOfStock}`
-          : `${invalidStockItem.name}: ${t.limitedStock.replace('{count}', String(stock))}`
-      )
-      return
-    }
+
 
     setSubmitting(true)
 
@@ -886,8 +848,6 @@ export default function PublicMenu() {
             <div className="space-y-3">
               {filteredItems.map((item) => {
                 const qty = getItemQty(item.id)
-                const stock = Number(item.stock || 0)
-                const outOfStock = stock <= 0
                 const config = getCustomization(item.id)
                 const expanded = expandedItemId === item.id
                 const emoji = String(item.emoji || '🍽')
@@ -908,9 +868,6 @@ export default function PublicMenu() {
                         <span className="mb-2 inline-block w-fit rounded-full bg-[#f7f8f6] px-2 py-0.5 text-[10px] text-gray-500">{item.category || 'General'}</span>
                         <p className="text-[15px] font-semibold text-gray-900">{item.name}</p>
                         <p className="mb-2 text-[11.5px] leading-[1.45] text-gray-500">{desc}</p>
-                        <p className={`mb-2 text-[11px] font-semibold ${outOfStock ? 'text-red-600' : 'text-gray-500'}`}>
-                          {outOfStock ? t.outOfStock : `Stock: ${stock}`}
-                        </p>
 
                         <button
                           type="button"
@@ -964,8 +921,7 @@ export default function PublicMenu() {
                           {qty === 0 ? (
                             <button
                               onClick={() => addItem(item)}
-                              disabled={outOfStock}
-                              className="rounded-full bg-[#1a7a4a] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-gray-300"
+                              className="rounded-full bg-[#1a7a4a] px-4 py-2 text-xs font-semibold text-white"
                             >
                               + {t.add}
                             </button>
@@ -978,8 +934,7 @@ export default function PublicMenu() {
                               <button
                                 type="button"
                                 onClick={() => addItem(item)}
-                                disabled={qty >= stock}
-                                className="flex h-8 w-8 items-center justify-center text-[#1a7a4a] disabled:cursor-not-allowed disabled:text-gray-300"
+                                className="flex h-8 w-8 items-center justify-center text-[#1a7a4a]"
                               >
                                 <Plus size={14} />
                               </button>

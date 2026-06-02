@@ -888,7 +888,8 @@ export default function POS() {
     }
     const currentQty = getCartQty(p.id)
     const stock = Number(p.stock || 0)
-    if (stock <= currentQty) { toast.error(`${p.name} is out of stock`); return }
+    const isRestaurant = activeModule === 'restaurant' || p.module === 'restaurant' || p.source === 'restaurant' || ['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu', 'main', 'starter', 'drink', 'dessert'].includes(String(p.category || '').toLowerCase())
+    if (!isRestaurant && stock <= currentQty) { toast.error(`${p.name} is out of stock`); return }
     addToCart(p)
     playTone('tick')
     toast.success(`${p.name} added`, { duration: 1000 })
@@ -909,7 +910,8 @@ export default function POS() {
     if (!serialForm.serial && !serialForm.imei) {
       const currentQty = getCartQty(serialProduct.id)
       const stock = Number(serialProduct.stock || 0)
-      if (stock <= currentQty) { toast.error(`${serialProduct.name} is out of stock`); return }
+      const isRestaurant = activeModule === 'restaurant' || serialProduct.module === 'restaurant' || serialProduct.source === 'restaurant' || ['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu', 'main', 'starter', 'drink', 'dessert'].includes(String(serialProduct.category || '').toLowerCase())
+      if (!isRestaurant && stock <= currentQty) { toast.error(`${serialProduct.name} is out of stock`); return }
       addToCart(serialProduct)
     } else {
       // Add as uniquely serialized item
@@ -932,7 +934,8 @@ export default function POS() {
       return
     }
     const stock = Number(item.stock || 0)
-    if (item.qty >= stock) {
+    const isRestaurant = activeModule === 'restaurant' || item.module === 'restaurant' || item.source === 'restaurant' || ['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu', 'main', 'starter', 'drink', 'dessert'].includes(String(item.category || '').toLowerCase())
+    if (!isRestaurant && item.qty >= stock) {
       toast.error(`${item.name} has only ${stock} in stock`)
       return
     }
@@ -1229,15 +1232,16 @@ export default function POS() {
               {filteredProducts.map((p) => {
                 const cartQty = cart.find((i) => i.id === p.id)?.qty || 0
                 const isExpired = p.expiry && new Date(p.expiry) < new Date()
+                const isRestaurant = activeModule === 'restaurant' || p.module === 'restaurant' || p.source === 'restaurant' || ['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu', 'main', 'starter', 'drink', 'dessert'].includes(String(p.category || '').toLowerCase())
                 return (
                   <button
                     key={p.id}
                     onClick={() => handleAddToCart(p)}
-                    disabled={p.stock === 0 || isExpired}
+                    disabled={(!isRestaurant && p.stock === 0) || isExpired}
                     title={isExpired ? `EXPIRED — ${p.expiry}` : undefined}
                     className={cn(
                       'pos-product-btn flex flex-col gap-1.5 relative overflow-hidden text-left',
-                      (p.stock === 0 || isExpired) && 'opacity-60 cursor-not-allowed'
+                      ((!isRestaurant && p.stock === 0) || isExpired) && 'opacity-60 cursor-not-allowed'
                     )}
                   >
                     {/* Expired overlay */}
@@ -1273,7 +1277,7 @@ export default function POS() {
                           isExpired ? 'text-red-500' : p.stock === 0 ? 'text-red-500' : p.stock <= 5 ? 'text-orange-500' : 'text-gray-400'
                         )}
                       >
-                        {isExpired ? 'Exp' : p.stock === 0 ? 'Out' : p.stock <= 5 ? `Low:${p.stock}` : `${p.stock}`}
+                        {isExpired ? 'Exp' : isRestaurant ? '' : p.stock === 0 ? 'Out' : p.stock <= 5 ? `Low:${p.stock}` : `${p.stock}`}
                       </span>
                     </div>
                   </button>

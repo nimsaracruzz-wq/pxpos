@@ -1638,7 +1638,11 @@ export default function Tables() {
   const handleSettle = async (order, paymentInfo) => {
     const insufficient = (order?.items || []).find((item) => {
       const product = products.find((p) => p.id === item.id)
-      return product && Number(product.stock || 0) < Number(item.qty || 0)
+      if (!product) return false
+      const isRestaurant = product.module === 'restaurant' || product.source === 'restaurant' || 
+                           ['mains', 'pizzas', 'starters', 'drinks', 'desserts', 'kottu', 'main', 'starter', 'drink', 'dessert'].includes(String(product.category || '').toLowerCase())
+      if (isRestaurant) return false
+      return Number(product.stock || 0) < Number(item.qty || 0)
     })
     if (insufficient) {
       const product = products.find((p) => p.id === insufficient.id)
