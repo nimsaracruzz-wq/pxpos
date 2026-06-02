@@ -360,17 +360,53 @@ export default function PublicMenu() {
         tableDoc?.status === 'active' || tableDoc?.status === 'occupied'
 
       if (isActive && dbActiveSessionId) {
-        // Adopt the active session from database
+        // Fetch status of the active session pointer to check if it's stale
         try {
-          if (sessionStorageKey) {
-            sessionStorage.setItem(
-              sessionStorageKey,
-              JSON.stringify({ sessionId: dbActiveSessionId, createdAtMs: Date.now() })
-            )
+          const { data: sessRows } = await supabase
+            .from('store_data')
+            .select('data')
+            .match({ store_id: decodedStoreId, collection_name: 'order_sessions', doc_id: dbActiveSessionId })
+            .limit(1)
+
+          const sessData = sessRows?.[0]?.data
+          const sessStatus = String(sessData?.status || '').trim()
+
+          if (sessStatus === 'expired' || sessStatus === 'closed') {
+            // Stale expired pointer in the database! Auto-create a fresh new session
+            const newSessionId = await createOrderSession(decodedStoreId, tableNo, guests || 1)
+            if (newSessionId) {
+              try {
+                if (sessionStorageKey) {
+                  sessionStorage.setItem(
+                    sessionStorageKey,
+                    JSON.stringify({ sessionId: newSessionId, createdAtMs: Date.now() })
+                  )
+                }
+              } catch (_) {}
+              setActiveSessionId(newSessionId)
+              setSessionState('valid')
+            } else {
+              setSessionState('invalid')
+            }
+          } else {
+            // Adopt the valid active session from database
+            try {
+              if (sessionStorageKey) {
+                sessionStorage.setItem(
+                  sessionStorageKey,
+                  JSON.stringify({ sessionId: dbActiveSessionId, createdAtMs: Date.now() })
+                )
+              }
+            } catch (_) {}
+            setActiveSessionId(dbActiveSessionId)
+            setSessionState('valid')
           }
-        } catch (_) {}
-        setActiveSessionId(dbActiveSessionId)
-        setSessionState('valid')
+        } catch (err) {
+          console.error('[PublicMenu] Failed to verify DB active session:', err)
+          // Fallback to adopting it in case of transient query error
+          setActiveSessionId(dbActiveSessionId)
+          setSessionState('valid')
+        }
       } else if (!activeSessionId) {
         // No active session in DB, and this tab doesn't have one either → auto-create
         try {
