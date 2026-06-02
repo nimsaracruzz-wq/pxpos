@@ -425,25 +425,50 @@ export async function publishTableQrSession(storeId, tableNumber, session, token
   try {
     const key = String(storeId || '').trim()
     const tableKey = String(tableNumber || '').trim()
-    if (!key || !tableKey || !session || !token) return false
+    if (!key || !tableKey || !session) return false
 
-    const payload = {
+    const now = Date.now()
+    const sessionId = String(session || '').trim()
+
+    // Write order_sessions record — permanent audit record of this customer visit
+    const sessionPayload = {
+      id: sessionId,
       storeId: key,
       tableNumber: tableKey,
-      session,
-      token,
-      status: 'occupied',
+      status: 'active',
       guests: Number(meta.guests || 0),
-      updatedAtMs: Date.now(),
+      createdAtMs: now,
+      closedAtMs: null,
     }
+    await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'order_sessions',
+        doc_id: sessionId,
+        data: sessionPayload,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'store_id,collection_name,doc_id' })
 
+    // Update table_sessions pointer to this active session
+    const tablePointer = {
+      storeId: key,
+      tableNumber: tableKey,
+      activeSessionId: sessionId,
+      status: 'active',
+      guests: Number(meta.guests || 0),
+      updatedAtMs: now,
+      // Keep legacy fields for backward compat during migration
+      session: sessionId,
+      token: String(token || ''),
+    }
     const { error } = await supabase
       .from('store_data')
       .upsert({
         store_id: key,
         collection_name: 'table_sessions',
         doc_id: tableKey,
-        data: payload,
+        data: tablePointer,
         updated_at: new Date().toISOString()
       }, { onConflict: 'store_id,collection_name,doc_id' })
 
@@ -461,24 +486,60 @@ export async function clearTableQrSession(storeId, tableNumber, meta = {}) {
     const tableKey = String(tableNumber || '').trim()
     if (!key || !tableKey) return false
 
-    const payload = {
-      storeId: key,
-      tableNumber: tableKey,
-      session: meta.session !== undefined ? meta.session : null,
-      token: meta.token !== undefined ? meta.token : null,
-      status: String(meta.status || 'available'),
-      guests: meta.guests !== undefined ? Number(meta.guests || 0) : 0,
-      movedToTable: meta.movedToTable !== undefined ? String(meta.movedToTable || '') : '',
-      updatedAtMs: Date.now(),
+    const now = Date.now()
+
+    // Determine which order_sessions record to expire
+    const explicitSessionId = String(meta.session || meta.sessionId || meta.activeSessionId || '').trim()
+    let sessionIdToExpire = explicitSessionId
+
+    if (!sessionIdToExpire) {
+      // Look up the current active session pointer
+      const { data: rows } = await supabase
+        .from('store_data')
+        .select('data')
+        .match({ store_id: key, collection_name: 'table_sessions', doc_id: tableKey })
+        .limit(1)
+      sessionIdToExpire = String(rows?.[0]?.data?.activeSessionId || rows?.[0]?.data?.session || '').trim()
     }
 
+    // Mark the order_sessions record as expired
+    if (sessionIdToExpire) {
+      const { data: sessRows } = await supabase
+        .from('store_data')
+        .select('data')
+        .match({ store_id: key, collection_name: 'order_sessions', doc_id: sessionIdToExpire })
+        .limit(1)
+      const existing = sessRows?.[0]?.data || {}
+      await supabase
+        .from('store_data')
+        .upsert({
+          store_id: key,
+          collection_name: 'order_sessions',
+          doc_id: sessionIdToExpire,
+          data: { ...existing, id: sessionIdToExpire, status: 'expired', closedAtMs: now },
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'store_id,collection_name,doc_id' })
+    }
+
+    // Clear the table_sessions pointer
+    const tablePointer = {
+      storeId: key,
+      tableNumber: tableKey,
+      activeSessionId: null,
+      session: null,
+      token: null,
+      status: String(meta.status || 'available'),
+      guests: 0,
+      movedToTable: meta.movedToTable ? String(meta.movedToTable) : '',
+      updatedAtMs: now,
+    }
     const { error } = await supabase
       .from('store_data')
       .upsert({
         store_id: key,
         collection_name: 'table_sessions',
         doc_id: tableKey,
-        data: payload,
+        data: tablePointer,
         updated_at: new Date().toISOString()
       }, { onConflict: 'store_id,collection_name,doc_id' })
 
@@ -802,4 +863,183 @@ export function subscribeToStoreNotifications(storeId, onNotification) {
   return subscribeToCollection(storeId, 'notifications', (notifs) => {
     onNotification(notifs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
   })
+}
+
+// ─── Order Session Isolation (New Model) ─────────────────────────────────────
+// Creates a fresh order_sessions record + updates the table_sessions pointer.
+// Called when a table is opened (POS) or when a customer self-opens via QR.
+export async function createOrderSession(storeId, tableNumber, guests = 1) {
+  try {
+    const key = String(storeId || '').trim()
+    const tableKey = String(tableNumber || '').trim()
+    if (!key || !tableKey) return null
+
+    const sessionId = `sess_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`
+    const now = Date.now()
+
+    // Write the order_sessions record (permanent, append-only audit record)
+    const sessionPayload = {
+      id: sessionId,
+      storeId: key,
+      tableNumber: tableKey,
+      status: 'active',
+      guests: Number(guests || 1),
+      createdAtMs: now,
+      closedAtMs: null,
+    }
+    const { error: sessErr } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'order_sessions',
+        doc_id: sessionId,
+        data: sessionPayload,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'store_id,collection_name,doc_id' })
+    if (sessErr) throw sessErr
+
+    // Update the table_sessions pointer to this new session
+    const { error: tableErr } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'table_sessions',
+        doc_id: tableKey,
+        data: {
+          storeId: key,
+          tableNumber: tableKey,
+          activeSessionId: sessionId,
+          status: 'active',
+          guests: Number(guests || 1),
+          updatedAtMs: now,
+        },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'store_id,collection_name,doc_id' })
+    if (tableErr) throw tableErr
+
+    return sessionId
+  } catch (error) {
+    console.error('[Supabase] createOrderSession failed:', error)
+    return null
+  }
+}
+
+// Marks an order_sessions record as expired and clears the table_sessions pointer.
+// Called on payment settlement. Triggers 'Session Ended' screen on all open customer browsers.
+export async function expireOrderSession(storeId, tableNumber, sessionId) {
+  try {
+    const key = String(storeId || '').trim()
+    const tableKey = String(tableNumber || '').trim()
+    const sessId = String(sessionId || '').trim()
+    if (!key || !tableKey) return false
+
+    const now = Date.now()
+
+    // 1. Mark the order_sessions record as expired
+    if (sessId) {
+      const { data: rows } = await supabase
+        .from('store_data')
+        .select('data')
+        .match({ store_id: key, collection_name: 'order_sessions', doc_id: sessId })
+        .limit(1)
+      const existing = rows?.[0]?.data || {}
+      await supabase
+        .from('store_data')
+        .upsert({
+          store_id: key,
+          collection_name: 'order_sessions',
+          doc_id: sessId,
+          data: { ...existing, id: sessId, status: 'expired', closedAtMs: now },
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'store_id,collection_name,doc_id' })
+    } else {
+      // No sessionId given — find and expire the currently active session
+      const { data: rows } = await supabase
+        .from('store_data')
+        .select('data')
+        .match({ store_id: key, collection_name: 'table_sessions', doc_id: tableKey })
+        .limit(1)
+      const activeId = String(rows?.[0]?.data?.activeSessionId || '').trim()
+      if (activeId) {
+        await supabase
+          .from('store_data')
+          .upsert({
+            store_id: key,
+            collection_name: 'order_sessions',
+            doc_id: activeId,
+            data: { id: activeId, storeId: key, tableNumber: tableKey, status: 'expired', closedAtMs: now },
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'store_id,collection_name,doc_id' })
+      }
+    }
+
+    // 2. Clear the table_sessions pointer → signals 'available' to all subscribers
+    const { error } = await supabase
+      .from('store_data')
+      .upsert({
+        store_id: key,
+        collection_name: 'table_sessions',
+        doc_id: tableKey,
+        data: {
+          storeId: key,
+          tableNumber: tableKey,
+          activeSessionId: null,
+          session: null,
+          token: null,
+          status: 'available',
+          guests: 0,
+          updatedAtMs: now,
+        },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'store_id,collection_name,doc_id' })
+
+    if (error) throw error
+    return true
+  } catch (error) {
+    console.error('[Supabase] expireOrderSession failed:', error)
+    return false
+  }
+}
+
+// Realtime subscription for a specific order session's status.
+// Used by PublicMenu to detect when the session is expired after payment.
+export function subscribeToOrderSession(storeId, sessionId, onSession) {
+  const key = String(storeId || '').trim()
+  const sessId = String(sessionId || '').trim()
+  if (!key || !sessId) return () => {}
+
+  // Initial fetch
+  supabase
+    .from('store_data')
+    .select('data')
+    .match({ store_id: key, collection_name: 'order_sessions', doc_id: sessId })
+    .then(({ data, error }) => {
+      if (!error && data?.[0]?.data) {
+        onSession(data[0].data)
+      }
+    })
+
+  // Realtime listener
+  const channel = supabase
+    .channel(`order_session_${sessId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'store_data' },
+      async (payload) => {
+        const row = payload.new || payload.old
+        if (
+          row &&
+          String(row.store_id).trim() === key &&
+          row.collection_name === 'order_sessions' &&
+          row.doc_id === sessId
+        ) {
+          onSession(row.data)
+        }
+      }
+    )
+    .subscribe()
+
+  return () => {
+    supabase.removeChannel(channel)
+  }
 }

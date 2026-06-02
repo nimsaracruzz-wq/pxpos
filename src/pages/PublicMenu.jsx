@@ -4,7 +4,7 @@ import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Sear
 import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
-import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings, getTableQrSession, subscribeToLiveTableOrder } from '@/lib/firebase'
+import { publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToTableQrSession, subscribeToStoreSettings, subscribeToLiveTableOrder, subscribeToOrderSession, createOrderSession } from '@/lib/firebase'
 
 const I18N = {
   en: {
@@ -154,14 +154,10 @@ export default function PublicMenu() {
   const decodedStoreId = useMemo(() => decodeURIComponent(resolvedStoreId).trim(), [resolvedStoreId])
   const tableNo = String(searchParams.get('table') || '').trim()
   const guests = Number(searchParams.get('guests') || 0) || 0
-  const rawSession = String(searchParams.get('session') || '').trim()
-  const qrToken = String(searchParams.get('token') || '').trim()
-
-  const [resolvedSession, setResolvedSession] = useState(rawSession && rawSession !== 'static' ? rawSession : '')
-  const [resolvedToken, setResolvedToken] = useState(qrToken)
-
-  const effectiveSession = resolvedSession || rawSession || `table-${tableNo || 'na'}`
-  const effectiveToken = resolvedToken || qrToken
+  // Session is managed server-side — no session/token in the static QR URL
+  // sessionStorage auto-clears when the browser tab closes (prevents stale session reuse)
+  const sessionStorageKey = decodedStoreId && tableNo ? `qr_sess_${decodedStoreId}_${tableNo}` : ''
+  const [activeSessionId, setActiveSessionId] = useState('')
 
   const { products } = useProductStore()
   const appStore = useAppStore()
@@ -185,16 +181,19 @@ export default function PublicMenu() {
   const [lang, setLang] = useState(searchParams.get('lang') === 'si' ? 'si' : 'en')
   const [expandedItemId, setExpandedItemId] = useState('')
   const [customizations, setCustomizations] = useState({})
-  const [sessionState, setSessionState] = useState('loading')
-  const [sessionRetry, setSessionRetry] = useState(0)
+  const [sessionState, setSessionState] = useState('loading') // 'loading' | 'valid' | 'ended' | 'invalid'
   const [cloudProducts, setCloudProducts] = useState([])
   const [cloudProductsLoaded, setCloudProductsLoaded] = useState(false)
   const [posTableOrder, setPosTableOrder] = useState(null)
 
   const t = I18N[lang]
   const quickNotes = [t.lessSpicy, t.noOnions, t.extraSauce, t.noSugar]
-  const isExpiredParam = searchParams.get('expired') === 'true'
-  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid' || isExpiredParam
+  // A ref to prevent auto-creating a new session on this tab after the current session ends.
+  // Without this, the table_sessions realtime event (activeSessionId: null) would trigger
+  // a new session creation on the OLD customer's already-open browser tab.
+  const sessionEndedRef = React.useRef(false)
+
+  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid' || sessionState === 'ended'
 
   const spiceOptions = useMemo(
     () => [
@@ -310,15 +309,20 @@ export default function PublicMenu() {
   }, [lastOrder?.id, decodedStoreId])
 
   useEffect(() => {
-    if (!decodedStoreId) return () => {}
+    if (!decodedStoreId || !activeSessionId) return () => {}
     const unsubscribe = subscribeToQRCodeOrderHistory(
       decodedStoreId,
-      { session: effectiveSession, tableNumber: tableNo },
+      { session: activeSessionId, tableNumber: tableNo },
       (history) => setOrderHistory(history)
     )
     return () => unsubscribe()
-  }, [decodedStoreId, effectiveSession, tableNo])
+  }, [decodedStoreId, activeSessionId, tableNo])
 
+  // ── Table Session Pointer Subscription ────────────────────────────────────
+  // Watches table_sessions[tableNumber].activeSessionId in Supabase.
+  // - If a session is active → adopt it (join as this customer or staff-opened session).
+  // - If no session → auto-create one (customer self-service scan).
+  // - Uses a ref-based active session tracker to prevent old tabs from creating new sessions.
   useEffect(() => {
     if (!decodedStoreId || !tableNo) {
       setSessionState('invalid')
@@ -326,100 +330,93 @@ export default function PublicMenu() {
     }
 
     setSessionState('loading')
-    let retryTimer = null
-    const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (sessionDoc) => {
-      const dbStatus = String(sessionDoc?.status || '').trim()
-      const dbToken = String(sessionDoc?.token || '').trim()
-      const dbSession = String(sessionDoc?.session || '').trim()
+    sessionEndedRef.current = false
 
-      const isSessionActive = sessionDoc && dbStatus === 'occupied' && dbToken && dbSession
+    // Local ref so the async callback always reads the latest sessionId without stale closure
+    const localSessionRef = { current: '' }
 
-      if (!isSessionActive) {
-        // If the session was settled/cleared in the POS, clean up browser URL search parameters
-        // by doing a hard replace/reload and setting the 'expired' flag to show the session closed screen.
-        const nextUrl = new URL(window.location.href)
-        const hadParams = nextUrl.searchParams.has('session') || nextUrl.searchParams.has('token')
-        if (hadParams) {
-          nextUrl.searchParams.delete('session')
-          nextUrl.searchParams.delete('token')
-          nextUrl.searchParams.set('expired', 'true')
-          window.location.replace(nextUrl.pathname + nextUrl.search + nextUrl.hash)
-          return
-        }
+    const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (tableDoc) => {
+      // Ignore table pointer changes after this tab's session has been ended
+      if (sessionEndedRef.current) return
 
-        // If the scanned QR has no token and it's not marked as expired/closed, start a new session!
-        if (!qrToken && !isExpiredParam) {
-          const newSessionId = `session-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`
-          const newQrToken = `token-${Math.random().toString(36).substring(2, 10)}`
-          try {
-            const { publishTableQrSession } = await import('@/lib/firebase')
-            await publishTableQrSession(decodedStoreId, tableNo, newSessionId, newQrToken, { guests: guests || 1 })
-            
-            // Rewrite browser URL to include session and token parameters
-            const nextUrlWithNew = new URL(window.location.href)
-            nextUrlWithNew.searchParams.set('session', newSessionId)
-            nextUrlWithNew.searchParams.set('token', newQrToken)
-            window.history.replaceState(null, '', nextUrlWithNew.pathname + nextUrlWithNew.search + nextUrlWithNew.hash)
-            
-            setResolvedToken(newQrToken)
-            setResolvedSession(newSessionId)
-            setSessionState('valid')
-            return
-          } catch (error) {
-            console.error('[PublicMenu] Failed to auto-create session:', error)
-            setSessionState('invalid')
-            return
+      // Support both new format (activeSessionId) and legacy format (session/status:occupied)
+      const dbActiveSessionId = String(
+        tableDoc?.activeSessionId || tableDoc?.session || ''
+      ).trim()
+      const isActive =
+        tableDoc?.status === 'active' || tableDoc?.status === 'occupied'
+
+      if (isActive && dbActiveSessionId) {
+        // There is an active session in the DB — adopt it
+        localSessionRef.current = dbActiveSessionId
+        try {
+          if (sessionStorageKey) {
+            sessionStorage.setItem(
+              sessionStorageKey,
+              JSON.stringify({ sessionId: dbActiveSessionId, createdAtMs: Date.now() })
+            )
           }
+        } catch (_) {}
+        setActiveSessionId(dbActiveSessionId)
+        setSessionState('valid')
+      } else if (!localSessionRef.current) {
+        // No active session in DB, and this tab doesn't have one either → auto-create
+        try {
+          const newSessionId = await createOrderSession(decodedStoreId, tableNo, guests || 1)
+          if (newSessionId) {
+            localSessionRef.current = newSessionId
+            try {
+              if (sessionStorageKey) {
+                sessionStorage.setItem(
+                  sessionStorageKey,
+                  JSON.stringify({ sessionId: newSessionId, createdAtMs: Date.now() })
+                )
+              }
+            } catch (_) {}
+            setActiveSessionId(newSessionId)
+            setSessionState('valid')
+          } else {
+            setSessionState('invalid')
+          }
+        } catch (err) {
+          console.error('[PublicMenu] Failed to auto-create session:', err)
+          setSessionState('invalid')
         }
-
-        // If the scanned QR HAS a token (it's a dynamic link), it has expired!
-        setSessionState('invalid')
-        return
       }
-
-      // If a session is active in the database:
-      // If the scanned QR has a token, validate that it matches the active database session!
-      if (qrToken && qrToken !== dbToken) {
-        setSessionState('invalid')
-        return
-      }
-
-      // Automatically adopt the active session
-      setResolvedToken(dbToken)
-      setResolvedSession(dbSession)
-
-      // Rewrite browser URL to append the active session and token if they weren't in the scanned URL
-      if (!qrToken) {
-        const nextUrl = new URL(window.location.href)
-        nextUrl.searchParams.set('session', dbSession)
-        nextUrl.searchParams.set('token', dbToken)
-        window.history.replaceState(null, '', nextUrl.pathname + nextUrl.search + nextUrl.hash)
-      }
-
-      const isMoved = String(sessionDoc.status || '') === 'moved'
-      const movedToTable = String(sessionDoc.movedToTable || '').trim()
-      if (
-        isMoved &&
-        movedToTable &&
-        movedToTable !== tableNo &&
-        dbSession === (resolvedSession || dbSession) &&
-        dbToken === (resolvedToken || dbToken)
-      ) {
-        setSessionState('loading')
-        const nextUrl = new URL(window.location.href)
-        nextUrl.searchParams.set('table', movedToTable)
-        window.location.replace(nextUrl.toString())
-        return
-      }
-
-      setSessionState('valid')
+      // If localSessionRef.current !== '' but DB has no active session:
+      // this tab already had a session that's being expired → subscribeToOrderSession handles it
     })
 
     return () => {
-      if (retryTimer) clearTimeout(retryTimer)
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [decodedStoreId, tableNo, qrToken, sessionRetry, resolvedSession, resolvedToken])
+  }, [decodedStoreId, tableNo, sessionStorageKey, guests])
+
+  // ── Order Session Expiry Detection ────────────────────────────────────────
+  // When the POS settles payment, the order_sessions record status changes to 'expired'.
+  // This triggers the 'Session Ended' screen on ALL open browser tabs for this session.
+  useEffect(() => {
+    if (!decodedStoreId || !activeSessionId) return () => {}
+
+    const unsubscribe = subscribeToOrderSession(decodedStoreId, activeSessionId, (sessionDoc) => {
+      const status = String(sessionDoc?.status || '').trim()
+      if (status === 'expired' || status === 'closed') {
+        // Block the table_sessions listener from auto-creating a new session on this old tab
+        sessionEndedRef.current = true
+        // Clear all local session state
+        try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
+        setActiveSessionId('')
+        setCart([])
+        setOrderHistory([])
+        setLastOrder(null)
+        setSessionState('ended')
+      }
+    })
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe()
+    }
+  }, [decodedStoreId, activeSessionId, sessionStorageKey])
 
   const getCustomization = (itemId) => customizations[itemId] || defaultCustomization()
 
@@ -545,7 +542,7 @@ export default function PublicMenu() {
       toast.error(t.missingStore)
       return
     }
-    if (!effectiveToken) {
+    if (!activeSessionId) {
       toast.error(t.invalidQr)
       return
     }
@@ -571,8 +568,7 @@ export default function PublicMenu() {
     const publishResult = await publishQRCodeOrder({
       storeId: decodedStoreId,
       tableNumber: tableNo,
-      session: effectiveSession,
-      token: effectiveToken,
+      session: activeSessionId,
       guests,
       customerName: customerName || 'Guest',
       notes: normalizedNotes,
@@ -652,15 +648,32 @@ export default function PublicMenu() {
     return 'bg-gray-100 text-gray-700'
   }
 
-  if (invalidQr) {
-    const handleForceReset = () => {
-      const nextUrl = new URL(window.location.href)
-      nextUrl.searchParams.delete('session')
-      nextUrl.searchParams.delete('token')
-      nextUrl.searchParams.delete('expired')
-      window.location.replace(nextUrl.pathname + nextUrl.search + nextUrl.hash)
-    }
+  // ── Session Ended Screen ─────────────────────────────────────────────────
+  // Shown when the POS settles payment and the session expires.
+  // No bypass button — customer must physically rescan the table QR code.
+  if (sessionState === 'ended') {
+    return (
+      <div
+        className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-amber-50 via-white to-amber-50/40 px-4"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
+        <div className="w-full max-w-md rounded-3xl border border-amber-200 bg-white p-8 text-center shadow-lg">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+            <CheckCircle2 size={28} />
+          </div>
+          <h1 className="text-2xl font-black text-gray-900">Session Ended</h1>
+          <p className="mt-3 text-sm text-gray-500 leading-relaxed">
+            This ordering session has ended. Please scan the table QR code again to start a new order.
+          </p>
+          <div className="mt-6 rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-700 font-medium">
+            🎉 Your order is complete. Thank you for dining with us!
+          </div>
+        </div>
+      </div>
+    )
+  }
 
+  if (invalidQr) {
     return (
       <div
         className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-emerald-50 via-white to-emerald-50/40 px-4"
@@ -671,17 +684,9 @@ export default function PublicMenu() {
             <UtensilsCrossed size={24} />
           </div>
           <h1 className="text-xl font-black text-gray-900">{t.invalidQr}</h1>
-          <p className="mt-2 text-sm text-gray-500 mb-6">
-            No ordering is available from this link. Please scan the new QR code from the table.
+          <p className="mt-2 text-sm text-gray-500">
+            No ordering is available from this link. Please scan the QR code on your table.
           </p>
-          <button
-            type="button"
-            onClick={handleForceReset}
-            className="w-full py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] transition-all text-white text-sm font-bold shadow-md shadow-emerald-600/10 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Clock3 size={16} />
-            Start Fresh Session
-          </button>
         </div>
       </div>
     )

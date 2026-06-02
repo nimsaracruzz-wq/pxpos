@@ -9,7 +9,7 @@ import CustomerDisplay from '@/components/CustomerDisplay'
 import { v4 as uuidv4 } from 'uuid'
 import { QRCodeSVG } from 'qrcode.react'
 import { ArrowRightLeft, Globe } from 'lucide-react'
-import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, resolveCloudTenantId, updateQRCodeOrderStatus } from '@/lib/firebase'
+import { clearTableQrSession, publishPOSOrderToQRCodeHistory, publishTableQrSession, resolveCloudTenantId, updateQRCodeOrderStatus, expireOrderSession, createOrderSession } from '@/lib/firebase'
 import { BRAND } from '@/lib/brand'
 import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
 import { generateHelaQRPayment, getHelaQRConfigStatus, checkHelaQRPaymentStatus } from '@/lib/helaqr'
@@ -1710,7 +1710,14 @@ export default function Tables() {
     }
 
     if (tenantStoreId && selectedTable?.number) {
-      clearTableQrSession(tenantStoreId, selectedTable.number)
+      const sessId = String(selectedTable.sessionId || '').trim()
+      if (sessId) {
+        // Use new model: expire the order_sessions record → triggers 'Session Ended' on customer
+        expireOrderSession(tenantStoreId, selectedTable.number, sessId)
+      } else {
+        // Fallback for legacy sessions without a sessionId
+        clearTableQrSession(tenantStoreId, selectedTable.number)
+      }
     }
 
     // Clear the table
@@ -1766,14 +1773,22 @@ export default function Tables() {
     }
   }
 
-  const handleOpenTable = (guests) => {
+  const handleOpenTable = async (guests) => {
     if (!actionTable) return
-    const sessionId = uuidv4()
-    const qrToken = uuidv4()
     const emptyOrder = { items: [], waiter: '', notes: '', subtotal: 0, tax: 0, serviceCharge: 0, total: 0 }
-    updateTable(actionTable.id, { status: 'occupied', guests, sessionId, qrToken, order: emptyOrder })
-    setSelectedTable({ ...actionTable, status: 'occupied', guests, sessionId, qrToken, order: emptyOrder })
-    publishTableQrSession(tenantStoreId, actionTable.number, sessionId, qrToken, { guests })
+    let sessionId = uuidv4() // fallback local ID
+    if (tenantStoreId) {
+      try {
+        // createOrderSession writes both order_sessions record and table_sessions pointer atomically
+        const newSessId = await createOrderSession(tenantStoreId, actionTable.number, guests)
+        if (newSessId) sessionId = newSessId
+      } catch (err) {
+        console.error('[Tables] createOrderSession failed, falling back to publishTableQrSession:', err)
+        publishTableQrSession(tenantStoreId, actionTable.number, sessionId, uuidv4(), { guests })
+      }
+    }
+    updateTable(actionTable.id, { status: 'occupied', guests, sessionId, order: emptyOrder })
+    setSelectedTable({ ...actionTable, status: 'occupied', guests, sessionId, order: emptyOrder })
     addLog('Opened Table', `Table ${actionTable.number} opened for ${guests} guests`, currentUser?.name || 'System')
     setActionTable(null)
   }
