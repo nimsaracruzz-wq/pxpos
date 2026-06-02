@@ -182,6 +182,21 @@ export default function PublicMenu() {
   const [expandedItemId, setExpandedItemId] = useState('')
   const [customizations, setCustomizations] = useState({})
   const [sessionState, setSessionState] = useState('loading') // 'loading' | 'valid' | 'ended' | 'invalid'
+  const [verifyingStoredSession, setVerifyingStoredSession] = useState(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const key = decodedStoreId && tableNo ? `qr_sess_${decodedStoreId}_${tableNo}` : ''
+        if (key) {
+          const stored = sessionStorage.getItem(key)
+          if (stored) {
+            const parsed = JSON.parse(stored)
+            return Boolean(parsed?.sessionId)
+          }
+        }
+      }
+    } catch (_) {}
+    return false
+  })
   const [cloudProducts, setCloudProducts] = useState([])
   const [cloudProductsLoaded, setCloudProductsLoaded] = useState(false)
   const [posTableOrder, setPosTableOrder] = useState(null)
@@ -193,7 +208,7 @@ export default function PublicMenu() {
   // a new session creation on the OLD customer's already-open browser tab.
   const sessionEndedRef = React.useRef(false)
 
-  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid' || sessionState === 'ended'
+  const invalidQr = !decodedStoreId || !tableNo || sessionState === 'invalid'
 
   const spiceOptions = useMemo(
     () => [
@@ -322,21 +337,19 @@ export default function PublicMenu() {
   // Watches table_sessions[tableNumber].activeSessionId in Supabase.
   // - If a session is active → adopt it (join as this customer or staff-opened session).
   // - If no session → auto-create one (customer self-service scan).
-  // - Uses a ref-based active session tracker to prevent old tabs from creating new sessions.
+  // - Only runs when we are NOT verifying a stored session.
   useEffect(() => {
     if (!decodedStoreId || !tableNo) {
       setSessionState('invalid')
       return () => {}
     }
 
+    if (verifyingStoredSession) return () => {}
+
     setSessionState('loading')
     sessionEndedRef.current = false
 
-    // Local ref so the async callback always reads the latest sessionId without stale closure
-    const localSessionRef = { current: '' }
-
     const unsubscribe = subscribeToTableQrSession(decodedStoreId, tableNo, async (tableDoc) => {
-      // Ignore table pointer changes after this tab's session has been ended
       if (sessionEndedRef.current) return
 
       // Support both new format (activeSessionId) and legacy format (session/status:occupied)
@@ -347,8 +360,7 @@ export default function PublicMenu() {
         tableDoc?.status === 'active' || tableDoc?.status === 'occupied'
 
       if (isActive && dbActiveSessionId) {
-        // There is an active session in the DB — adopt it
-        localSessionRef.current = dbActiveSessionId
+        // Adopt the active session from database
         try {
           if (sessionStorageKey) {
             sessionStorage.setItem(
@@ -359,12 +371,11 @@ export default function PublicMenu() {
         } catch (_) {}
         setActiveSessionId(dbActiveSessionId)
         setSessionState('valid')
-      } else if (!localSessionRef.current) {
+      } else if (!activeSessionId) {
         // No active session in DB, and this tab doesn't have one either → auto-create
         try {
           const newSessionId = await createOrderSession(decodedStoreId, tableNo, guests || 1)
           if (newSessionId) {
-            localSessionRef.current = newSessionId
             try {
               if (sessionStorageKey) {
                 sessionStorage.setItem(
@@ -383,40 +394,81 @@ export default function PublicMenu() {
           setSessionState('invalid')
         }
       }
-      // If localSessionRef.current !== '' but DB has no active session:
-      // this tab already had a session that's being expired → subscribeToOrderSession handles it
     })
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [decodedStoreId, tableNo, sessionStorageKey, guests])
+  }, [decodedStoreId, tableNo, sessionStorageKey, guests, activeSessionId, verifyingStoredSession])
 
-  // ── Order Session Expiry Detection ────────────────────────────────────────
-  // When the POS settles payment, the order_sessions record status changes to 'expired'.
-  // This triggers the 'Session Ended' screen on ALL open browser tabs for this session.
+  // ── Order Session Expiry & Stored Verification ───────────────────────────
+  // 1. On mount: If a stored sessionId exists, checks status in DB.
+  //    - If expired/closed → immediately shows "Session Ended" and auto-redirects after 3.5s.
+  //    - If active → adopts it and marks verification complete.
+  // 2. Real-time: Listens to the current session status.
+  //    - The instant the POS settles payment, status changes to "expired" / "closed".
+  //    - Wipes cart/history, shows "Session Ended" screen, and auto-redirects after 3.5s.
   useEffect(() => {
-    if (!decodedStoreId || !activeSessionId) return () => {}
+    if (!decodedStoreId) return () => {}
 
-    const unsubscribe = subscribeToOrderSession(decodedStoreId, activeSessionId, (sessionDoc) => {
+    // Find the stored session ID from sessionStorage
+    let storedSessionId = ''
+    try {
+      if (sessionStorageKey) {
+        const stored = sessionStorage.getItem(sessionStorageKey)
+        if (stored) {
+          const parsed = JSON.parse(stored)
+          storedSessionId = String(parsed?.sessionId || '').trim()
+        }
+      }
+    } catch (_) {}
+
+    const targetSessionId = activeSessionId || storedSessionId
+    if (!targetSessionId) {
+      if (verifyingStoredSession) setVerifyingStoredSession(false)
+      return () => {}
+    }
+
+    let isRedirecting = false
+
+    const unsubscribe = subscribeToOrderSession(decodedStoreId, targetSessionId, (sessionDoc) => {
+      if (isRedirecting) return
+
       const status = String(sessionDoc?.status || '').trim()
       if (status === 'expired' || status === 'closed') {
-        // Block the table_sessions listener from auto-creating a new session on this old tab
+        isRedirecting = true
         sessionEndedRef.current = true
-        // Clear all local session state
-        try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
-        setActiveSessionId('')
+
+        // Clear all cart and temporary order data
         setCart([])
         setOrderHistory([])
         setLastOrder(null)
         setSessionState('ended')
+
+        // Auto-redirect to a fresh empty session for this table after 3.5 seconds
+        const timer = setTimeout(() => {
+          try { if (sessionStorageKey) sessionStorage.removeItem(sessionStorageKey) } catch (_) {}
+          isRedirecting = false
+          sessionEndedRef.current = false
+          setVerifyingStoredSession(false)
+          setActiveSessionId('') // Triggers table pointer subscription to create fresh session
+        }, 3500)
+
+        return () => clearTimeout(timer)
+      } else {
+        // Session is still active and valid! Use it.
+        if (storedSessionId && !activeSessionId) {
+          setActiveSessionId(storedSessionId)
+          setSessionState('valid')
+        }
+        if (verifyingStoredSession) setVerifyingStoredSession(false)
       }
     })
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [decodedStoreId, activeSessionId, sessionStorageKey])
+  }, [decodedStoreId, activeSessionId, sessionStorageKey, verifyingStoredSession])
 
   const getCustomization = (itemId) => customizations[itemId] || defaultCustomization()
 
@@ -612,7 +664,7 @@ export default function PublicMenu() {
 
   // ── Session Ended Screen ─────────────────────────────────────────────────
   // Shown when the POS settles payment and the session expires.
-  // No bypass button — customer must physically rescan the table QR code.
+  // Displays a loader and automatically redirects to a fresh new session for this table.
   if (sessionState === 'ended') {
     return (
       <div
@@ -625,10 +677,11 @@ export default function PublicMenu() {
           </div>
           <h1 className="text-2xl font-black text-gray-900">Session Ended</h1>
           <p className="mt-3 text-sm text-gray-500 leading-relaxed">
-            This ordering session has ended. Please scan the table QR code again to start a new order.
+            This ordering session has ended. We are preparing a fresh ordering session for your table...
           </p>
-          <div className="mt-6 rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-700 font-medium">
-            🎉 Your order is complete. Thank you for dining with us!
+          <div className="mt-6 flex items-center justify-center gap-2 text-sm text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 p-4 rounded-2xl">
+            <Loader2 size={16} className="animate-spin text-emerald-600" />
+            <span>Redirecting to fresh session...</span>
           </div>
         </div>
       </div>
