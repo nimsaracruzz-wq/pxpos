@@ -937,7 +937,9 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
         if (syncStoreId && table?.sessionId) {
             const { overwriteQRCodeHistoryWithPOSKOT } = await import('@/lib/firebase')
             // Pass empty items map and set status to cancelled
+            const targetDocId = order?.qrOrderId || table.order?.qrOrderId || `qr-pos-sync-${table.sessionId}`
             await overwriteQRCodeHistoryWithPOSKOT(syncStoreId, table.sessionId, {
+              id: targetDocId,
               status: 'cancelled',
               items: [],
               total: 0
@@ -965,7 +967,9 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
       // We import overwriteQRCodeHistoryWithPOSKOT below when needed, but first let's replace the publish call
       // Wait, we need to pass existing qr order logic to Firebase to overwrite session history.
       const { overwriteQRCodeHistoryWithPOSKOT } = await import('@/lib/firebase')
+      const targetDocId = order?.qrOrderId || table.order?.qrOrderId || `qr-pos-sync-${table.sessionId}`
       const publishResult = await overwriteQRCodeHistoryWithPOSKOT(syncStoreId, table.sessionId, {
+        id: targetDocId,
         storeId: syncStoreId,
         tableNumber: table.number,
         session: table.sessionId,

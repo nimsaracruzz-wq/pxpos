@@ -735,6 +735,119 @@ export default function PublicMenu() {
     return 'bg-gray-100 text-gray-700'
   }
 
+  const displayOrders = useMemo(() => {
+    const pending = orderHistory.filter((order) => String(order.status || '').toLowerCase() === 'new')
+    if (posTableOrder && Array.isArray(posTableOrder.items) && posTableOrder.items.length > 0) {
+      const posOrderCard = {
+        id: 'pos-confirmed-bill',
+        isPosAuth: true,
+        status: 'accepted',
+        createdAtMs: posTableOrder.updatedAtMs || Date.now(),
+        items: posTableOrder.items,
+        total: posTableOrder.total || 0,
+        subtotal: posTableOrder.subtotal || 0,
+        tax: posTableOrder.tax || 0,
+        serviceCharge: posTableOrder.serviceCharge || 0,
+        notes: posTableOrder.notes || '',
+        waiter: posTableOrder.waiter || '',
+        source: 'pos'
+      }
+      return [...pending, posOrderCard]
+    }
+    return orderHistory.filter((order) => !['completed', 'expired'].includes(String(order.status || '')))
+  }, [posTableOrder, orderHistory])
+
+  const historyOrders = useMemo(() => {
+    const pending = orderHistory.filter((order) => String(order.status || '').toLowerCase() === 'new')
+    const completedOrExpired = orderHistory.filter((order) => ['completed', 'expired'].includes(String(order.status || '')))
+    if (posTableOrder && Array.isArray(posTableOrder.items) && posTableOrder.items.length > 0) {
+      const posOrderCard = {
+        id: 'pos-confirmed-bill',
+        isPosAuth: true,
+        status: 'accepted',
+        createdAtMs: posTableOrder.updatedAtMs || Date.now(),
+        items: posTableOrder.items,
+        total: posTableOrder.total || 0,
+        subtotal: posTableOrder.subtotal || 0,
+        tax: posTableOrder.tax || 0,
+        serviceCharge: posTableOrder.serviceCharge || 0,
+        notes: posTableOrder.notes || '',
+        waiter: posTableOrder.waiter || '',
+        source: 'pos'
+      }
+      return [...pending, posOrderCard, ...completedOrExpired]
+    }
+    return orderHistory
+  }, [posTableOrder, orderHistory])
+
+  const renderOrderCard = (order, index, showGuests = false) => {
+    const isPos = order.isPosAuth
+    const displayId = isPos ? `Table ${tableNo} Bill` : `#${order.id.slice(0, 8)}`
+    const displayDate = new Date(Number(order.createdAtMs || Date.now())).toLocaleString()
+    const displayStatus = isPos ? 'Confirmed' : (t.status[order.status] || t.status.new)
+    const badgeClass = isPos 
+      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400' 
+      : statusBadgeClass(order.status)
+    
+    return (
+      <div 
+        key={order.id || index} 
+        className={`rounded-2xl border p-4 shadow-sm bg-white dark:bg-zinc-900 transition-all ${
+          isPos 
+            ? 'border-emerald-200 dark:border-emerald-900/50 shadow-emerald-50/50 dark:shadow-none' 
+            : 'border-gray-200 dark:border-zinc-800'
+        }`}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-gray-900 dark:text-zinc-100">{displayId}</p>
+            <p className="text-[11px] text-gray-500">{displayDate}</p>
+            {showGuests && order.guests && (
+              <p className="text-[10px] text-gray-400 mt-0.5">{t.guests}: {order.guests || guests || '-'}</p>
+            )}
+            {isPos && (
+              <span className="mt-1.5 inline-flex rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 px-2 py-0.5 text-[9px] font-black tracking-wider uppercase">
+                Active POS Bill
+              </span>
+            )}
+            {!isPos && String(order.source || '') === 'pos' && (
+              <span className="mt-1.5 inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                {t.addedByStaff}
+              </span>
+            )}
+          </div>
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-black ${badgeClass}`}>
+            {displayStatus}
+          </span>
+        </div>
+        
+        <div className="space-y-1.5 border-t border-gray-100 dark:border-zinc-800/50 pt-3 text-xs text-gray-700 dark:text-zinc-300">
+          {(order.items || []).map((item, idx) => (
+            <div key={idx} className="flex justify-between">
+              <span>{item.qty}x {item.name}</span>
+              <span className="text-gray-400 dark:text-zinc-500">
+                {formatCurrency(Number(item.price || item.salePrice || 0) * item.qty)}
+              </span>
+            </div>
+          ))}
+        </div>
+        
+        {!!String(order.notes || '').trim() && (
+          <p className="mt-3 rounded-xl border border-amber-100 dark:border-amber-950 bg-amber-50/50 dark:bg-amber-950/20 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+            {order.notes}
+          </p>
+        )}
+        
+        <div className="mt-3 flex items-center justify-between border-t border-gray-100 dark:border-zinc-800/50 pt-2.5">
+          <span className="text-xs font-medium text-gray-500">Amount</span>
+          <p className="text-sm font-black text-emerald-700 dark:text-emerald-400">
+            {formatCurrency(Number(order.total || 0))}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (invalidQr) {
     return (
       <div
@@ -1153,63 +1266,19 @@ export default function PublicMenu() {
 
         {activeTab === 'current' && (
           <div className="space-y-3 px-4 py-4">
-            {activeOrders.length === 0 && (
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 text-center text-sm text-gray-500">{t.noSelected}</div>
+            {displayOrders.length === 0 && (
+              <div className="rounded-2xl border border-gray-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 p-5 text-center text-sm text-gray-500">{t.noSelected}</div>
             )}
-            {activeOrders.map((order) => (
-              <div key={order.id} className="rounded-2xl border border-emerald-100 bg-white p-3 shadow-sm">
-                <div className="mb-2 flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-black text-gray-800">#{order.id.slice(0, 8)}</p>
-                    <p className="text-xs text-gray-500">{new Date(Number(order.createdAtMs || Date.now())).toLocaleString()}</p>
-                    {String(order.source || '') === 'pos' && (
-                      <span className="mt-1 inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                        {t.addedByStaff}
-                      </span>
-                    )}
-                  </div>
-                  <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusBadgeClass(order.status)}`}>
-                    {t.status[order.status] || t.status.new}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600">{(order.items || []).map((item) => `${item.qty}x ${item.name}`).join(' • ')}</p>
-                <p className="mt-2 text-sm font-black text-emerald-700">{formatCurrency(Number(order.total || 0))}</p>
-              </div>
-            ))}
+            {displayOrders.map((order, index) => renderOrderCard(order, index, false))}
           </div>
         )}
 
         {activeTab === 'history' && (
           <div className="space-y-3 px-4 py-4">
-            {orderHistory.length === 0 && (
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 text-center text-sm text-gray-500">{t.historyEmpty}</div>
+            {historyOrders.length === 0 && (
+              <div className="rounded-2xl border border-gray-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 p-5 text-center text-sm text-gray-500">{t.historyEmpty}</div>
             )}
-            {orderHistory.map((order) => (
-              <div key={order.id} className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-                <div className="mb-2 flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-black text-gray-800">#{order.id.slice(0, 8)}</p>
-                    <p className="text-xs text-gray-500">{new Date(Number(order.createdAtMs || Date.now())).toLocaleString()}</p>
-                    <p className="text-xs text-gray-500">{t.guests}: {order.guests || guests || '-'}</p>
-                    {String(order.source || '') === 'pos' && (
-                      <span className="mt-1 inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                        {t.addedByStaff}
-                      </span>
-                    )}
-                  </div>
-                  <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusBadgeClass(order.status)}`}>
-                    {t.status[order.status] || t.status.new}
-                  </span>
-                </div>
-                <div className="mb-2 text-xs text-gray-600">
-                  {(order.items || []).map((item) => `${item.qty}x ${item.name}`).join(' • ')}
-                </div>
-                {!!String(order.notes || '').trim() && (
-                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700">{order.notes}</p>
-                )}
-                <p className="mt-2 text-sm font-black text-emerald-700">{formatCurrency(Number(order.total || 0))}</p>
-              </div>
-            ))}
+            {historyOrders.map((order, index) => renderOrderCard(order, index, true))}
           </div>
         )}
 

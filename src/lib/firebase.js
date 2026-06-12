@@ -310,7 +310,7 @@ export async function publishPOSOrderToQRCodeHistory(order) {
 export async function overwriteQRCodeHistoryWithPOSKOT(storeId, session, order) {
   try {
     const key = String(storeId || '').trim()
-    if (!key || !order?.id) return false
+    if (!key || !order?.id) return { success: false, error: 'Missing key or order ID' }
     
     const { error } = await supabase
       .from('store_data')
@@ -323,10 +323,10 @@ export async function overwriteQRCodeHistoryWithPOSKOT(storeId, session, order) 
       }, { onConflict: 'store_id,collection_name,doc_id' })
 
     if (error) throw error
-    return true
+    return { success: true, id: order.id }
   } catch (error) {
     console.error('[Supabase] overwriteQRCodeHistoryWithPOSKOT failed:', error)
-    return false
+    return { success: false, error: error.message }
   }
 }
 
