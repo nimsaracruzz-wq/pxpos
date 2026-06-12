@@ -507,11 +507,16 @@ function QRModal({ table, onClose }) {
   const storeId = encodeURIComponent(storeKey)
   const tableQuery = encodeURIComponent(String(table.number || ''))
   const sessionQuery = encodeURIComponent(String(table.sessionId || `table-${table.number || 'na'}`))
-  const guestsQuery = encodeURIComponent(String(table.guests || ''))
-  const tokenQuery = encodeURIComponent(String(table.qrToken || ''))
-  // Use hash route to avoid hosting rewrite issues on static deployments (Vercel/Netlify).
-  const menuUrl = `${baseOrigin}/#/menu/${storeId}?table=${tableQuery}&session=${sessionQuery}&guests=${guestsQuery}&token=${tokenQuery}`
-  const staticMenuUrl = `${baseOrigin}/#/menu/${storeId}?table=${tableQuery}`
+  // ── URL construction ────────────────────────────────────────────────────────
+  // The static QR URL MUST embed the storeId so every restaurant is isolated.
+  // Format: /#/table/{storeId}/{tableNumber}
+  //   storeId   = license key (unique per restaurant) — encoded for URL safety
+  //   tableNumber = the table number at this restaurant
+  //
+  // TableEntry.jsx reads both params and looks up the correct Supabase
+  // store_data namespace, keeping every business's data 100% separate.
+  const menuUrl = `${baseOrigin}/#/order/${sessionQuery}`
+  const staticMenuUrl = `${baseOrigin}/#/table/${storeId}/${tableQuery}`
   const needsLanHint = !configuredBase && /localhost|127\.0\.0\.1/i.test(browserOrigin)
   const missingStoreId = !storeKey
 
@@ -552,7 +557,7 @@ function QRModal({ table, onClose }) {
         const pngUrl = canvas.toDataURL('image/png')
         const a = document.createElement('a')
         a.href = pngUrl
-        a.download = `table-${table.number}-static-qr.png`
+        a.download = `table-${table.number}-qr-${storeKey.slice(0, 8)}.png`
         document.body.appendChild(a)
         a.click()
         a.remove()
@@ -574,8 +579,13 @@ function QRModal({ table, onClose }) {
   return (
     <div className="modal-overlay" style={{ zIndex: 110 }} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="animate-fade-in card p-8 flex flex-col items-center bg-white dark:bg-zinc-900" style={{ width: 340 }}>
-        <h2 className="text-xl font-black text-gray-800 dark:text-zinc-100 mb-1">Table {table.number} QR</h2>
-        <p className="text-sm text-gray-500 mb-5 text-center">Static QR sticker for table placement</p>
+        <h2 className="text-xl font-black text-gray-800 dark:text-zinc-100 mb-1">Table {table.number} Static QR</h2>
+        <p className="text-sm text-gray-500 mb-1 text-center">Scan once — always routes to the right restaurant</p>
+        {storeKey && (
+          <p className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 mb-4 text-center font-mono">
+            Store: {storeKey}
+          </p>
+        )}
         {missingStoreId && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2 mb-3 text-center">
             Store ID not initialized. Please restart the app.

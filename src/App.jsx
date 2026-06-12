@@ -23,6 +23,7 @@ import WebOrders from '@/pages/WebOrders'
 import Refunds from '@/pages/Refunds'
 import SaleHistory from '@/pages/SaleHistory'
 import PublicMenu from '@/pages/PublicMenu'
+import TableEntry from '@/pages/TableEntry'
 import CustomerScreen from '@/pages/CustomerScreen'
 import AdminPortal from '@/pages/AdminPortal'
 import Electronics from '@/pages/Electronics'
@@ -61,12 +62,12 @@ export default function App() {
       return hashPathRaw.replace(/^!/, '')
     }
   })()
-  const isHashPublicMenuRoute = hashPath.startsWith('/menu/') || hashPath.includes('/menu/')
+  const isHashPublicMenuRoute = hashPath.startsWith('/menu/') || hashPath.startsWith('/table/') || hashPath.startsWith('/order/') || hashPath.includes('/menu/') || hashPath.includes('/table/') || hashPath.includes('/order/')
   const isHashCustomerRoute = hashPath.startsWith('/customer-screen')
   const isHashAdminPortalRoute = hashPath.startsWith('/admin-portal')
   const hasQrQueryMarkers = /(?:\?|&)(table|session|token|guests)=/i.test(decodedHref)
-  const hasMenuMarker = /(?:\/|#|%2f)menu(?:\/|%2f)/i.test(decodedHref)
-  const forcePublicMenuFromHref = hasMenuMarker || (hasQrQueryMarkers && /menu/i.test(decodedHref))
+  const hasPublicMenuMarker = /(?:\/|#|%2f)(?:menu|table|order)(?:\/|%2f)/i.test(decodedHref)
+  const forcePublicMenuFromHref = hasPublicMenuMarker || (hasQrQueryMarkers && /menu/i.test(decodedHref))
   const Router = isFileProtocol || isHashPublicMenuRoute || isHashCustomerRoute || isHashAdminPortalRoute || forcePublicMenuFromHref ? HashRouter : BrowserRouter
   const currentPath = (() => {
     if (typeof window === 'undefined') return '/'
@@ -86,7 +87,11 @@ export default function App() {
   })()
   const isPublicMenuRoute =
     currentPath.startsWith('/menu/') ||
+    currentPath.startsWith('/table/') ||
+    currentPath.startsWith('/order/') ||
     /\/menu\/[^/?#]+/i.test(decodedHref) ||
+    /\/table\/[^/?#]+/i.test(decodedHref) ||
+    /\/order\/[^/?#]+/i.test(decodedHref) ||
     forcePublicMenuFromHref
   const isCustomerDisplayRoute =
     currentPath.startsWith('/customer-screen') ||
@@ -263,6 +268,9 @@ export default function App() {
     return (
       <Router>
         <Routes>
+          <Route path="/table/:tableNumber" element={<TableEntry />} />
+          <Route path="/table/:storeId/:tableNumber" element={<TableEntry />} />
+          <Route path="/order/:sessionId" element={<PublicMenu />} />
           <Route path="/menu/:storeId" element={<PublicMenu />} />
           <Route path="*" element={<PublicMenu />} />
         </Routes>

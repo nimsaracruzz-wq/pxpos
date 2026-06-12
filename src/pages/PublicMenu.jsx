@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Search, Clock3, ListOrdered, Languages, SlidersHorizontal } from 'lucide-react'
 import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
@@ -67,8 +67,8 @@ const I18N = {
       completed: 'Completed',
       expired: 'Completed',
     },
-    sessionEndedTitle: 'Session Ended',
-    sessionEndedDesc: 'This ordering session has ended. Thank you for dining with us! To place a new order, please scan the table QR code again.',
+    sessionEndedTitle: 'Session Expired',
+    sessionEndedDesc: 'This ordering session has expired. Please scan the table QR code again to start a new order.',
   },
   si: {
     table: 'මේසය',
@@ -130,8 +130,8 @@ const I18N = {
       completed: 'සම්පූර්ණයි',
       expired: 'සම්පූර්ණ විය',
     },
-    sessionEndedTitle: 'සැසිය අවසන් විය',
-    sessionEndedDesc: 'මෙම ඇණවුම් සැසිය අවසන් වී ඇත. අප සමඟ රැඳී සිටීම ගැන ස්තූතියි! අලුත් ඇණවුමක් ලබා දීමට, කරුණාකර මේසයේ ඇති QR කේතය නැවත ස්කෑන් කරන්න.',
+    sessionEndedTitle: 'සැසිය කල් ඉකුත් විය',
+    sessionEndedDesc: 'මෙම ඇණවුම් සැසිය කල් ඉකුත් වී ඇත. අලුත් ඇණවුමක් ලබා දීමට, කරුණාකර මේසයේ ඇති QR කේතය නැවත ස්කෑන් කරන්න.',
   },
 }
 
@@ -140,8 +140,9 @@ function defaultCustomization() {
 }
 
 export default function PublicMenu() {
-  const { storeId } = useParams()
+  const { storeId, sessionId } = useParams()
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const toast = useToast()
 
   const fallbackStoreId = useMemo(() => {
@@ -154,10 +155,19 @@ export default function PublicMenu() {
       return ''
     }
   }, [])
-  const resolvedStoreId = String(storeId || fallbackStoreId || '').trim()
-  const decodedStoreId = useMemo(() => decodeURIComponent(resolvedStoreId).trim(), [resolvedStoreId])
-  const tableNo = String(searchParams.get('table') || '').trim()
+
+  const queryStoreId = String(searchParams.get('store') || '').trim()
+  const legacyTableNo = String(searchParams.get('table') || '').trim()
   const guests = Number(searchParams.get('guests') || 0) || 0
+  const legacySessionId = String(searchParams.get('session') || '').trim()
+
+  const isSessionRoute = Boolean(sessionId)
+  const isLegacyMenuRoute = !isSessionRoute && Boolean(storeId || legacyTableNo || fallbackStoreId || queryStoreId)
+
+  const resolvedStoreId = String(isSessionRoute ? '' : storeId || queryStoreId || fallbackStoreId || '').trim()
+  const [decodedStoreId, setDecodedStoreId] = useState(() => decodeURIComponent(resolvedStoreId).trim())
+  const [tableNo, setTableNo] = useState(String(isSessionRoute ? '' : legacyTableNo).trim())
+
   // Session is managed server-side — no session/token in the static QR URL
   // sessionStorage auto-clears when the browser tab closes (prevents stale session reuse)
   const sessionStorageKey = decodedStoreId && tableNo ? `qr_sess_${decodedStoreId}_${tableNo}` : ''
@@ -195,7 +205,7 @@ export default function PublicMenu() {
   const t = I18N[lang]
   const quickNotes = [t.lessSpicy, t.noOnions, t.extraSauce, t.noSugar]
 
-  const invalidQr = !decodedStoreId || !tableNo
+  const invalidQr = sessionState === 'invalid'
 
   const spiceOptions = useMemo(
     () => [
@@ -327,86 +337,186 @@ export default function PublicMenu() {
   //   1. If table has an active (non-expired) session → adopt it
   //   2. If table has no session, or its session is expired → auto-create a new one
   useEffect(() => {
-    if (!decodedStoreId || !tableNo) return () => {}
+    if (!isSessionRoute) return () => {}
+
+    let cancelled = false
+
+    // ── Instant lock: check sessionStorage before any async call ─────────────
+    // When a session is settled/expired we write a flag to sessionStorage immediately.
+    // sessionStorage persists across page reloads but is cleared when the tab closes.
+    // This means a customer who refreshes their page NEVER sees the menu again —
+    // the ended screen shows instantly without a loading flash.
+    const sessionKey = String(sessionId || '').trim()
+    const SESSION_ENDED_KEY = `sess_ended_${sessionKey}`
+    if (sessionKey && sessionStorage.getItem(SESSION_ENDED_KEY)) {
+      // Already known to be expired from a previous render — show ended screen immediately
+      setSessionState('ended')
+      // Still fetch to populate tableNo / storeId for the "Start New Order" button
+      // but we do NOT change sessionState again if it confirms expired.
+      const populateMetaOnly = async () => {
+        try {
+          const { data: rows } = await supabase
+            .from('store_data')
+            .select('store_id, data')
+            .match({ collection_name: 'order_sessions', doc_id: sessionKey })
+            .limit(1)
+          if (cancelled || !rows?.[0]?.data) return
+          const sessionDoc = rows[0].data || {}
+          const sessionStoreId = String(rows[0].store_id || '').trim()
+          const sessionTableNo = String(sessionDoc.tableNumber || '').trim()
+          if (sessionStoreId) setDecodedStoreId(sessionStoreId)
+          if (sessionTableNo) setTableNo(sessionTableNo)
+          // Do NOT set sessionState — it stays 'ended'
+        } catch { /* ignore */ }
+      }
+      populateMetaOnly()
+      return () => { cancelled = true }
+    }
+
+    setSessionState('loading')
+    setActiveSessionId('')
+
+    const initSessionRoute = async () => {
+      try {
+        if (!sessionKey) {
+          setSessionState('invalid')
+          return
+        }
+
+        const { data: rows, error } = await supabase
+          .from('store_data')
+          .select('store_id, data')
+          .match({ collection_name: 'order_sessions', doc_id: sessionKey })
+          .limit(1)
+
+        if (cancelled) return
+        if (error || !rows?.[0]?.data) {
+          setSessionState('invalid')
+          return
+        }
+
+        const sessionDoc = rows[0].data || {}
+        const sessionStoreId = String(rows[0].store_id || '').trim()
+        const sessionTableNo = String(sessionDoc.tableNumber || '').trim()
+        const sessionStatus = String(sessionDoc.status || '').trim()
+
+        if (!sessionStoreId || !sessionTableNo) {
+          setSessionState('invalid')
+          return
+        }
+
+        setDecodedStoreId(sessionStoreId)
+        setTableNo(sessionTableNo)
+        setActiveSessionId(sessionKey)
+
+        if (sessionStatus === 'expired' || sessionStatus === 'closed') {
+          // Write the lock to sessionStorage so future reloads are instant
+          try { sessionStorage.setItem(SESSION_ENDED_KEY, '1') } catch { /* ignore */ }
+          setSessionState('ended')
+        } else {
+          setSessionState('valid')
+        }
+      } catch (err) {
+        if (cancelled) return
+        console.error('[PublicMenu] initSessionRoute error:', err)
+        setSessionState('invalid')
+      }
+    }
+
+    initSessionRoute()
+    return () => { cancelled = true }
+  }, [isSessionRoute, sessionId])
+
+  useEffect(() => {
+    if (!isLegacyMenuRoute) return () => {}
 
     let cancelled = false
     setSessionState('loading')
     setActiveSessionId('')
 
-    const initSession = async () => {
+    const initLegacySession = async () => {
+      if (legacySessionId) {
+        navigate(`/order/${legacySessionId}`, { replace: true })
+        return
+      }
+
+      if (!decodedStoreId || !tableNo) {
+        setSessionState('invalid')
+        return
+      }
+
       try {
-        // Fetch the table pointer
-        const { data: tableRows } = await supabase
+        const { data: tableRows, error: tableErr } = await supabase
           .from('store_data')
           .select('data')
           .match({ store_id: decodedStoreId, collection_name: 'table_sessions', doc_id: tableNo })
           .limit(1)
 
         if (cancelled) return
+        if (tableErr) {
+          throw tableErr
+        }
 
         const tableDoc = tableRows?.[0]?.data
         const dbActiveSessionId = String(tableDoc?.activeSessionId || tableDoc?.session || '').trim()
 
         if (dbActiveSessionId) {
-          // Verify the session is truly active (not stale)
-          const { data: sessRows } = await supabase
+          const { data: sessRows, error: sessErr } = await supabase
             .from('store_data')
             .select('data')
             .match({ store_id: decodedStoreId, collection_name: 'order_sessions', doc_id: dbActiveSessionId })
             .limit(1)
 
           if (cancelled) return
+          if (sessErr) {
+            throw sessErr
+          }
 
           const sessStatus = String(sessRows?.[0]?.data?.status || '').trim()
-
           if (!sessStatus || sessStatus === 'active') {
-            // Good active session — adopt it
-            setActiveSessionId(dbActiveSessionId)
-            setSessionState('valid')
+            navigate(`/order/${dbActiveSessionId}`, { replace: true })
             return
           }
-          // Session is expired/closed — fall through to create a new one
         }
 
-        // No active session or expired → create a fresh one
         const newSessionId = await createOrderSession(decodedStoreId, tableNo, guests || 1)
         if (cancelled) return
 
         if (newSessionId) {
-          setActiveSessionId(newSessionId)
-          setSessionState('valid')
+          navigate(`/order/${newSessionId}`, { replace: true })
         } else {
           console.error('[PublicMenu] createOrderSession returned null')
-          setSessionState('loading') // Keep retrying via manual refresh
+          setSessionState('invalid')
         }
       } catch (err) {
         if (cancelled) return
-        console.error('[PublicMenu] initSession error:', err)
-        setSessionState('loading')
+        console.error('[PublicMenu] initLegacySession error:', err)
+        setSessionState('invalid')
       }
     }
 
-    initSession()
+    initLegacySession()
     return () => { cancelled = true }
-  }, [decodedStoreId, tableNo, guests, initKey])
+  }, [isLegacyMenuRoute, decodedStoreId, tableNo, guests, initKey, legacySessionId, navigate])
 
   // ── Real-time Order Session Expiry Monitor ───────────────────────────────
   // Subscribes to the active session. When the POS settles payment and marks
-  // the session as 'expired' or 'closed', this resets the expired session
-  // and starts a fresh table session automatically.
+  // the session as 'expired' or 'closed', this shows the "Session Ended" screen.
   useEffect(() => {
     if (!decodedStoreId || !activeSessionId || sessionState !== 'valid') return () => {}
 
     const unsubscribe = subscribeToOrderSession(decodedStoreId, activeSessionId, (sessionDoc) => {
       const status = String(sessionDoc?.status || '').trim()
       if (status === 'expired' || status === 'closed') {
+        // Write instant-lock to sessionStorage — future reloads show ended screen immediately
+        try {
+          const sessEndedKey = `sess_ended_${activeSessionId}`
+          sessionStorage.setItem(sessEndedKey, '1')
+        } catch { /* ignore if sessionStorage unavailable */ }
         setCart([])
         setOrderHistory([])
         setLastOrder(null)
-        setActiveTab('menu')
-        setSessionState('loading')
-        setActiveSessionId('')
-        setInitKey((prev) => prev + 1)
+        setSessionState('ended')
       }
     })
 
@@ -518,6 +628,23 @@ export default function PublicMenu() {
       toast.error(t.invalidQr)
       return
     }
+
+    // ── Final guard: re-verify the session has not been settled ─────────────
+    // Prevents a race where sessionState is still 'valid' in memory but the
+    // session was just expired by the POS. Checks both in-memory state and
+    // the sessionStorage lock written at expiry time.
+    if (sessionState === 'ended' || sessionState === 'invalid') {
+      toast.error(t.invalidQr)
+      return
+    }
+    try {
+      const sessEndedKey = `sess_ended_${activeSessionId}`
+      if (sessionStorage.getItem(sessEndedKey)) {
+        setSessionState('ended')
+        toast.error(lang === 'si' ? 'සැසිය කල් ඉකුත් විය. නැවත ඇණවුම් කළ නොහැක.' : 'Session has ended. Please scan the QR to start a new order.')
+        return
+      }
+    } catch { /* ignore */ }
 
 
 
@@ -639,6 +766,100 @@ export default function PublicMenu() {
           <h1 className="text-xl font-black text-gray-900">Checking QR session...</h1>
           <p className="mt-2 text-sm text-gray-500">
             Verifying that this table link is still active.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Session Ended — shown after payment is settled by the POS ────────────────
+  // The static QR on the table never changes. When this screen appears, tapping
+  // "Start New Order" navigates back to /#/table/{tableNo} which creates a fresh
+  // isolated session for the next customer group.
+  if (sessionState === 'ended') {
+    const staticTableUrl = tableNo
+      ? `${window.location.origin}${window.location.pathname}#/table/${encodeURIComponent(tableNo)}`
+      : null
+
+    return (
+      <div
+        className="fixed inset-0 flex items-center justify-center px-4"
+        style={{
+          WebkitOverflowScrolling: 'touch',
+          background: 'linear-gradient(160deg, #f0fdf4 0%, #dcfce7 40%, #fff 100%)',
+        }}
+      >
+        <div className="w-full max-w-md">
+          {/* Success card */}
+          <div className="rounded-3xl bg-white p-8 text-center shadow-2xl border border-emerald-100">
+            {/* Animated checkmark */}
+            <div
+              className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full"
+              style={{
+                background: 'linear-gradient(135deg, #16a34a, #22c55e)',
+                boxShadow: '0 8px 32px rgba(34,197,94,0.35)',
+              }}
+            >
+              <CheckCircle2 size={38} className="text-white" />
+            </div>
+
+            <h1
+              className="text-2xl font-black text-gray-900 mb-1"
+              style={{ fontFamily: 'Playfair Display, Georgia, serif' }}
+            >
+              {lang === 'si' ? 'ගෙවීම සම්පූර්ණයි!' : 'Payment Settled!'}
+            </h1>
+            <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+              {lang === 'si'
+                ? 'ඔබේ ඇණවුම් සැසිය සම්පූර්ණ විය. ස්තූතියි!'
+                : 'Your ordering session has ended. Thank you for dining with us!'}
+            </p>
+
+            {/* Table badge */}
+            {tableNo && (
+              <div className="inline-flex items-center gap-2 rounded-2xl bg-emerald-50 border border-emerald-200 px-4 py-2 mb-6">
+                <span className="text-lg">🍽️</span>
+                <span className="text-sm font-bold text-emerald-700">
+                  {lang === 'si' ? `මේසය ${tableNo}` : `Table ${tableNo}`}
+                </span>
+              </div>
+            )}
+
+            <div className="rounded-2xl bg-gray-50 border border-gray-100 p-4 mb-6 text-left">
+              <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">
+                {lang === 'si' ? 'ඊළඟ අමුත්තාට?' : 'Next guests at this table?'}
+              </p>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                {lang === 'si'
+                  ? 'නව ඇණවුමක් ආරම්භ කිරීමට "නව ඇණවුම ආරම්භ කරන්න" ක්ලික් කරන්න. QR කේතය කිසිදා වෙනස් නොවේ.'
+                  : 'Tap the button below to start a new order. The same QR code on this table always works — it automatically creates a fresh session.'}
+              </p>
+            </div>
+
+            {staticTableUrl ? (
+              <a
+                href={staticTableUrl}
+                className="flex w-full items-center justify-center gap-2.5 rounded-2xl py-4 text-base font-bold text-white"
+                style={{
+                  background: 'linear-gradient(135deg, #16a34a, #22c55e)',
+                  boxShadow: '0 4px 20px rgba(34,197,94,0.4)',
+                  textDecoration: 'none',
+                }}
+              >
+                <ListOrdered size={18} />
+                {lang === 'si' ? 'නව ඇණවුම ආරම්භ කරන්න' : 'Start New Order'}
+              </a>
+            ) : (
+              <p className="text-xs text-gray-400 text-center">
+                {lang === 'si'
+                  ? 'නව ඇණවුමකට මේසයේ QR කේතය ස්කෑන් කරන්න.'
+                  : 'Scan the QR code on this table to place a new order.'}
+              </p>
+            )}
+          </div>
+
+          <p className="mt-4 text-center text-xs text-gray-400">
+            {lang === 'si' ? 'CeyPos මගින් ක්‍රියාත්මකයි' : 'Powered by CeyPos'}
           </p>
         </div>
       </div>
