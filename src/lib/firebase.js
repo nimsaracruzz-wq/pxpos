@@ -909,6 +909,8 @@ export async function createOrderSession(storeId, tableNumber, guests = 1) {
           storeId: key,
           tableNumber: tableKey,
           activeSessionId: sessionId,
+          session: sessionId,
+          token: sessionId,
           status: 'active',
           guests: Number(guests || 1),
           updatedAtMs: now,

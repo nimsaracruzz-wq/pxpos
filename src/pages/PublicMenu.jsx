@@ -655,6 +655,7 @@ export default function PublicMenu() {
       storeId: decodedStoreId,
       tableNumber: tableNo,
       session: activeSessionId,
+      token: activeSessionId,
       guests,
       customerName: customerName || 'Guest',
       notes: normalizedNotes,

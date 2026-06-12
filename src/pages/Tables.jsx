@@ -1798,11 +1798,11 @@ export default function Tables() {
         if (newSessId) sessionId = newSessId
       } catch (err) {
         console.error('[Tables] createOrderSession failed, falling back to publishTableQrSession:', err)
-        publishTableQrSession(tenantStoreId, actionTable.number, sessionId, uuidv4(), { guests })
+        publishTableQrSession(tenantStoreId, actionTable.number, sessionId, sessionId, { guests })
       }
     }
-    updateTable(actionTable.id, { status: 'occupied', guests, sessionId, order: emptyOrder })
-    setSelectedTable({ ...actionTable, status: 'occupied', guests, sessionId, order: emptyOrder })
+    updateTable(actionTable.id, { status: 'occupied', guests, sessionId, qrToken: sessionId, order: emptyOrder })
+    setSelectedTable({ ...actionTable, status: 'occupied', guests, sessionId, qrToken: sessionId, order: emptyOrder })
     addLog('Opened Table', `Table ${actionTable.number} opened for ${guests} guests`, currentUser?.name || 'System')
     setActionTable(null)
   }
