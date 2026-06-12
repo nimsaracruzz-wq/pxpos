@@ -172,17 +172,23 @@ export function Layout({ children }) {
       const tableStore = useTableStore.getState()
       let matchingTable = tableStore.tables.find((t) => String(t.number) === tableNo)
 
+      // ── Auto-open table if it's currently available (customer-self-opened via QR) ──
+      // IMPORTANT: Zustand state updates are async — after calling updateTable() the
+      // tableStore.tables array still points to the OLD immutable snapshot. Do NOT
+      // re-read matchingTable from the store; build the updated object in-memory instead.
       const isNewSessionOnEmptyTable = matchingTable && matchingTable.status === 'available' && sessionId && qrToken
       if (isNewSessionOnEmptyTable) {
-        tableStore.updateTable(matchingTable.id, {
+        const freshTableState = {
           status: 'occupied',
           guests: Number(incoming.guests || 1),
           sessionId,
           qrToken,
           order: { items: [], notes: '', subtotal: 0, tax: 0, serviceCharge: 0, total: 0 }
-        })
-        // Re-fetch from the store to get the updated immutable state reference!
-        matchingTable = tableStore.tables.find((t) => String(t.number) === tableNo)
+        }
+        tableStore.updateTable(matchingTable.id, freshTableState)
+        // Merge the updated fields into our in-memory reference so subsequent checks use
+        // the correct (post-update) values without waiting for the React re-render cycle.
+        matchingTable = { ...matchingTable, ...freshTableState }
       }
 
       // Security/validity gate: only accept orders for the currently active table session.
@@ -199,6 +205,14 @@ export function Layout({ children }) {
       const isInsufficient = items.find((item) => {
         const product = localProducts.find((p) => String(p.id) === String(item.id))
         if (!product || !product.active) return true
+
+        // Restaurant-module products don't track stock by unit (deducted via recipes/ingredients).
+        // Skip the stock gate for them to avoid false 'out_of_stock' rejections.
+        const isRestaurantProduct = String(product.module || '').toLowerCase() === 'restaurant'
+        if (isRestaurantProduct) return false
+
+        // Also skip if the product has no explicit stock tracking enabled
+        if (product.trackStock === false || product.trackStock === 'false') return false
 
         const existingQty = existingOrderItems
           .filter((oi) => String(oi.id) === String(item.id))
