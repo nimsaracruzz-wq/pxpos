@@ -8,6 +8,7 @@
  */
 
 import { buildThermalProfile } from '@/lib/thermalPrinter'
+import JsBarcode from 'jsbarcode'
 
 // ─── CSS builder ──────────────────────────────────────────────────────────────
 function buildPrintStyles(paperWidth = '80mm') {
@@ -659,10 +660,32 @@ export function buildA4InvoiceBody(sale, businessInfo, receiptSettings) {
   if (businessInfo.taxId) html += `<div class="tax-id">TAX ID: ${businessInfo.taxId}</div>`
   html += `</div>`
 
+  let barcodeHtml = ''
+  try {
+    // Generate barcode as a PNG data URL using a temporary canvas.
+    const canvas = document.createElement('canvas')
+    JsBarcode(canvas, String(receiptNo || '000000'), {
+      width: 1.2,
+      height: 35,
+      fontSize: 11,
+      margin: 0,
+      displayValue: true,
+      background: '#ffffff',
+      lineColor: '#1a1a2e',
+    })
+    barcodeHtml = `<img src="${canvas.toDataURL('image/png')}" style="image-rendering: pixelated; max-width: 100%;" />`
+  } catch (err) {
+    console.warn('Failed to generate A4 barcode', err)
+  }
+
   html += `<div class="inv-title-block">`
   html += `<div class="inv-label">Invoice</div>`
-  html += `<div class="inv-number">${receiptNo || ''}</div>`
-  html += `<div class="inv-date">${dateStr}<br>${timeStr}</div>`
+  if (barcodeHtml) {
+    html += `<div style="margin-top: 8px; margin-bottom: 6px;">${barcodeHtml}</div>`
+  } else {
+    html += `<div class="inv-number">${receiptNo || ''}</div>`
+  }
+  html += `<div class="inv-date">${dateStr} &bull; ${timeStr}</div>`
   html += `</div>`
   html += `</div>`
 
@@ -671,7 +694,14 @@ export function buildA4InvoiceBody(sale, businessInfo, receiptSettings) {
   html += `<div class="inv-meta-box"><div class="label">Invoice Number</div><div class="value">${receiptNo || '—'}</div></div>`
   html += `<div class="inv-meta-box"><div class="label">Date &amp; Time</div><div class="value">${dateStr} &bull; ${timeStr}</div></div>`
   if (cashier) html += `<div class="inv-meta-box"><div class="label">Sales Rep</div><div class="value">${cashier}</div></div>`
-  if (customerName && customerName !== 'Walk-in') html += `<div class="inv-meta-box"><div class="label">Customer</div><div class="value">${customerName}</div></div>`
+  const nameStr = (customerName && customerName !== 'Walk-in') ? customerName : ''
+  const phoneStr = sale.customerPhone || ''
+  
+  if (nameStr || phoneStr) {
+    const displayPhone = phoneStr ? ` <span style="font-size:0.85em;color:#666">(${phoneStr})</span>` : ''
+    const displayName = (nameStr || 'Walk-in')
+    html += `<div class="inv-meta-box"><div class="label">Customer</div><div class="value">${displayName}${displayPhone}</div></div>`
+  }
   html += `</div>`
 
   // ── Items table

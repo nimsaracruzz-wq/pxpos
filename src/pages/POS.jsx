@@ -78,10 +78,12 @@ const playTone = (type = 'tick') => {
 }
 
 // ─── Payment Modal ───────────────────────────────────────────────────────────
-const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishCustomerDisplay, cartItems, initialMethod }) => {
+const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishCustomerDisplay, cartItems, initialMethod, activeModule }) => {
   const [method, setMethod] = useState(initialMethod || 'cash')
   const [cashGiven, setCashGiven] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [customerName, setCustomerName] = useState('')
+  const [customerPhone, setCustomerPhone] = useState('')
 
   // HelaQR flow state
   const [qrState, setQrState]   = useState('idle') // idle | generating | scanning | error
@@ -118,6 +120,8 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
   useEffect(() => {
     if (!open) {
       setCashGiven('')
+      setCustomerName('')
+      setCustomerPhone('')
       setMethod(initialMethod || 'cash')
       stopQrTimers()
       setQrState('idle')
@@ -218,6 +222,8 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
         qrReference: result.qrReference || '',
         paymentRef:  result.reference || receiptNo,
         receiptNo,
+        customerName,
+        customerPhone,
       })
     }
 
@@ -278,9 +284,11 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
     if (typeof onCheckout === 'function') onCheckout(method)
     setProcessing(true)
     setTimeout(() => {
-      onComplete(method, cashNum, change)
+      onComplete(method, cashNum, change, { customerName, customerPhone })
       setProcessing(false)
       setCashGiven('')
+      setCustomerName('')
+      setCustomerPhone('')
       setMethod('cash')
     }, 500)
   }
@@ -301,6 +309,31 @@ const PaymentModal = ({ open, onClose, total, onCheckout, onComplete, onPublishC
         <p className="text-xs font-semibold text-green-700 uppercase tracking-widest mb-1">Amount Due</p>
         <p className="text-5xl font-black text-green-700 leading-tight mt-1">{formatCurrency(total)}</p>
       </div>
+
+      {activeModule === 'electronics' && (
+        <div className="grid grid-cols-2 gap-3 mb-5 p-4 rounded-2xl bg-gray-50 border border-gray-150">
+          <div>
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-1">Customer Name</label>
+            <input 
+              type="text" 
+              value={customerName} 
+              onChange={(e) => setCustomerName(e.target.value)} 
+              placeholder="e.g. John Doe"
+              className="input-base text-sm font-semibold w-full"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-1">Phone Number</label>
+            <input 
+              type="tel" 
+              value={customerPhone} 
+              onChange={(e) => setCustomerPhone(e.target.value)} 
+              placeholder="e.g. 0712345678"
+              className="input-base text-sm font-semibold w-full"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Method tabs */}
       <div className="flex gap-2 mb-5">
@@ -727,10 +760,15 @@ export default function POS() {
   }, [])
 
   const openCustomerScreen = useCallback((payload) => {
-    // Respect the customer display settings: when `showOnPOS` is false,
-    // we publish to the external customer-screen but do not show the
-    // overlay on the main POS window.
+    // Respect the customer display settings: if completely disabled, do nothing.
     const displaySettings = useAppStore.getState().customerDisplaySettings || {}
+    if (displaySettings.enabled === false) {
+      setCustomerDisplay(null)
+      return
+    }
+    
+    // When `showOnPOS` is false, we publish to the external customer-screen
+    // but do not show the overlay on the main POS window.
     const showOnPOS = displaySettings.showOnPOS !== false
     if (showOnPOS) setCustomerDisplay(payload)
     publishCustomerDisplay(payload)
@@ -944,12 +982,15 @@ export default function POS() {
     updateQty(item.cartItemId || item.id, item.qty + 1)
   }
 
-  const handleCompleteSale = async (method, cashGiven = 0, change = 0, helaQRResult = null) => {
-    const receiptNo = helaQRResult?.receiptNo || generateReceiptNumber()
+  const handleCompleteSale = async (method, cashGiven = 0, change = 0, extraProps = null) => {
+    const receiptNo = extraProps?.receiptNo || generateReceiptNumber()
     const isHelaQR = String(method || '').toLowerCase() === 'helaqr'
-    const paymentRef   = isHelaQR ? (helaQRResult?.paymentRef  || receiptNo) : ''
-    const qrReference  = isHelaQR ? (helaQRResult?.qrReference || '')        : ''
-    const qrData       = isHelaQR ? (helaQRResult?.qrData      || '')        : ''
+    const paymentRef   = isHelaQR ? (extraProps?.paymentRef  || receiptNo) : ''
+    const qrReference  = isHelaQR ? (extraProps?.qrReference || '')        : ''
+    const qrData       = isHelaQR ? (extraProps?.qrData      || '')        : ''
+    
+    const customerName = extraProps?.customerName || ''
+    const customerPhone = extraProps?.customerPhone || ''
 
     // HelaQR: the modal already confirmed payment — no need to re-check
     // Non-HelaQR: proceed as normal
@@ -973,6 +1014,8 @@ export default function POS() {
       change,
       cashier: currentUser?.name || 'Unknown',
       source: activeModule === 'restaurant' ? 'takeout' : activeModule || 'grocery',
+      customerName,
+      customerPhone,
       status: 'completed',
     }
     addSale({ ...saleData, items: cart.length })
@@ -1627,6 +1670,7 @@ export default function POS() {
         onComplete={handleCompleteSale}
         onPublishCustomerDisplay={openCustomerScreen}
         cartItems={cart}
+        activeModule={activeModule}
       />
       <POSQuickAddModal
         open={showQuickAddModal}

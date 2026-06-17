@@ -45,7 +45,7 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
   const {
     receiptNo, date, cartItems = [], items, subtotal,
     discount = 0, tax = 0, total, paymentMethod, change = 0,
-    cashier, customerName, tableNumber, source, waiter, notes,
+    cashier, customerName, customerPhone, tableNumber, source, waiter, notes,
   } = sale
 
   const isTable = source === 'restaurant'
@@ -111,8 +111,8 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
           <tr><td style={{ padding: '1.5px 0' }}>Date</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td></tr>
           <tr><td style={{ padding: '1.5px 0' }}>Time</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{new Date(date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</td></tr>
           {showCashier && cashier && <tr><td style={{ padding: '1.5px 0' }}>Cashier</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{cashier}</td></tr>}
-          {(waiter || customerName) && !isTakeOut && <tr><td style={{ padding: '1.5px 0' }}>Waiter</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{waiter || cashier}</td></tr>}
-          {isTakeOut && customerName && customerName !== 'Walk-in' && <tr><td style={{ padding: '1.5px 0' }}>Customer</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{customerName}</td></tr>}
+          {(waiter || customerName) && !isTakeOut && source !== 'electronics' && <tr><td style={{ padding: '1.5px 0' }}>Waiter</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{waiter || cashier}</td></tr>}
+          {(isTakeOut || source === 'electronics') && (customerName && customerName !== 'Walk-in' || customerPhone) && <tr><td style={{ padding: '1.5px 0' }}>Customer</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{customerName && customerName !== 'Walk-in' ? customerName : 'Walk-in'} {customerPhone ? `(${customerPhone})` : ''}</td></tr>}
         </tbody>
       </table>
 

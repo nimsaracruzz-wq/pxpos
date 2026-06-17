@@ -665,6 +665,8 @@ export const useProductStore = create(
               ...state.categoriesByModule,
               [key]: [...current, category],
             },
+            // Also update the legacy flat categories array for backward compat
+            categories: state.categories.includes(category) ? state.categories : [...state.categories, category],
           }
         })
       },
@@ -679,8 +681,11 @@ export const useProductStore = create(
             ...state.categoriesByModule,
             [key]: (state.categoriesByModule?.[key] || []).filter((item) => item !== category),
           },
+          // Also update the legacy flat categories array for backward compat
+          categories: (state.categories || []).filter((item) => item !== category),
         }))
       },
+
 
       loadProducts: async () => {
         if (typeof window !== 'undefined' && window.require) {
@@ -737,10 +742,7 @@ export const useProductStore = create(
           ),
         }));
       },
-      addCategory: (cat) =>
-        set((s) => ({
-          categories: s.categories.includes(cat) ? s.categories : [...s.categories, cat],
-        })),
+
       getByBarcode: (barcode) =>
         get().products.find((p) => p.barcode === barcode && p.active),
       getLowStock: () => get().products.filter((p) => p.stock <= 10 && p.active),

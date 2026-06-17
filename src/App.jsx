@@ -38,7 +38,7 @@ const IS_DEMO = import.meta.env.VITE_DEMO_MODE === 'true' || process.env.VITE_DE
 
 export default function App() {
   const { currentUser, logout }              = useAuthStore()
-  const { licenseActive, licenseKey, theme } = useAppStore()
+  const { licenseActive, licenseKey, theme, customerDisplaySettings } = useAppStore()
   const [checking, setChecking]              = useState(() => IS_DEMO ? false : !useAppStore.getState()?.licenseActive)
   const [initialCloudHydration, setInitialCloudHydration] = useState(false)
   const [storeHydrated, setStoreHydrated] = useState(() => IS_DEMO ? true : (useAppStore.persist?.hasHydrated?.() ?? true))
@@ -107,6 +107,23 @@ export default function App() {
     document.documentElement.classList.toggle('dark', isDark)
     document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
   }, [theme])
+
+  // Manage Customer Display Window Lifecycle via IPC
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.require) return
+    if (isCustomerDisplayRoute || isPublicMenuRoute || isAdminPortalRoute) return
+
+    try {
+      const ipcRenderer = window.require('electron').ipcRenderer
+      if (customerDisplaySettings?.enabled !== false) {
+        ipcRenderer.send('customer-display-open')
+      } else {
+        ipcRenderer.send('customer-display-close')
+      }
+    } catch (err) {
+      console.warn('IPC not available for customer display toggling:', err)
+    }
+  }, [customerDisplaySettings?.enabled, isCustomerDisplayRoute, isPublicMenuRoute, isAdminPortalRoute])
 
   useEffect(() => {
     if (!useAppStore.persist) return () => {}

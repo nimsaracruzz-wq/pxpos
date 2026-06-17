@@ -612,20 +612,15 @@ ipcMain.handle('barcode-lookup', async (event, { barcode }) => {
 })
 
 // ─── Silent Receipt Printing (no pop-up windows) ───────────────────────────
-let printerWorkerWindow = null;
-
-function getPrinterWorker() {
-  if (!printerWorkerWindow || printerWorkerWindow.isDestroyed()) {
-    printerWorkerWindow = new BrowserWindow({
-      show: false,
-      width: 576,
-      height: 3000,
-      // sandbox: false is required — sandbox:true blocks webContents.print()
-      // from targeting named printers (e.g. FP-1100) on Windows.
-      webPreferences: { sandbox: false }
-    });
-  }
-  return printerWorkerWindow;
+function createPrinterWorker() {
+  return new BrowserWindow({
+    show: false,
+    width: 576,
+    height: 3000,
+    // sandbox: false is required — sandbox:true blocks webContents.print()
+    // from targeting named printers (e.g. FP-1100) on Windows.
+    webPreferences: { sandbox: false }
+  });
 }
 
 // ─── Thermal printer profile builder ────────────────────────────────────────
@@ -661,15 +656,18 @@ function buildThermalProfile(paperWidthStr) {
 
 // ─── List available printers (for Settings UI picker) ───────────────────────
 ipcMain.handle('get-printers', async () => {
+  let worker = null;
   try {
-    const worker = getPrinterWorker();
+    worker = createPrinterWorker();
     // getPrintersAsync() is available in Electron 22+ (replaces deprecated getPrinters())
     const printers = await worker.webContents.getPrintersAsync();
+    worker.destroy();
     return {
       success: true,
       printers: printers.map(p => ({ name: p.name, isDefault: p.isDefault }))
     };
   } catch (err) {
+    if (worker && !worker.isDestroyed()) worker.destroy();
     return { success: false, printers: [], error: err?.message || 'Failed to list printers' };
   }
 });
@@ -721,17 +719,15 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
     // e.g. C:\Users\...\Temp\receipt.html  →  file:///C:/Users/.../Temp/receipt.html
     const fileUrl = 'file:///' + tmpFile.split(path.sep).join('/');
 
-    const worker = getPrinterWorker();
+    const worker = createPrinterWorker();
 
     // Width = usable receipt width in px; Height = tall enough for content
     worker.setSize(windowWidth, isA4 ? 1123 : 3000);
 
     const resultPromise = new Promise((resolve) => {
-      worker.webContents.removeAllListeners('did-fail-load');
-      worker.webContents.removeAllListeners('did-finish-load');
-
       worker.webContents.once('did-fail-load', (_e, code, description) => {
         cleanup();
+        if (!worker.isDestroyed()) worker.destroy();
         resolve({ success: false, error: `Load failed (${code}): ${description}` });
       });
 
@@ -749,6 +745,7 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
 
         worker.webContents.print(printOptions, (success, errorType) => {
           cleanup();
+          if (!worker.isDestroyed()) worker.destroy();
           if (success) {
             resolve({ success: true });
           } else {
@@ -767,6 +764,7 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
 
   } catch (error) {
     cleanup();
+    if (worker && !worker.isDestroyed()) worker.destroy();
     return { success: false, error: error?.message || 'Silent print failed' };
   }
 });
@@ -848,12 +846,16 @@ function createWindow() {
     });
   }
 
+  let customerWindow = null;
+
   const createCustomerWindow = async () => {
+    if (customerWindow && !customerWindow.isDestroyed()) return;
+
     const displays = screen.getAllDisplays();
     const externalDisplay = displays.find((d) => d.id !== screen.getPrimaryDisplay().id);
     const bounds = externalDisplay?.workArea;
 
-    const customerWindow = new BrowserWindow({
+    customerWindow = new BrowserWindow({
       width: bounds?.width || 900,
       height: bounds?.height || 700,
       x: bounds?.x,
@@ -880,7 +882,16 @@ function createWindow() {
     }
   };
 
-  createCustomerWindow();
+  ipcMain.on('customer-display-open', () => {
+    createCustomerWindow();
+  });
+
+  ipcMain.on('customer-display-close', () => {
+    if (customerWindow && !customerWindow.isDestroyed()) {
+      customerWindow.close();
+      customerWindow = null;
+    }
+  });
 }
 
 app.whenReady().then(() => {

@@ -443,6 +443,15 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
                 )}
               </div>
             </div>
+            
+            <div className="grid grid-cols-1">
+              <Input
+                label="Supplier (Source of Stock)"
+                value={form.supplier}
+                onChange={(e) => set('supplier', e.target.value)}
+                placeholder="e.g. Acme Corp, Local Distributor..."
+              />
+            </div>
           </div>
 
           {/* Card: Tracking & Details */}
@@ -460,14 +469,7 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
                   onChange={(e) => set('expiry', e.target.value)}
                 />
 
-                {activeModule === 'pharmacy' && (
-                  <Input
-                    label="Supplier"
-                    value={form.supplier}
-                    onChange={(e) => set('supplier', e.target.value)}
-                    placeholder="e.g. PharmaCorp"
-                  />
-                )}
+
 
                 {activeModule === 'clothing' && (
                   <>
@@ -1046,6 +1048,7 @@ export default function Products() {
                   <th>Cost</th>
                   <th>Margin</th>
                   <th>Stock</th>
+                  <th>Supplier</th>
                   <th>{activeModule === 'electronics' ? 'Warranty' : 'Expiry'}</th>
                   <th>Status</th>
                   <th className="text-right">Actions</th>
@@ -1090,6 +1093,11 @@ export default function Products() {
                         <Badge variant={stockVariant}>
                           {p.stock === 0 ? 'Out of Stock' : p.stock <= 5 ? `Low Stock (${p.stock})` : p.stock}
                         </Badge>
+                      </td>
+                      <td>
+                        <span className="text-xs font-semibold text-gray-500 bg-gray-50 px-2 py-1 rounded">
+                          {p.supplier || '—'}
+                        </span>
                       </td>
                       <td>
                         {activeModule === 'electronics' ? (
