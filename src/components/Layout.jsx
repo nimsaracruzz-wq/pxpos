@@ -547,7 +547,7 @@ export function Layout({ children }) {
           type: 'error',
           msg: `${product.name} EXPIRED`,
           details: 'Please remove from shelves.',
-          expiresAt: expiryAt + notificationTtlMs.exp,
+          expiresAt: expiryAt + notificationTtlMs.expired,
           priority: 5,
         })
       } else {
@@ -556,7 +556,7 @@ export function Layout({ children }) {
           type: 'warning',
           msg: `${product.name} expires in ${Math.ceil(daysRemaining)} days`,
           details: 'Discount or return to supplier.',
-          expiresAt: expiryAt + notificationTtlMs.exp,
+          expiresAt: expiryAt + notificationTtlMs.expiring,
           priority: 2,
         })
       }
