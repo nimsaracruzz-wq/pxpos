@@ -4,7 +4,7 @@ import { ShoppingCart, Plus, Minus, CheckCircle2, ChefHat, UtensilsCrossed, Sear
 import { useAppStore, useProductStore } from '@/store'
 import { generateReceiptNumber, formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
-import { supabase, publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToStoreSettings, subscribeToLiveTableOrder, subscribeToOrderSession, createOrderSession } from '@/lib/firebase'
+import { supabase, publishQRCodeOrder, subscribeToQRCodeOrderHistory, subscribeToQRCodeOrderStatus, subscribeToStoreProducts, subscribeToStoreSettings, subscribeToLiveTableOrder, subscribeToOrderSession, createOrderSession, resolveStoreIdFromMapping } from '@/lib/firebase'
 
 const I18N = {
   en: {
@@ -221,6 +221,20 @@ export default function PublicMenu() {
     () => [t.addOnCheese, t.addOnSauce, t.addOnNoOnion, t.addOnNoSugar],
     [t]
   )
+
+  useEffect(() => {
+    let cancelled = false
+    const resolveStore = async () => {
+      const inputId = decodeURIComponent(resolvedStoreId).trim()
+      if (!inputId) return
+      const finalId = await resolveStoreIdFromMapping(inputId)
+      if (!cancelled) {
+        setDecodedStoreId(finalId)
+      }
+    }
+    resolveStore()
+    return () => { cancelled = true }
+  }, [resolvedStoreId])
 
   useEffect(() => {
     if (!decodedStoreId) {

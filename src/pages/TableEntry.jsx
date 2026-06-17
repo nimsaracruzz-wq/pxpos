@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '@/store'
-import { createOrderSession, getTableQrSession, supabase } from '@/lib/firebase'
+import { createOrderSession, getTableQrSession, supabase, resolveStoreIdFromMapping } from '@/lib/firebase'
 import { useToast } from '@/components/Toast'
 
 /**
@@ -48,8 +48,11 @@ export default function TableEntry() {
         setStatus('loading')
         setMessage('Checking table availability...')
 
+        const finalStoreId = await resolveStoreIdFromMapping(resolvedStoreId)
+        if (cancelled) return
+
         // ── Step 1: Look up the table_sessions pointer ────────────────────────
-        const tableSession = await getTableQrSession(resolvedStoreId, tableNumber)
+        const tableSession = await getTableQrSession(finalStoreId, tableNumber)
         if (cancelled) return
 
         const candidateSessionId = String(
@@ -70,7 +73,7 @@ export default function TableEntry() {
               .from('store_data')
               .select('data')
               .match({
-                store_id: resolvedStoreId,
+                store_id: finalStoreId,
                 collection_name: 'order_sessions',
                 doc_id: candidateSessionId,
               })
@@ -102,7 +105,7 @@ export default function TableEntry() {
 
         // ── Step 3: No valid active session — create a brand new one ─────────
         setMessage('Creating a fresh ordering session...')
-        const newSessionId = await createOrderSession(resolvedStoreId, tableNumber, guests)
+        const newSessionId = await createOrderSession(finalStoreId, tableNumber, guests)
         if (cancelled) return
 
         if (!newSessionId) {

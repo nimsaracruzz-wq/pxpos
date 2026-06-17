@@ -66,6 +66,18 @@ export async function syncToCloud() {
       updated_at: now,
     })
 
+    // If licenseKey is present, also write a mapping from licenseKey to storeId
+    // so legacy printed QR codes (which contain the licenseKey) can resolve to the storeId.
+    if (licenseKey && storeId && storeId !== licenseKey.trim().toUpperCase()) {
+      entries.push({
+        store_id: licenseKey.trim().toUpperCase(),
+        collection_name: 'license_mapping',
+        doc_id: 'store_id',
+        data: { storeId: storeId },
+        updated_at: now,
+      })
+    }
+
     // 3. POS collections
     products.forEach((item) => {
       if (!item?.id) return
@@ -184,8 +196,28 @@ export async function syncToCloud() {
 export async function pullFromCloud() {
   try {
     const { businessInfo, licenseKey } = useAppStore.getState()
-    const storeId = resolveCloudTenantId(businessInfo, licenseKey)
+    let storeId = resolveCloudTenantId(businessInfo, licenseKey)
     if (!storeId) return false
+
+    // If there is a license key, check if there is an existing mapping to a storeId (UUID).
+    // This allows a new device (which starts with a different local storeId) to adopt the
+    // existing storeId registered under this license key.
+    if (licenseKey) {
+      try {
+        const mappedId = await resolveStoreIdFromMapping(licenseKey)
+        if (mappedId && mappedId !== licenseKey.trim().toUpperCase()) {
+          storeId = mappedId
+          useAppStore.setState((s) => ({
+            businessInfo: {
+              ...s.businessInfo,
+              storeId: mappedId
+            }
+          }))
+        }
+      } catch (e) {
+        console.warn('[Supabase] Could not resolve store ID from license mapping:', e)
+      }
+    }
 
     const { data, error } = await supabase
       .from('store_data')
@@ -1084,4 +1116,22 @@ export function subscribeToOrderSession(storeId, sessionId, onSession) {
   return () => {
     supabase.removeChannel(channel)
   }
+}
+
+export async function resolveStoreIdFromMapping(inputStoreId) {
+  const cleanId = String(inputStoreId || '').trim()
+  if (!cleanId) return ''
+  try {
+    const { data, error } = await supabase
+      .from('store_data')
+      .select('data')
+      .match({ store_id: cleanId, collection_name: 'license_mapping', doc_id: 'store_id' })
+      .limit(1)
+    if (!error && data?.[0]?.data?.storeId) {
+      return data[0].data.storeId
+    }
+  } catch (err) {
+    console.warn('[Supabase] resolveStoreIdFromMapping failed:', err)
+  }
+  return cleanId
 }
