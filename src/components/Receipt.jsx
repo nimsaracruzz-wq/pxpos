@@ -73,7 +73,7 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
             src={receiptSettings.logoUrl}
             alt="Store Logo"
             className="receipt-logo"
-            style={{ maxWidth: 92, maxHeight: 42, objectFit: 'contain', display: 'block', margin: '0 auto' }}
+            style={{ maxWidth: 220, maxHeight: 120, objectFit: 'contain', display: 'block', margin: '0 auto', background: '#fff' }}
           />
         </div>
       )}
@@ -254,7 +254,7 @@ export function A4InvoiceContent({ sale, businessInfo, receiptSettings }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '3px solid #1a1a2e', paddingBottom: 12, marginBottom: 14 }}>
         <div>
           {receiptSettings?.logoUrl && (
-            <img src={receiptSettings.logoUrl} alt="Logo" style={{ maxWidth: 50, maxHeight: 50, objectFit: 'contain', marginBottom: 4 }} />
+            <img src={receiptSettings.logoUrl} alt="Logo" style={{ maxWidth: 100, maxHeight: 60, objectFit: 'contain', marginBottom: 4, background: '#fff' }} />
           )}
           <div style={{ fontSize: 18, fontWeight: 900, color: '#1a1a2e' }}>{businessInfo.name}</div>
           {businessInfo.address && <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>{businessInfo.address}</div>}
