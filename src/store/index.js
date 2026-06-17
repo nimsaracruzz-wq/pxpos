@@ -1502,6 +1502,19 @@ export async function resetBusinessDataForNewLicense() {
   useSalesStore.setState({ sales: [] })
   useCustomerStore.setState({ customers: [] })
   useActivityStore.setState({ logs: [] })
+  useElectronicsStore.setState({
+    elProducts: [],
+    serials: [],
+    elSuppliers: [],
+    elGRNs: [],
+    elSales: [],
+    repairJobs: [],
+    elCustomers: [],
+    warranties: [],
+    warrantyClaims: [],
+  })
+  useGRNStore.setState({ grns: [] })
+  useLedgerStore.setState({ entries: [] })
 }
 
 function canUseElectronIpc() {
@@ -1532,6 +1545,9 @@ function getBackupPayload() {
       currentUser: useAuthStore.getState().currentUser,
     },
     activities: useActivityStore.getState(),
+    electronics: useElectronicsStore.getState(),
+    grns: useGRNStore.getState(),
+    ledger: useLedgerStore.getState(),
   }
 }
 
@@ -1551,7 +1567,7 @@ export async function restoreFromLocalBackupPayload(payload) {
         ...safeAppState,
       }))
     }
-    if (payload.tables) useTableStore.setState(payload.tables, true)
+    if (payload.tables) useTableStore.setState(payload.tables)
     if (payload.products) {
       const currentProducts = useProductStore.getState()
       useProductStore.setState({
@@ -1560,12 +1576,21 @@ export async function restoreFromLocalBackupPayload(payload) {
         categoriesByModule: payload.products.categoriesByModule || currentProducts.categoriesByModule,
       })
     }
-    if (payload.recipes) useRecipeStore.setState(payload.recipes, true)
-    if (payload.sales) useSalesStore.setState(payload.sales, true)
-    if (payload.customers) useCustomerStore.setState(payload.customers, true)
-    if (payload.activities) useActivityStore.setState(payload.activities, true)
+    if (payload.recipes) useRecipeStore.setState(payload.recipes)
+    if (payload.sales) useSalesStore.setState(payload.sales)
+    if (payload.customers) useCustomerStore.setState(payload.customers)
+    if (payload.activities) useActivityStore.setState(payload.activities)
     if (payload.auth?.currentUser !== undefined) {
       useAuthStore.setState({ currentUser: payload.auth.currentUser })
+    }
+    if (payload.electronics) {
+      useElectronicsStore.setState(payload.electronics)
+    }
+    if (payload.grns) {
+      useGRNStore.setState(payload.grns)
+    }
+    if (payload.ledger) {
+      useLedgerStore.setState(payload.ledger)
     }
     return true
   } catch (_) {
@@ -1633,6 +1658,9 @@ export function initDesktopDataPersistence() {
     useCustomerStore.subscribe(scheduleDesktopBackup),
     useAuthStore.subscribe(scheduleDesktopBackup),
     useActivityStore.subscribe(scheduleDesktopBackup),
+    useElectronicsStore.subscribe(scheduleDesktopBackup),
+    useGRNStore.subscribe(scheduleDesktopBackup),
+    useLedgerStore.subscribe(scheduleDesktopBackup),
   ]
 
   const persistBeforeClose = () => {
@@ -1975,10 +2003,95 @@ export const useElectronicsStore = create(
         })
         return unique
       },
+
+      // ── Warranty Claims ─────────────────────────────────────────────────
+      warrantyClaims: [],
+
+      addWarrantyClaim: (claim) => {
+        const now = new Date().toISOString()
+        const newClaim = {
+          ...claim,
+          id: uuidv4(),
+          status: claim.status || 'open',
+          claimedAt: now,
+          resolvedAt: null,
+          createdAt: now,
+        }
+        set((s) => ({
+          warrantyClaims: [newClaim, ...s.warrantyClaims],
+        }))
+        return newClaim
+      },
+
+      updateWarrantyClaim: (id, updates) => {
+        const now = new Date().toISOString()
+        const finalUpdates = { ...updates, updatedAt: now }
+        // If resolving or rejecting, stamp resolvedAt
+        if (updates.status === 'resolved' || updates.status === 'rejected') {
+          finalUpdates.resolvedAt = now
+        }
+        set((s) => ({
+          warrantyClaims: s.warrantyClaims.map((c) =>
+            c.id === id ? { ...c, ...finalUpdates } : c
+          ),
+        }))
+      },
+
+      deleteWarrantyClaim: (id) => set((s) => ({
+        warrantyClaims: s.warrantyClaims.filter((c) => c.id !== id),
+      })),
+
+      getClaimsForWarranty: (warrantyId) => {
+        return get().warrantyClaims.filter((c) => c.warrantyId === warrantyId)
+      },
+
+      getClaimsForSale: (saleId) => {
+        return get().warrantyClaims.filter((c) => c.saleId === saleId)
+      },
+
       getStockCount: (productId) => get().serials.filter((s) => s.productId === productId && s.status === 'in_stock').length,
     }),
     {
       name: 'ceypos-electronics',
+      storage: createJSONStorage(() => idbStorage),
+    }
+  )
+)
+
+// ─── GRN Store (Grocery & Restaurant) ──────────────────────────────────────
+export const useGRNStore = create(
+  persist(
+    (set) => ({
+      grns: [],
+      addGRN: (grn) => set((s) => ({ grns: [grn, ...s.grns] })),
+    }),
+    {
+      name: 'paxxmo-grns',
+      storage: createJSONStorage(() => idbStorage),
+    }
+  )
+)
+
+// ─── Ledger Store (Customer Credit / Outstanding) ───────────────────────────
+export const useLedgerStore = create(
+  persist(
+    (set, get) => ({
+      entries: [
+        { id: '1', customerId: '2', type: 'purchase', amount: 25000, balance: 25000, description: 'Invoice INV-2026-001', date: new Date(Date.now() - 86400000 * 5), ref: 'INV-001' },
+        { id: '2', customerId: '2', type: 'payment', amount: 20000, balance: 5000, description: 'Cash payment received', date: new Date(Date.now() - 86400000 * 2), ref: 'PMT-001' },
+      ],
+      addEntry: (entry) =>
+        set((s) => ({ entries: [{ ...entry, id: uuidv4(), date: new Date() }, ...s.entries] })),
+      getBalance: (customerId) => {
+        const entries = get().entries.filter((e) => e.customerId === customerId)
+        if (!entries.length) return 0
+        return entries[0].balance
+      },
+      getHistory: (customerId) =>
+        get().entries.filter((e) => e.customerId === customerId).sort((a, b) => new Date(b.date) - new Date(a.date)),
+    }),
+    {
+      name: 'paxxmo-ledger',
       storage: createJSONStorage(() => idbStorage),
     }
   )

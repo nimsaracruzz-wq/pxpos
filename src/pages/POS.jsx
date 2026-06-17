@@ -13,7 +13,7 @@ import { formatCurrency, generateReceiptNumber } from '@/lib/utils'
 import { Badge, Modal, Input } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import ReceiptModal, { ReceiptContent } from '@/components/Receipt'
-import { printReceiptHTML } from '@/lib/printReceipt'
+import { printReceiptHTML, printA4InvoiceHTML, buildA4InvoiceBody } from '@/lib/printReceipt'
 import { buildThermalProfile } from '@/lib/thermalPrinter'
 import CustomerDisplay from '@/components/CustomerDisplay'
 import { useI18n } from '@/lib/i18n'
@@ -787,7 +787,7 @@ export default function POS() {
 
   const filteredProducts = products.filter((p) => {
     if (!p.active) return false
-    const matchM = !p.module || p.module === activeModule
+    const matchM = p.module === activeModule || (!p.module && activeModule === 'grocery')
     const matchS = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search)
     const matchC = activeCategory === 'All' || p.category === activeCategory
     return matchM && matchS && matchC
@@ -838,10 +838,12 @@ export default function POS() {
   const nearExpiryProducts = useMemo(() => {
     return products.filter(p => {
       if (!p.active || !p.expiry) return false
+      const matchModule = p.module === activeModule || (!p.module && activeModule === 'grocery')
+      if (!matchModule) return false
       const st = getExpiryStatus(p.expiry)
       return st && (st.status === 'expired' || st.status === 'expires_today' || st.status === 'critical' || st.status === 'near')
     }).sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
-  }, [products])
+  }, [products, activeModule])
 
   // Manual search input — still supports typing a barcode and pressing Enter
   const handleSearchKey = useCallback((e) => {
@@ -976,6 +978,11 @@ export default function POS() {
     addSale({ ...saleData, items: cart.length })
     useActivityStore.getState().addLog('Completed Sale', `Sale Total: ${formatCurrency(total)} (${cart.length} items)`, currentUser?.name || 'Unknown')
 
+    // ── Background cloud sync: local IDB save happens first (synchronous via Zustand),
+    //    then push to Supabase in a non-blocking fire-and-forget. If offline, the next
+    //    periodic sync will pick it up automatically. ────────────────────────────────
+    syncToCloud().catch((err) => console.warn('[POS] Background sale sync failed (offline?):', err))
+
     // Reduce dish stock
     cart.forEach((item) => adjustStock(item.id, -item.qty))
 
@@ -995,8 +1002,13 @@ export default function POS() {
     clearCart()
     setSelectedCartItem(null)
 
-    // ── Fire silent auto-print immediately (no modal, no button click) ────────
-    setAutoPrintPending(true)
+    // ── Always show the receipt modal so user can preview the invoice/receipt ──
+    setShowReceipt(true)
+
+    // ── Fire silent auto-print in background (if auto-print is enabled) ───────
+    if (receiptSettings?.autoPrint) {
+      setAutoPrintPending(true)
+    }
 
     // ── Customer display: show on customer screen, auto-clear POS side in 3s ─
     const customerPayload = {
@@ -1046,6 +1058,22 @@ export default function POS() {
     // copies sequentially with a small delay to avoid driver race/load errors.
     requestAnimationFrame(() => {
       ;(async () => {
+        const isElectronicsSale = String(lastSale.source || lastSale.activeModule || '').toLowerCase() === 'electronics'
+
+        // ── Electronics module: A4 invoice (no thermal receipt) ──────────
+        if (isElectronicsSale) {
+          try {
+            const { businessInfo, receiptSettings, hardwareSettings } = useAppStore.getState()
+            const deviceName = String(hardwareSettings?.printerPort || '').trim()
+            const invoiceBody = buildA4InvoiceBody(lastSale, businessInfo, receiptSettings)
+            await printA4InvoiceHTML('Electronics Invoice', invoiceBody, { deviceName })
+          } catch (e) {
+            console.error('[POS] Failed to print A4 electronics invoice', e)
+          }
+          return
+        }
+
+        // ── All other modules: thermal receipt (unchanged) ──────────────
         const el = hiddenReceiptRef.current
         if (!el) return
         const content = el.innerHTML
@@ -1114,7 +1142,7 @@ export default function POS() {
     })
   }, [cart, total, customerDisplay?.status])
 
-  const moduleProducts = products.filter((p) => p.active && (!p.module || p.module === activeModule))
+  const moduleProducts = products.filter((p) => p.active && (p.module === activeModule || (!p.module && activeModule === 'grocery')))
   const categories = ['All', ...new Set(moduleProducts.map((p) => p.category))]
 
   return (

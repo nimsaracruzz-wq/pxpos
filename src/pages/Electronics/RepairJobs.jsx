@@ -9,6 +9,7 @@ import { formatCurrency, cn } from '@/lib/utils'
 import { format } from 'date-fns'
 import { Modal } from '@/components/ui'
 import { useToast } from '@/components/Toast'
+import { syncToCloud } from '@/lib/firebase'
 
 function NewJobModal({ onClose }) {
   const { elCustomers, addRepairJob, addElCustomer, getWarrantyStatus } = useElectronicsStore()
@@ -69,7 +70,10 @@ function NewJobModal({ onClose }) {
       jobType: tab,
       warrantyRecordId: warrantyInfo?.id || null
     })
-    
+
+    // ── Local IDB save is synchronous (Zustand persist). Push to cloud in background ──
+    syncToCloud().catch((err) => console.warn('[RepairJobs] Cloud sync failed (offline?):', err))
+
     toast.success('Repair job created successfully')
     onClose()
   }
@@ -271,6 +275,8 @@ export default function RepairJobs() {
     const updates = { status: newStatus }
     if (newStatus === 'ready') updates.completedDate = new Date().toISOString()
     updateRepairJob(jobId, updates)
+    // Background cloud sync after local update
+    syncToCloud().catch((err) => console.warn('[RepairJobs] Status sync failed (offline?):', err))
   }
 
   return (

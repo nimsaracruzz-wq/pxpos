@@ -682,11 +682,31 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
   const html = String(payload?.html || '').trim();
   if (!html) return { success: false, error: 'Missing print HTML' };
 
-  const profile = buildThermalProfile(payload?.paperWidth || '80mm', payload?.printerMode || 'Raster', payload?.printerProfile || '');
-  console.log(
-    `[Print] paperWidth=${profile.paperMm}mm  usable=${profile.usableMm}mm  windowPx=${profile.windowPx}px`,
-    payload?.deviceName ? `  device="${payload.deviceName}"` : '  device=(system default)'
-  );
+  const isA4 = String(payload?.paperWidth || '').toUpperCase() === 'A4';
+
+  // A4 mode: 210mm × 297mm at 96dpi ≈ 794×1123px
+  // Thermal mode: use the existing thermal profile
+  let windowWidth, pageSizeMicrons;
+
+  if (isA4) {
+    windowWidth = 794;
+    pageSizeMicrons = { width: 210000, height: 297000 };
+    console.log(
+      `[Print] A4 mode  windowPx=${windowWidth}px`,
+      payload?.deviceName ? `  device="${payload.deviceName}"` : '  device=(system default)'
+    );
+  } else {
+    const profile = buildThermalProfile(payload?.paperWidth || '80mm', payload?.printerMode || 'Raster', payload?.printerProfile || '');
+    windowWidth = profile.windowPx;
+    pageSizeMicrons = {
+      width: Math.round(profile.paperMm * 1000),
+      height: 2000000,
+    };
+    console.log(
+      `[Print] paperWidth=${profile.paperMm}mm  usable=${profile.usableMm}mm  windowPx=${profile.windowPx}px`,
+      payload?.deviceName ? `  device="${payload.deviceName}"` : '  device=(system default)'
+    );
+  }
 
   const tmpFile = path.join(
     os.tmpdir(),
@@ -703,8 +723,8 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
 
     const worker = getPrinterWorker();
 
-    // Width = usable receipt width in px; Height = 3000px (tall enough for any receipt)
-    worker.setSize(profile.windowPx, 3000);
+    // Width = usable receipt width in px; Height = tall enough for content
+    worker.setSize(windowWidth, isA4 ? 1123 : 3000);
 
     const resultPromise = new Promise((resolve) => {
       worker.webContents.removeAllListeners('did-fail-load');
@@ -722,13 +742,8 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
           silent: payload?.silent !== false,
           printBackground: true,
           color: false,
-          // pageSize in microns: full paper width × 2000mm height so the
-          // thermal driver feeds as much paper as the receipt needs.
-          pageSize: profile.pageSizeMicrons,
-          // Explicitly zero out all margins so the Raster/GDI driver does not
-          // add its own default margins (the #1 cause of left-compression on
-          // Windows thermal drivers like FP-1100).
-          margins: { marginType: 'none' },
+          pageSize: isA4 ? 'A4' : pageSizeMicrons,
+          margins: { marginType: isA4 ? 'default' : 'none' },
         };
         if (deviceName) printOptions.deviceName = deviceName;
 
@@ -755,6 +770,7 @@ ipcMain.handle('print-html', async (event, payload = {}) => {
     return { success: false, error: error?.message || 'Silent print failed' };
   }
 });
+
 
 // ─── Window ─────────────────────────────────────────────────────────────────
 function attachWindowDiagnostics(win, label) {

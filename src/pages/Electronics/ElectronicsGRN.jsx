@@ -6,6 +6,7 @@ import { useElectronicsStore } from '@/store'
 import { formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { format } from 'date-fns'
+import { syncToCloud } from '@/lib/firebase'
 
 export default function ElectronicsGRN() {
   const { elProducts, elSuppliers, addElGRN, serials } = useElectronicsStore()
@@ -90,6 +91,9 @@ export default function ElectronicsGRN() {
       toast.success(`GRN ${grnId.substring(0,8)} received successfully!`)
     }
     
+    // ── Local save done. Push to cloud in background ──────────────────
+    syncToCloud().catch((err) => console.warn('[GRN] Cloud sync failed (offline?):', err))
+
     // Reset form
     setSupplierId('')
     setInvoiceNo('')

@@ -920,7 +920,7 @@ export default function Products() {
   const filtered = useMemo(() => {
     return products.filter((p) => {
       // Strict module isolation: must match the exact module natively via global state
-      const matchM = !p.module || p.module === activeModule
+      const matchM = p.module === activeModule || (!p.module && activeModule === 'grocery')
       const matchS = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search)
       const matchC = catFilter === 'All' || p.category === catFilter
       return matchS && matchC && matchM

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore, useElectronicsStore } from '@/store'
+import { useAppStore, useSalesStore, useProductStore, useTableStore, useCustomerStore, useActivityStore, useRecipeStore, useAuthStore, useElectronicsStore, useGRNStore, useLedgerStore } from '@/store'
 
 // ─── Supabase Client Initialization ──────────────────────────────────────────
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || 'https://your-project-id.supabase.co').trim()
@@ -9,8 +9,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 // ─── Resolve Tenant / Store ID ───────────────────────────────────────────────
 export function resolveCloudTenantId(businessInfo = {}, licenseKey = '') {
-  const normalizedLicenseKey = String(licenseKey || '').trim().toUpperCase()
-  return normalizedLicenseKey || String(businessInfo?.storeId || '').trim() || ''
+  return String(businessInfo?.storeId || '').trim() || String(licenseKey || '').trim().toUpperCase() || ''
 }
 
 // ─── Legacy Firebase Initializer compatibility ──────────────────────────────
@@ -28,7 +27,9 @@ export async function syncToCloud() {
     const { logs }         = useActivityStore.getState()
     const { recipes }      = useRecipeStore.getState()
     const { users }        = useAuthStore.getState()
-    const { elProducts, serials, elSuppliers, elGRNs, elSales, repairJobs, elCustomers, warranties } = useElectronicsStore.getState()
+    const { elProducts, serials, elSuppliers, elGRNs, elSales, repairJobs, elCustomers, warranties, warrantyClaims = [] } = useElectronicsStore.getState()
+    const { grns }         = useGRNStore.getState()
+    const { entries: ledgerEntries } = useLedgerStore.getState()
     const { businessInfo, licenseKey, cloudSubscription } = useAppStore.getState()
 
     const storeId = resolveCloudTenantId(businessInfo, licenseKey)
@@ -145,6 +146,22 @@ export async function syncToCloud() {
       if (!item?.id) return
       entries.push({ store_id: storeId, collection_name: 'electronics_warranties', doc_id: String(item.id), data: item, updated_at: now })
     })
+    warrantyClaims.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'electronics_warranty_claims', doc_id: String(item.id), data: item, updated_at: now })
+    })
+
+    // 4. GRNs (Grocery/Restaurant)
+    grns.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'grns', doc_id: String(item.id), data: item, updated_at: now })
+    })
+
+    // 5. Ledger entries
+    ledgerEntries.forEach((item) => {
+      if (!item?.id) return
+      entries.push({ store_id: storeId, collection_name: 'ledger_entries', doc_id: String(item.id), data: item, updated_at: now })
+    })
 
     // Write to Supabase in chunks of 200
     const chunkSize = 200
@@ -225,7 +242,30 @@ export async function pullFromCloud() {
       repairJobs: collections.electronics_repair_jobs || [],
       elCustomers: collections.electronics_customers || [],
       warranties: collections.electronics_warranties || [],
+      warrantyClaims: collections.electronics_warranty_claims || [],
     })
+
+    // Populate GRNs and Ledger
+    if (collections.grns) {
+      useGRNStore.setState({ grns: collections.grns })
+    }
+    if (collections.ledger_entries) {
+      useLedgerStore.setState({ entries: collections.ledger_entries })
+    }
+    if (collections.settings) {
+      const appSettings = collections.settings.find((s) => s.businessInfo || s.taxSettings)
+      if (appSettings) {
+        useAppStore.setState({
+          businessInfo: appSettings.businessInfo || useAppStore.getState().businessInfo,
+          taxSettings: appSettings.taxSettings || useAppStore.getState().taxSettings,
+          serviceChargeSettings: appSettings.serviceChargeSettings || useAppStore.getState().serviceChargeSettings,
+          receiptSettings: appSettings.receiptSettings || useAppStore.getState().receiptSettings,
+          hardwareSettings: appSettings.hardwareSettings || useAppStore.getState().hardwareSettings,
+          modules: appSettings.modules || useAppStore.getState().modules,
+          activeModule: appSettings.activeModule || useAppStore.getState().activeModule,
+        })
+      }
+    }
 
     return true
   } catch (error) {

@@ -1,10 +1,10 @@
 import React from 'react'
-import { X, Printer, CheckCircle2 } from 'lucide-react'
+import { X, Printer, CheckCircle2, FileText } from 'lucide-react'
 import Barcode from 'react-barcode'
 import { formatCurrency } from '@/lib/utils'
 import { tr } from '@/lib/i18n'
 import { BRAND } from '@/lib/brand'
-import { printReceiptHTML } from '@/lib/printReceipt'
+import { printReceiptHTML, printA4InvoiceHTML, buildA4InvoiceBody } from '@/lib/printReceipt'
 import { buildThermalProfile } from '@/lib/thermalPrinter'
 import { useAppStore } from '@/store'
 
@@ -226,6 +226,170 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
   )
 }
 
+// ─── A4 Invoice Preview (on-screen display for electronics module) ────────────
+export function A4InvoiceContent({ sale, businessInfo, receiptSettings }) {
+  const {
+    receiptNo, date, cartItems = [], subtotal,
+    discount = 0, tax = 0, total, paymentMethod, change = 0,
+    cashier, customerName, notes,
+  } = sale
+
+  const dateObj = new Date(date)
+  const dateStr = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+  const timeStr = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+
+  const paymentLabel = String(paymentMethod || 'cash').toLowerCase() === 'card'
+    ? 'Card Payment'
+    : String(paymentMethod || 'cash').toLowerCase() === 'split'
+      ? 'Split Payment'
+      : String(paymentMethod || 'cash').toLowerCase() === 'helaqr'
+        ? 'HelaQR Payment'
+        : 'Cash Payment'
+
+  const hasSerials = cartItems.some(i => i.serial || i.imei || i.warrantyMonths)
+
+  return (
+    <div style={{ fontFamily: "'Inter', 'Segoe UI', sans-serif", fontSize: 12, color: '#1a1a2e', lineHeight: 1.5 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '3px solid #1a1a2e', paddingBottom: 12, marginBottom: 14 }}>
+        <div>
+          {receiptSettings?.logoUrl && (
+            <img src={receiptSettings.logoUrl} alt="Logo" style={{ maxWidth: 50, maxHeight: 50, objectFit: 'contain', marginBottom: 4 }} />
+          )}
+          <div style={{ fontSize: 18, fontWeight: 900, color: '#1a1a2e' }}>{businessInfo.name}</div>
+          {businessInfo.address && <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>{businessInfo.address}</div>}
+          {(businessInfo.phone || businessInfo.email) && (
+            <div style={{ fontSize: 10, color: '#555', marginTop: 1 }}>
+              {[businessInfo.phone, businessInfo.email].filter(Boolean).join(' | ')}
+            </div>
+          )}
+          {businessInfo.taxId && <div style={{ fontSize: 9, color: '#777', marginTop: 3, fontWeight: 600 }}>TAX ID: {businessInfo.taxId}</div>}
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#1a1a2e', textTransform: 'uppercase' }}>Invoice</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#e63946', marginTop: 2 }}>{receiptNo}</div>
+          <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>{dateStr}<br />{timeStr}</div>
+        </div>
+      </div>
+
+      {/* Meta */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+        <div style={{ flex: 1, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 6, padding: '8px 12px' }}>
+          <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#999', marginBottom: 3 }}>Invoice #</div>
+          <div style={{ fontSize: 11, fontWeight: 700 }}>{receiptNo}</div>
+        </div>
+        <div style={{ flex: 1, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 6, padding: '8px 12px' }}>
+          <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#999', marginBottom: 3 }}>Date</div>
+          <div style={{ fontSize: 11, fontWeight: 700 }}>{dateStr} &bull; {timeStr}</div>
+        </div>
+        {cashier && (
+          <div style={{ flex: 1, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 6, padding: '8px 12px' }}>
+            <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#999', marginBottom: 3 }}>Sales Rep</div>
+            <div style={{ fontSize: 11, fontWeight: 700 }}>{cashier}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Items table */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 14, fontSize: 11 }}>
+        <thead>
+          <tr style={{ background: '#1a1a2e', color: '#fff' }}>
+            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', borderRadius: '4px 0 0 0' }}>#</th>
+            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Item</th>
+            {hasSerials && <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Serial / IMEI</th>}
+            <th style={{ padding: '6px 8px', textAlign: 'center', fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Qty</th>
+            <th style={{ padding: '6px 8px', textAlign: 'right', fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Price</th>
+            <th style={{ padding: '6px 8px', textAlign: 'right', fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', borderRadius: '0 4px 0 0' }}>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cartItems.map((item, i) => {
+            const unitPrice = item.salePrice || item.price || 0
+            const lineTotal = unitPrice * (item.qty || 1)
+            return (
+              <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#fafbfc', borderBottom: '1px solid #eee' }}>
+                <td style={{ padding: '7px 8px', color: '#999', fontWeight: 600 }}>{i + 1}</td>
+                <td style={{ padding: '7px 8px' }}>
+                  <div style={{ fontWeight: 700 }}>{item.name}</div>
+                  {item.warrantyMonths > 0 && <div style={{ fontSize: 9, color: '#2563eb', fontWeight: 600, marginTop: 1 }}>🛡 {item.warrantyMonths} Month Warranty</div>}
+                </td>
+                {hasSerials && (
+                  <td style={{ padding: '7px 8px', fontFamily: "'Courier New', monospace", fontSize: 9, color: '#666' }}>
+                    {item.serial && <div>S/N: {item.serial}</div>}
+                    {item.imei && <div>IMEI: {item.imei}</div>}
+                    {!item.serial && !item.imei && <span style={{ color: '#ccc' }}>—</span>}
+                  </td>
+                )}
+                <td style={{ padding: '7px 8px', textAlign: 'center' }}>{item.qty || 1}{item.unit ? ` ${item.unit}` : ''}</td>
+                <td style={{ padding: '7px 8px', textAlign: 'right' }}>{formatCurrency(unitPrice)}</td>
+                <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>{formatCurrency(lineTotal)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+
+      {/* Totals */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+        <div style={{ width: 200 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 11 }}>
+            <span style={{ color: '#555' }}>Subtotal</span>
+            <span style={{ fontWeight: 700 }}>{formatCurrency(subtotal)}</span>
+          </div>
+          {tax > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 11 }}>
+              <span style={{ color: '#555' }}>VAT / Tax</span>
+              <span style={{ fontWeight: 700 }}>{formatCurrency(tax)}</span>
+            </div>
+          )}
+          {discount > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 11 }}>
+              <span style={{ color: '#555' }}>Discount</span>
+              <span style={{ fontWeight: 700 }}>-{formatCurrency(discount)}</span>
+            </div>
+          )}
+          <div style={{ borderTop: '2px solid #1a1a2e', marginTop: 5, paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
+            <span style={{ fontWeight: 800 }}>TOTAL</span>
+            <span style={{ fontWeight: 900, color: '#e63946' }}>{formatCurrency(total)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Payment */}
+      <div style={{ background: 'linear-gradient(135deg, #f0fdf4, #ecfdf5)', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <div style={{ width: 30, height: 30, borderRadius: '50%', background: '#16a34a', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 16 }}>✓</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#16a34a' }}>Payment Received</div>
+          <div style={{ fontSize: 10, color: '#555' }}>{paymentLabel}</div>
+        </div>
+        {change > 0 && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', color: '#999' }}>Change</div>
+            <div style={{ fontSize: 13, fontWeight: 900 }}>{formatCurrency(change)}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Warranty notice */}
+      {hasSerials && (
+        <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+          <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#92400e', marginBottom: 3 }}>⚠ Warranty Terms</div>
+          <div style={{ fontSize: 9, color: '#78350f', lineHeight: 1.5 }}>
+            This invoice serves as proof of purchase. Warranty covers manufacturing defects only.
+          </div>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div style={{ borderTop: '1px solid #ddd', paddingTop: 10, textAlign: 'center' }}>
+        <div style={{ fontSize: 11, fontWeight: 700 }}>{receiptSettings?.footer || ''}</div>
+        <div style={{ fontSize: 9, color: '#888', marginTop: 2 }}>Thank you for your purchase!</div>
+        <div style={{ fontSize: 8, color: '#bbb', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 6 }}>Powered by {BRAND.fullName}</div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function Row({ label, value, color }) {
   return (
@@ -243,6 +407,8 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
 
   if (!sale) return null
 
+  const isElectronics = String(sale.source || sale.activeModule || '').toLowerCase() === 'electronics'
+
   // Derived from stored settings — forwarded to main.js via IPC
   const paperWidth  = String(hardwareSettings?.paperWidth  || '80mm').trim()
   const deviceName  = String(hardwareSettings?.printerPort || '').trim()
@@ -254,6 +420,14 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
   const printOpts   = { deviceName, paperWidth: profile.paperWidth, printerMode: profile.printerMode, printerProfile: profile.printerProfile }
 
   const handlePrint = async () => {
+    // ── Electronics module: A4 invoice ──────────────────────────────────────
+    if (isElectronics) {
+      const invoiceBody = buildA4InvoiceBody(sale, businessInfo, receiptSettings)
+      await printA4InvoiceHTML('Electronics Invoice', invoiceBody, { deviceName })
+      return
+    }
+
+    // ── All other modules: thermal receipt (unchanged) ─────────────────────
     // Build print-safe HTML from ReceiptContent via a temp div
     const el = document.getElementById('paxxmo-receipt-inner')
     if (!el) return
@@ -337,9 +511,9 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
   }, [receiptSettings?.autoPrint])
 
   const source = sale.source
-  const accentColor = source === 'restaurant' ? '#7c3aed' : source === 'takeout' ? '#ea580c' : '#16a34a'
-  const accentLight = source === 'restaurant' ? '#f3f0ff' : source === 'takeout' ? '#fff7ed' : '#f0fdf4'
-  const typeLabel   = source === 'restaurant' ? tr('rect_label_dinein') : source === 'takeout' ? tr('rect_label_takeout') : tr('rect_label_sale')
+  const accentColor = isElectronics ? '#2563eb' : source === 'restaurant' ? '#7c3aed' : source === 'takeout' ? '#ea580c' : '#16a34a'
+  const accentLight = isElectronics ? '#eff6ff' : source === 'restaurant' ? '#f3f0ff' : source === 'takeout' ? '#fff7ed' : '#f0fdf4'
+  const typeLabel   = isElectronics ? 'Invoice' : source === 'restaurant' ? tr('rect_label_dinein') : source === 'takeout' ? tr('rect_label_takeout') : tr('rect_label_sale')
 
   return (
     <div
@@ -412,12 +586,20 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
             }} />
 
             <div id="paxxmo-receipt-inner" style={{ padding: '8px 0' }}>
-              <ReceiptContent
-                sale={sale}
-                businessInfo={businessInfo}
-                receiptSettings={receiptSettings}
-                paperWidth={paperWidth}
-              />
+              {isElectronics ? (
+                <A4InvoiceContent
+                  sale={sale}
+                  businessInfo={businessInfo}
+                  receiptSettings={receiptSettings}
+                />
+              ) : (
+                <ReceiptContent
+                  sale={sale}
+                  businessInfo={businessInfo}
+                  receiptSettings={receiptSettings}
+                  paperWidth={paperWidth}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -432,7 +614,7 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-white transition-all hover:opacity-90"
             style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)` }}
           >
-            <Printer size={16} /> {String(sale?.paymentMethod || '').toLowerCase() === 'card' ? 'Print 2 Copies' : tr('rect_print')}
+            {isElectronics ? <FileText size={16} /> : <Printer size={16} />} {isElectronics ? 'Print A4 Invoice' : String(sale?.paymentMethod || '').toLowerCase() === 'card' ? 'Print 2 Copies' : tr('rect_print')}
           </button>
           <button
             onClick={onClose}

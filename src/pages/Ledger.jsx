@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { BookOpen, Plus, ArrowUpRight, ArrowDownLeft, TrendingDown, Search, Download, DollarSign } from 'lucide-react'
-import { useCustomerStore } from '@/store'
+import { useCustomerStore, useLedgerStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { Badge, Modal, Input, Select, SectionHeader, SearchInput, StatCard } from '@/components/ui'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -9,28 +9,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { v4 as uuidv4 } from 'uuid'
 import { format } from 'date-fns'
-
-// ─── Ledger store ─────────────────────────────────────────────────────────────
-const useLedgerStore = create(
-  persist(
-    (set, get) => ({
-      entries: [
-        { id: '1', customerId: '2', type: 'purchase', amount: 25000, balance: 25000, description: 'Invoice INV-2026-001', date: new Date(Date.now() - 86400000 * 5), ref: 'INV-001' },
-        { id: '2', customerId: '2', type: 'payment', amount: 20000, balance: 5000, description: 'Cash payment received', date: new Date(Date.now() - 86400000 * 2), ref: 'PMT-001' },
-      ],
-      addEntry: (entry) =>
-        set((s) => ({ entries: [{ ...entry, id: uuidv4(), date: new Date() }, ...s.entries] })),
-      getBalance: (customerId) => {
-        const entries = get().entries.filter((e) => e.customerId === customerId)
-        if (!entries.length) return 0
-        return entries[0].balance
-      },
-      getHistory: (customerId) =>
-        get().entries.filter((e) => e.customerId === customerId).sort((a, b) => new Date(b.date) - new Date(a.date)),
-    }),
-    { name: 'paxxmo-ledger' }
-  )
-)
+import { syncToCloud } from '@/lib/firebase'
 
 function EntryModal({ customer, onClose }) {
   const { addEntry, getBalance } = useLedgerStore()
@@ -59,6 +38,7 @@ function EntryModal({ customer, onClose }) {
       ref,
     })
     updateCustomer(customer.id, { credit: newBalance })
+    syncToCloud().catch((err) => console.warn('[Ledger] Cloud sync failed (offline?):', err))
     toast.success(type === 'payment' ? `Payment of ${formatCurrency(amt)} recorded` : `Credit of ${formatCurrency(amt)} added`)
     onClose()
   }

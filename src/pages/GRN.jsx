@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { Truck, Plus, Search, CheckCircle, ClipboardList, Package, Calendar, ChevronDown, Save, Trash2, Barcode, Info, Flag } from 'lucide-react'
-import { useProductStore } from '@/store'
+import { useProductStore, useGRNStore } from '@/store'
 import { useToast } from '@/components/Toast'
 import { Button, Badge, Input, Select, SectionHeader, SearchInput, StatCard, Modal } from '@/components/ui'
 import { formatCurrency, formatDate } from '@/lib/utils'
@@ -10,17 +10,7 @@ import { persist } from 'zustand/middleware'
 import { v4 as uuidv4 } from 'uuid'
 import { format } from 'date-fns'
 import { parseBarcode, describeParsedBarcode } from '@/lib/gs1'
-
-// ─── GRN Store ─────────────────────────────────────────────────────────────
-const useGRNStore = create(
-  persist(
-    (set) => ({
-      grns: [],
-      addGRN: (grn) => set((s) => ({ grns: [grn, ...s.grns] })),
-    }),
-    { name: 'paxxmo-grns' }
-  )
-)
+import { syncToCloud } from '@/lib/firebase'
 
 // ─── GS1 Scan Result Badge ─────────────────────────────────────────────────
 function Gs1ScanBadge({ parsed }) {
@@ -203,6 +193,7 @@ export default function GRN() {
       createdAt: new Date(),
     }
     addGRN(grn)
+    syncToCloud().catch((err) => console.warn('[GRN] Cloud sync failed (offline?):', err))
     toast.success(`GRN ${grn.grnNo} recorded. Stock updated for ${validItems.length} product(s).`)
     setSupplier('')
     setInvoiceNo('')
