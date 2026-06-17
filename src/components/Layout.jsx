@@ -191,17 +191,21 @@ export function Layout({ children }) {
         matchingTable = { ...matchingTable, ...freshTableState }
       }
 
-      // Security/validity gate: only accept orders for the currently active table session.
+      const isWebOrder = !tableNo || String(tableNo).toUpperCase() === 'WEB' || !useAppStore.getState().modules?.restaurant
+
+      // Security/validity gate for Restaurant Table Orders: only accept orders for the currently active table session.
       // After settlement, session is cleared/rotated so old QR links are automatically invalid.
-      if (!matchingTable || matchingTable.status !== 'occupied' || String(matchingTable.sessionId || '') !== sessionId || String(matchingTable.qrToken || '') !== qrToken) {
-        await updateQRCodeOrderStatus(storeId, incoming.id, 'expired', {
-          rejectReason: 'session_mismatch_or_table_not_active',
-        })
-        return
+      if (!isWebOrder) {
+        if (!matchingTable || matchingTable.status !== 'occupied' || String(matchingTable.sessionId || '') !== sessionId || String(matchingTable.qrToken || '') !== qrToken) {
+          await updateQRCodeOrderStatus(storeId, incoming.id, 'expired', {
+            rejectReason: 'session_mismatch_or_table_not_active',
+          })
+          return
+        }
       }
 
       const localProducts = useProductStore.getState().products || []
-      const existingOrderItems = Array.isArray(matchingTable.order?.items) ? matchingTable.order.items : []
+      const existingOrderItems = Array.isArray(matchingTable?.order?.items) ? matchingTable.order.items : []
       const isInsufficient = items.find((item) => {
         const product = localProducts.find((p) => String(p.id) === String(item.id))
         if (!product || !product.active) return true
