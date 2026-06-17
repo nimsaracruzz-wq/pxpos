@@ -280,17 +280,10 @@ export function Layout({ children }) {
           mergedMap.set(key, normalized)
         })
 
-        // Filter incoming items to avoid mixing modules (e.g., grocery items into restaurant tables)
-        const productStoreState = useProductStore.getState()
-        const filteredIncomingItems = (items || []).filter((it) => {
-          const prod = productStoreState.products.find((p) => String(p.id) === String(it.id))
-          if (!prod) return false
-          // When POS is in restaurant mode, only accept restaurant-module products
-          if (activeModule === 'restaurant') return String(prod.module || 'grocery') === 'restaurant'
-          // Otherwise accept products that match the current active module
-          return String(prod.module || 'grocery') === String(activeModule || 'grocery')
-        })
-
+        // We no longer filter incoming items based on the active module.
+        // If the customer was able to order it via the public menu, the POS should accept it.
+        const filteredIncomingItems = items || []
+        
         filteredIncomingItems.forEach((item) => {
           const key = mergeKey(item)
           const current = mergedMap.get(key)
