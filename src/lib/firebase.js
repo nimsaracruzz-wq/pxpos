@@ -213,6 +213,24 @@ export async function pullFromCloud() {
               storeId: mappedId
             }
           }))
+        } else {
+          // No mapping exists yet. Check if settings/data are stored directly under the license key
+          const { data: licenseKeyData, error: lkErr } = await supabase
+            .from('store_data')
+            .select('doc_id')
+            .eq('store_id', licenseKey.trim().toUpperCase())
+            .limit(1)
+
+          if (!lkErr && licenseKeyData && licenseKeyData.length > 0) {
+            // Data/settings exist directly under the license key (e.g. from portal registration). Adopt it.
+            storeId = licenseKey.trim().toUpperCase()
+            useAppStore.setState((s) => ({
+              businessInfo: {
+                ...s.businessInfo,
+                storeId: storeId
+              }
+            }))
+          }
         }
       } catch (e) {
         console.warn('[Supabase] Could not resolve store ID from license mapping:', e)
@@ -297,6 +315,126 @@ export async function pullFromCloud() {
           modules: appSettings.modules || useAppStore.getState().modules,
           activeModule: appSettings.activeModule || useAppStore.getState().activeModule,
         })
+      }
+    }
+
+    // Sync pulled records directly to Electron SQLite database
+    if (typeof window !== 'undefined' && window.require) {
+      try {
+        const ipcRenderer = window.require('electron').ipcRenderer
+
+        // Write Settings
+        const state = useAppStore.getState()
+        await ipcRenderer.invoke('settings-save', 'businessInfo', state.businessInfo).catch(() => {})
+        await ipcRenderer.invoke('settings-save', 'taxSettings', state.taxSettings).catch(() => {})
+        await ipcRenderer.invoke('settings-save', 'serviceChargeSettings', state.serviceChargeSettings).catch(() => {})
+        await ipcRenderer.invoke('settings-save', 'receiptSettings', state.receiptSettings).catch(() => {})
+        await ipcRenderer.invoke('settings-save', 'hardwareSettings', state.hardwareSettings).catch(() => {})
+
+        // Write Products
+        if (collections.products) {
+          for (const item of collections.products) {
+            await ipcRenderer.invoke('add-product', item).catch(() => {})
+          }
+        }
+        // Write Sales
+        if (collections.sales) {
+          for (const item of collections.sales) {
+            await ipcRenderer.invoke('add-sale', item).catch(() => {})
+          }
+        }
+        // Write Tables
+        if (collections.tables) {
+          for (const item of collections.tables) {
+            await ipcRenderer.invoke('upsert-table', item).catch(() => {})
+          }
+        }
+        // Write Customers
+        if (collections.customers) {
+          for (const item of collections.customers) {
+            await ipcRenderer.invoke('add-customer', item).catch(() => {})
+          }
+        }
+        // Write Activity Logs
+        if (collections.activity_logs) {
+          for (const item of collections.activity_logs) {
+            await ipcRenderer.invoke('logs-add', item).catch(() => {})
+          }
+        }
+        // Write Recipes
+        if (collections.recipes) {
+          for (const r of collections.recipes) {
+            if (r.dishId) {
+              await ipcRenderer.invoke('set-recipe', r.dishId, r.ingredients || []).catch(() => {})
+            }
+          }
+        }
+        // Write Users
+        if (collections.users) {
+          for (const item of collections.users) {
+            await ipcRenderer.invoke('users-add', item).catch(() => {})
+          }
+        }
+        // Write GRNs
+        if (collections.grns) {
+          for (const item of collections.grns) {
+            await ipcRenderer.invoke('grn-add', item).catch(() => {})
+          }
+        }
+        // Write Ledger entries
+        if (collections.ledger_entries) {
+          for (const item of collections.ledger_entries) {
+            await ipcRenderer.invoke('ledger-add-entry', item).catch(() => {})
+          }
+        }
+        // Write Electronics
+        if (collections.electronics_products) {
+          for (const item of collections.electronics_products) {
+            await ipcRenderer.invoke('el-upsert-product', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_serials) {
+          for (const item of collections.electronics_serials) {
+            await ipcRenderer.invoke('el-add-serial', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_suppliers) {
+          for (const item of collections.electronics_suppliers) {
+            await ipcRenderer.invoke('el-upsert-supplier', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_grns) {
+          for (const item of collections.electronics_grns) {
+            await ipcRenderer.invoke('el-add-grn', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_sales) {
+          for (const item of collections.electronics_sales) {
+            await ipcRenderer.invoke('el-add-sale', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_repair_jobs) {
+          for (const item of collections.electronics_repair_jobs) {
+            await ipcRenderer.invoke('el-add-repair-job', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_customers) {
+          for (const item of collections.electronics_customers) {
+            await ipcRenderer.invoke('el-upsert-customer', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_warranties) {
+          for (const item of collections.electronics_warranties) {
+            await ipcRenderer.invoke('el-add-warranty', item).catch(() => {})
+          }
+        }
+        if (collections.electronics_warranty_claims) {
+          for (const item of collections.electronics_warranty_claims) {
+            await ipcRenderer.invoke('el-add-warranty-claim', item).catch(() => {})
+          }
+        }
+      } catch (ipcErr) {
+        console.warn('[Supabase] SQLite persistence after sync failed:', ipcErr)
       }
     }
 

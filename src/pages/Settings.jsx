@@ -1833,9 +1833,20 @@ export default function Settings() {
                       return
                     }
 
-                    activateLicense(licenseInput, result)
+                    await activateLicense(licenseInput, result)
+                    
+                    // Pull portal settings from cloud immediately after license change
+                    const { pullFromCloud } = await import('@/lib/firebase')
+                    const pulled = await pullFromCloud()
+
                     showSaved()
-                    toast.success('License activated successfully')
+                    if (pulled) {
+                      toast.success('License activated and portal settings synced successfully!')
+                    } else {
+                      toast.success('License activated successfully!')
+                    }
+                  } catch (err) {
+                    toast.error(err.message || 'Error occurred during activation')
                   } finally {
                     setActivatingLicense(false)
                   }

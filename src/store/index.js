@@ -1661,6 +1661,99 @@ export async function resetBusinessDataForNewLicense() {
   })
   useGRNStore.setState({ grns: [] })
   useLedgerStore.setState({ entries: [] })
+  
+  // Clear Auth Store
+  useAuthStore.setState({ currentUser: null, users: [] })
+
+  // Reset App Store Settings to default configurations
+  useAppStore.setState({
+    activeModule: 'grocery',
+    modules: {
+      grocery: true,
+      restaurant: false,
+      clothing: false,
+      pharmacy: false,
+      wholesale: false,
+      online: false,
+      electronics: false,
+    },
+    businessInfo: {
+      name: BRAND.name,
+      address: '123 Main Street, Colombo',
+      phone: '+94 11 234 5678',
+      email: `support@${BRAND.website}`,
+      taxId: 'TAX-001',
+      storeId: uuidv4(),
+      publicMenuBaseUrl: DEFAULT_PUBLIC_MENU_BASE_URL,
+      currency: 'LKR',
+      currencySymbol: 'Rs.',
+    },
+    taxSettings: {
+      enabled: true,
+      rate: 15,
+      name: 'VAT',
+      inclusive: false,
+    },
+    serviceChargeSettings: {
+      enabled: false,
+      rate: 10,
+      name: 'Service Charge',
+    },
+    receiptSettings: {
+      header: 'Thank you for shopping!',
+      footer: `Powered by ${BRAND.fullName}`,
+      showBarcode: true,
+      showTax: true,
+      autoPrint: false,
+      showCashier: true,
+      logoUrl: null,
+      logoPrintUrl: null,
+      logoSize: 'medium',
+      printCopies: 1,
+    },
+    hardwareSettings: {
+      barcodeScanner: true,
+      printerType: 'Raster',
+      printerProfile: '80mm-raster',
+      printerPort: '',
+      paperWidth: '80mm',
+      autoOpenDrawer: false,
+      drawerPort: '',
+    },
+    helaQRSettings: {
+      enabled: false,
+      testMode: true,
+      baseUrl: '',
+      appId: '',
+      appSecret: '',
+      businessId: '',
+      notifyUrl: '',
+    },
+    customerDisplaySettings: createCustomerDisplayDefaults(),
+    qrSettings: {
+      autoAccept: true,
+      quickReplies: ['Out of stock', 'Kitchen busy (expect delay)', 'Cannot customize this', 'Extra spicy OK'],
+    },
+    cloudSubscription: {
+      deploymentMode: 'local',
+      status: 'inactive',
+      plan: 'monthly',
+      monthlyFee: 0,
+      annualFee: 0,
+      lastPaidAt: null,
+      nextDueAt: null,
+      customerName: '',
+      billingEmail: '',
+      notes: '',
+      payments: [],
+    },
+    cloudSettings: {
+      enabled: false,
+      provider: 'firebase',
+      firebaseConfig: defaultFirebaseConfigJson(),
+      syncInterval: 10,
+    },
+  })
 }
 
 function canUseElectronIpc() {

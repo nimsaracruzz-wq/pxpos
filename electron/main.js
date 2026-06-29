@@ -1076,6 +1076,7 @@ ipcMain.handle('reset-business-data', () => {
       'el_products','el_serials','el_suppliers','el_grns','el_sales',
       'repair_jobs','el_customers','warranties','warranty_claims',
       'grns','ledger_entries','activity_logs',
+      'system_users','app_settings',
     ]
     tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run())
   })
