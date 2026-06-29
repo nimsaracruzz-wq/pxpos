@@ -48,112 +48,156 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
     cashier, customerName, customerPhone, tableNumber, source, waiter, notes,
   } = sale
 
+  // Extract just the number part from receipt number (e.g., INV-260629-0011234 -> 0011234)
+  const displayReceiptNo = receiptNo ? receiptNo.split('-').pop() : receiptNo
+
   const isTable = source === 'restaurant'
   const isTakeOut = source === 'takeout'
   const { hardwareSettings } = useAppStore()
   const profile = buildThermalProfile({ paperWidth })
   const paymentLabel = String(paymentMethod || 'cash').toLowerCase() === 'card'
-    ? 'Card paid'
+    ? 'CARD'
     : String(paymentMethod || 'cash').toLowerCase() === 'split'
-      ? 'Split paid'
+      ? 'SPLIT'
       : String(paymentMethod || 'cash').toLowerCase() === 'helaqr'
-        ? 'HelaQR pending'
-        : 'Cash paid'
+        ? 'HELAQR'
+        : 'CASH'
 
   const showBarcode = receiptSettings?.showBarcode !== false
   const showCashier = receiptSettings?.showCashier !== false
-  const receiptFooter = receiptSettings?.footer || `Powered by ${BRAND.fullName}`
+  const receiptFooter = receiptSettings?.footer || `Thank you for shopping with us!`
+
+  // Separator helpers
+  const boldLine  = { borderBottom: '3px double #000', margin: '7px 0' }
+  const dashedLine = { borderBottom: '1px dashed #000', margin: '7px 0' }
 
   return (
-    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: 13, fontWeight: 700, lineHeight: 1.45, color: '#000', textAlign: 'center', width: '100%' }}>
-      {/* Logo area */}
-      {receiptSettings?.logoUrl && (
-        <div style={{ textAlign: 'center', marginBottom: 8 }}>
-          <img
-            src={receiptSettings.logoUrl}
-            alt="Store Logo"
-            className="receipt-logo"
-            style={{ maxWidth: 220, maxHeight: 120, objectFit: 'contain', display: 'block', margin: '0 auto', background: '#fff' }}
-          />
-        </div>
-      )}
+    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: 13, fontWeight: 700, lineHeight: 1.5, color: '#000', textAlign: 'center', width: '100%' }}>
 
-      {/* Header */}
-      <div style={{ borderBottom: '1px dashed #000', marginBottom: 8, paddingBottom: 8, textAlign: 'center' }}>
-        <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: '0.04em', marginBottom: 2, textTransform: 'uppercase' }}>
+      {/* ── LOGO ── */}
+      {(receiptSettings?.logoPrintUrl || receiptSettings?.logoUrl) && (() => {
+        const logoSrc = receiptSettings?.logoPrintUrl || receiptSettings?.logoUrl
+        const sz = receiptSettings?.logoSize || 'medium'
+        const sizeClass = `receipt-logo-${sz}`
+        const sizeMap = { small: { maxWidth: 120, maxHeight: 60 }, medium: { maxWidth: 180, maxHeight: 90 }, large: { maxWidth: 240, maxHeight: 120 } }
+        const { maxWidth, maxHeight } = sizeMap[sz] || sizeMap.medium
+        return (
+          <div style={{ textAlign: 'center', marginBottom: 10, marginTop: 4 }}>
+            <img
+              src={logoSrc}
+              alt="Store Logo"
+              className={sizeClass}
+              style={{ maxWidth, maxHeight, objectFit: 'contain', display: 'block', margin: '0 auto', background: '#fff', imageRendering: 'pixelated', filter: 'contrast(1.3) brightness(1.0)' }}
+            />
+          </div>
+        )
+      })()}
+
+      {/* ── STORE HEADER ── */}
+      <div style={{ textAlign: 'center', marginBottom: 6 }}>
+        <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '0.06em', textTransform: 'uppercase', lineHeight: 1.2 }}>
           {businessInfo.name}
         </div>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#000', lineHeight: 1.5 }}>
-          {businessInfo.address}
-        </div>
+        {businessInfo.address && (
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000', lineHeight: 1.5, marginTop: 3 }}>
+            {businessInfo.address}
+          </div>
+        )}
         {receiptSettings?.header && (
-          <div style={{ fontSize: 10, fontWeight: 700, marginTop: 3, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2, letterSpacing: '0.04em' }}>
             {receiptSettings.header}
           </div>
         )}
-        {businessInfo.phone && <div style={{ fontSize: 11, fontWeight: 700 }}>{businessInfo.phone}{businessInfo.email ? ` | ${businessInfo.email}` : ''}</div>}
-        {businessInfo.taxId && (
-          <div style={{ fontSize: 10, fontWeight: 700, marginTop: 2 }}>
-            TAX ID: {businessInfo.taxId}
+        {businessInfo.phone && (
+          <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2 }}>
+            Tel: {businessInfo.phone}{businessInfo.email ? `  |  ${businessInfo.email}` : ''}
           </div>
         )}
-        {isTable && (
-          <div style={{ border: '2px solid #000', borderRadius: 2, fontSize: 12, fontWeight: 900, letterSpacing: '0.08em', padding: '2px 10px', display: 'inline-block', margin: '6px 0 2px', textTransform: 'uppercase' }}>
-            TABLE {tableNumber} — DINE IN
+        {businessInfo.taxId && (
+          <div style={{ fontSize: 10, fontWeight: 700, marginTop: 2, letterSpacing: '0.04em' }}>
+            VAT REG: {businessInfo.taxId}
           </div>
         )}
       </div>
 
-      {/* Meta info table */}
-      <table style={{ width: '100%', fontSize: '11px', fontWeight: 700, borderCollapse: 'collapse', marginBottom: 2, textAlign: 'left' }}>
-        <tbody>
-          <tr><td style={{ padding: '1.5px 0' }}>Receipt #</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{receiptNo}</td></tr>
-          <tr><td style={{ padding: '1.5px 0' }}>Date</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td></tr>
-          <tr><td style={{ padding: '1.5px 0' }}>Time</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{new Date(date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</td></tr>
-          {showCashier && cashier && <tr><td style={{ padding: '1.5px 0' }}>Cashier</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{cashier}</td></tr>}
-          {(waiter || customerName) && !isTakeOut && source !== 'electronics' && <tr><td style={{ padding: '1.5px 0' }}>Waiter</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{waiter || cashier}</td></tr>}
-          {(isTakeOut || source === 'electronics') && (customerName && customerName !== 'Walk-in' || customerPhone) && <tr><td style={{ padding: '1.5px 0' }}>Customer</td><td style={{ padding: '1.5px 0', textAlign: 'right' }}>{customerName && customerName !== 'Walk-in' ? customerName : 'Walk-in'} {customerPhone ? `(${customerPhone})` : ''}</td></tr>}
-        </tbody>
-      </table>
-
-      {/* Barcode — bar width scales with paper size; container forces centre-align */}
-      {showBarcode && receiptNo && (
-        <div style={{ textAlign: 'center', width: '100%', overflow: 'hidden', margin: '8px 0 4px', paddingLeft: `${hardwareSettings?.barcodeEdgePaddingMm ?? profile.edgePaddingMm}mm`, paddingRight: `${hardwareSettings?.barcodeEdgePaddingMm ?? profile.edgePaddingMm}mm` }}>
-          <div style={{ display: 'inline-block', maxWidth: '100%', boxSizing: 'border-box' }}>
-            <Barcode
-              value={String(receiptNo)}
-              format={getBarcodeFormat(receiptNo, receiptSettings?.barcodeType || hardwareSettings?.barcodeType || 'CODE128')}
-              width={Number(hardwareSettings?.barcodeModuleWidth) || profile.barcodeModuleWidth}
-              height={Number(hardwareSettings?.barcodeHeight) || profile.barcodeHeight}
-              margin={Number(hardwareSettings?.barcodeQuietZone) || profile.barcodeQuietZone}
-              fontSize={0}
-              displayValue={false}
-              background="#fff"
-              lineColor="#000"
-              svgProps={{ style: { shapeRendering: 'crispEdges' } }}
-            />
+      {/* ── DINE-IN badge ── */}
+      {isTable && (
+        <div style={{ margin: '4px 0 6px' }}>
+          <div style={{ border: '3px solid #000', borderRadius: 3, fontSize: 13, fontWeight: 900, letterSpacing: '0.1em', padding: '3px 12px', display: 'inline-block', textTransform: 'uppercase' }}>
+            ▶ TABLE {tableNumber} — DINE IN ◀
           </div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', marginTop: 3 }}>{receiptNo}</div>
         </div>
       )}
 
-      <hr style={{ border: 'none', borderTop: '1px dashed #aaa', margin: '8px 0' }} />
+      {/* ── Double line separator ── */}
+      <div style={boldLine} />
 
-      {/* Items table */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', margin: '4px 0', textAlign: 'left' }}>
+      {/* ── Receipt type label ── */}
+      <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', textAlign: 'center', marginBottom: 6 }}>
+        {isTable ? '★  DINE-IN RECEIPT  ★' : isTakeOut ? '★  TAKE-OUT RECEIPT  ★' : '★  SALES RECEIPT  ★'}
+      </div>
+
+      {/* ── Meta info table ── */}
+      <table style={{ width: '100%', fontSize: '11px', fontWeight: 700, borderCollapse: 'collapse', marginBottom: 2, textAlign: 'left' }}>
+        <tbody>
+          <tr>
+            <td style={{ padding: '2px 0' }}>Receipt #</td>
+            <td style={{ padding: '2px 0', textAlign: 'right', fontWeight: 900, letterSpacing: '0.04em' }}>{displayReceiptNo}</td>
+          </tr>
+          <tr>
+            <td style={{ padding: '2px 0' }}>Date</td>
+            <td style={{ padding: '2px 0', textAlign: 'right' }}>{new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+          </tr>
+          <tr>
+            <td style={{ padding: '2px 0' }}>Time</td>
+            <td style={{ padding: '2px 0', textAlign: 'right' }}>{new Date(date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</td>
+          </tr>
+          {showCashier && cashier && (
+            <tr><td style={{ padding: '2px 0' }}>Cashier</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{cashier}</td></tr>
+          )}
+          {(waiter || customerName) && !isTakeOut && source !== 'electronics' && (
+            <tr><td style={{ padding: '2px 0' }}>Waiter</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{waiter || cashier}</td></tr>
+          )}
+          {(isTakeOut || source === 'electronics') && (customerName && customerName !== 'Walk-in' || customerPhone) && (
+            <tr>
+              <td style={{ padding: '2px 0' }}>Customer</td>
+              <td style={{ padding: '2px 0', textAlign: 'right' }}>
+                {customerName && customerName !== 'Walk-in' ? customerName : 'Walk-in'}{customerPhone ? ` (${customerPhone})` : ''}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* ── Double line separator ── */}
+      <div style={boldLine} />
+
+      {/* ── Column header ── */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 2, textAlign: 'left', fontSize: 10, fontWeight: 900, letterSpacing: '0.06em' }}>
+        <thead>
+          <tr>
+            <th style={{ padding: '1px 0', textAlign: 'left', fontWeight: 900, textTransform: 'uppercase' }}>ITEM</th>
+            <th style={{ padding: '1px 0', textAlign: 'right', fontWeight: 900, textTransform: 'uppercase' }}>AMOUNT</th>
+          </tr>
+        </thead>
+      </table>
+      <div style={dashedLine} />
+
+      {/* ── Items table ── */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', margin: '2px 0 4px', textAlign: 'left' }}>
         <tbody>
           {(cartItems || []).map((item, i) => (
             <tr key={i}>
-              <td style={{ padding: '2px 0', fontWeight: 900, fontSize: 13, verticalAlign: 'top' }}>
-                <div>{item.name}</div>
+              <td style={{ padding: '3px 0', fontWeight: 900, fontSize: 13, verticalAlign: 'top', lineHeight: 1.3 }}>
+                <div style={{ fontSize: 13, fontWeight: 900 }}>{item.name}</div>
                 {(item.serial || item.imei || item.warrantyMonths) && (
-                  <div style={{ fontSize: '10px', fontWeight: 700, marginTop: 1 }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, marginTop: 1, letterSpacing: '0.02em' }}>
                     {item.serial && `S/N: ${item.serial} `}
                     {item.imei && `IMEI: ${item.imei} `}
                     {item.warrantyMonths ? `Warranty: ${item.warrantyMonths}m` : ''}
                   </div>
                 )}
-                <div style={{ fontSize: '11px', fontWeight: 700 }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#222', marginTop: 1 }}>
                   {(() => {
                     const WEIGHT_UNITS = ['kg', 'g', 'L', 'ml', 'liter', 'litre', 'gram', 'kilo', 'oz', 'lb']
                     const unit = String(item.unit || '').trim()
@@ -162,63 +206,95 @@ export function ReceiptContent({ sale, businessInfo, receiptSettings, paperWidth
                     const qtyDisplay = isWeightUnit
                       ? (qty % 1 === 0 ? qty : qty.toFixed(3).replace(/\.?0+$/, ''))
                       : qty
-                    return `${qtyDisplay}${unit ? ' ' + unit : ''} x ${formatCurrency(item.salePrice || item.price)}`
+                    return `  ${qtyDisplay}${unit ? ' ' + unit : ''} x ${formatCurrency(item.salePrice || item.price)}`
                   })()}
                 </div>
                 {item.expiry && (
-                  <div style={{ fontSize: '10px', fontWeight: 700, marginTop: 1, color: '#555' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, marginTop: 1 }}>
                     Exp: {item.expiry}
                   </div>
                 )}
               </td>
-              <td style={{ padding: '2px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 900, fontSize: 13, verticalAlign: 'top' }}>{formatCurrency((item.salePrice || item.price) * item.qty)}</td>
+              <td style={{ padding: '3px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 900, fontSize: 13, verticalAlign: 'top' }}>
+                {formatCurrency((item.salePrice || item.price) * item.qty)}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
 
       {notes && (
-        <div style={{ fontSize: 10, color: '#555', padding: '4px 0', margin: '6px 0', fontStyle: 'italic' }}>
-          📝 {notes}
+        <div style={{ fontSize: 10, color: '#333', padding: '3px 0', margin: '4px 0', fontStyle: 'italic', textAlign: 'left' }}>
+          Note: {notes}
         </div>
       )}
 
-      <hr style={{ border: 'none', borderTop: '1px dashed #aaa', margin: '8px 0' }} />
+      {/* ── Double line separator ── */}
+      <div style={boldLine} />
 
-      {/* Totals table */}
+      {/* ── Barcode ── */}
+      {showBarcode && receiptNo && (
+        <div style={{ textAlign: 'center', width: '100%', overflow: 'hidden', margin: '4px 0 6px', paddingLeft: `${hardwareSettings?.barcodeEdgePaddingMm ?? profile.edgePaddingMm}mm`, paddingRight: `${hardwareSettings?.barcodeEdgePaddingMm ?? profile.edgePaddingMm}mm` }}>
+          <div style={{ display: 'inline-block', maxWidth: '100%', boxSizing: 'border-box' }}>
+            <Barcode
+              value={String(receiptNo)}
+              format={getBarcodeFormat(receiptNo, receiptSettings?.barcodeType || hardwareSettings?.barcodeType || 'CODE128')}
+              width={Number(hardwareSettings?.barcodeModuleWidth) || profile.barcodeModuleWidth || 2.2}
+              height={Number(hardwareSettings?.barcodeHeight) || profile.barcodeHeight || 80}
+              margin={Number(hardwareSettings?.barcodeQuietZone) || profile.barcodeQuietZone || 10}
+              textMargin={0}
+              fontSize={0}
+              displayValue={false}
+              background="#fff"
+              lineColor="#000"
+              svgProps={{ style: { shapeRendering: 'crispEdges', display: 'block' } }}
+            />
+          </div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', marginTop: 2, fontFamily: "'Courier New', monospace" }}>{displayReceiptNo}</div>
+        </div>
+      )}
+
+      {/* ── Totals ── */}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontWeight: 700, marginBottom: 0, textAlign: 'left' }}>
         <tbody>
           <tr><td style={{ padding: '2px 0' }}>Subtotal</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{formatCurrency(subtotal)}</td></tr>
-          {tax > 0 && <tr><td style={{ padding: '2px 0' }}>VAT</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{formatCurrency(tax)}</td></tr>}
-          {discount > 0 && <tr><td style={{ padding: '2px 0' }}>Discount</td><td style={{ padding: '2px 0', textAlign: 'right' }}>-{formatCurrency(discount)}</td></tr>}
-          <tr><td colSpan="2" style={{ padding: 0 }}><hr style={{ border: 'none', borderTop: '2px solid #000', margin: '5px 0' }} /></td></tr>
-          <tr style={{ fontSize: 16, fontWeight: 900 }}>
-            <td style={{ padding: '4px 0 2px' }}>TOTAL</td>
-            <td style={{ padding: '4px 0 2px', textAlign: 'right' }}>{formatCurrency(total)}</td>
-          </tr>
-          <tr><td style={{ padding: '2px 0' }}>{paymentLabel}</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{formatCurrency(total)}</td></tr>
+          {tax > 0 && <tr><td style={{ padding: '2px 0' }}>VAT / Tax</td><td style={{ padding: '2px 0', textAlign: 'right' }}>{formatCurrency(tax)}</td></tr>}
+          {discount > 0 && <tr><td style={{ padding: '2px 0' }}>Discount</td><td style={{ padding: '2px 0', textAlign: 'right' }}>- {formatCurrency(discount)}</td></tr>}
         </tbody>
       </table>
 
-      {/* Change box */}
+      {/* ── TOTAL box — double border ── */}
+      <div style={{ border: '3px double #000', borderRadius: 3, padding: '6px 10px', margin: '8px 0 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 900, fontSize: 17 }}>
+        <span>TOTAL</span>
+        <span>{formatCurrency(total)}</span>
+      </div>
+
+      {/* ── Payment method ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, padding: '2px 0' }}>
+        <span>Payment</span>
+        <span style={{ fontWeight: 900, letterSpacing: '0.06em' }}>{paymentLabel}</span>
+      </div>
+
+      {/* ── Change box ── */}
       {change > 0 && (
-        <div style={{ border: '2px solid #000', borderRadius: 2, padding: '5px 8px', margin: '8px 0 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 900, fontSize: 15 }}>
+        <div style={{ border: '2px solid #000', borderRadius: 2, padding: '5px 10px', margin: '6px 0 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 900, fontSize: 15 }}>
           <span>CHANGE</span>
           <span>{formatCurrency(change)}</span>
         </div>
       )}
 
-      <hr style={{ border: 'none', borderTop: '1px dashed #aaa', margin: '8px 0' }} />
+      {/* ── Double line separator ── */}
+      <div style={{ ...boldLine, marginTop: 10 }} />
 
-      {/* Footer */}
-      <div style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#000', marginTop: 8, lineHeight: 1.7 }}>
-        <div style={{ fontSize: 13, fontWeight: 900, marginBottom: 2 }}>
-          {receiptFooter}
+      {/* ── Footer ── */}
+      <div style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#000', lineHeight: 1.8 }}>
+        <div style={{ fontSize: 14, fontWeight: 900, letterSpacing: '0.04em', marginBottom: 4 }}>
+          ★ {receiptFooter} ★
         </div>
-        <div>Thank you for your business!</div>
-        <div>{businessInfo.phone}</div>
-        <div>Visit us again at {businessInfo.name}</div>
-        <div style={{ fontSize: '9px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 6 }}>
+        <div style={{ fontSize: 11 }}>Thank you for your business!</div>
+        {businessInfo.phone && <div style={{ fontSize: 11 }}>Tel: {businessInfo.phone}</div>}
+        <div style={{ fontSize: 11 }}>Visit us again — {businessInfo.name}</div>
+        <div style={{ fontSize: '9px', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', marginTop: 8, borderTop: '1px dashed #000', paddingTop: 6 }}>
           Powered by {BRAND.fullName}
         </div>
       </div>
@@ -233,6 +309,9 @@ export function A4InvoiceContent({ sale, businessInfo, receiptSettings }) {
     discount = 0, tax = 0, total, paymentMethod, change = 0,
     cashier, customerName, notes,
   } = sale
+
+  // Extract just the number part from receipt number (e.g., INV-260629-0011234 -> 0011234)
+  const displayReceiptNo = receiptNo ? receiptNo.split('-').pop() : receiptNo
 
   const dateObj = new Date(date)
   const dateStr = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -267,7 +346,7 @@ export function A4InvoiceContent({ sale, businessInfo, receiptSettings }) {
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 22, fontWeight: 900, color: '#1a1a2e', textTransform: 'uppercase' }}>Invoice</div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#e63946', marginTop: 2 }}>{receiptNo}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#e63946', marginTop: 2 }}>{displayReceiptNo}</div>
           <div style={{ fontSize: 10, color: '#666', marginTop: 4 }}>{dateStr}<br />{timeStr}</div>
         </div>
       </div>
@@ -276,7 +355,7 @@ export function A4InvoiceContent({ sale, businessInfo, receiptSettings }) {
       <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
         <div style={{ flex: 1, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 6, padding: '8px 12px' }}>
           <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#999', marginBottom: 3 }}>Invoice #</div>
-          <div style={{ fontSize: 11, fontWeight: 700 }}>{receiptNo}</div>
+          <div style={{ fontSize: 11, fontWeight: 700 }}>{displayReceiptNo}</div>
         </div>
         <div style={{ flex: 1, background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: 6, padding: '8px 12px' }}>
           <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#999', marginBottom: 3 }}>Date</div>
@@ -407,6 +486,9 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
 
   if (!sale) return null
 
+  // Extract just the number part from receipt number (e.g., INV-260629-0011234 -> 0011234)
+  const displayReceiptNo = sale.receiptNo ? sale.receiptNo.split('-').pop() : sale.receiptNo
+
   const isElectronics = String(sale.source || sale.activeModule || '').toLowerCase() === 'electronics'
 
   // Derived from stored settings — forwarded to main.js via IPC
@@ -489,8 +571,10 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
     const content = el.innerHTML
 
     if (paymentMode === 'card') {
-      await printReceiptHTML(`${title} - Customer Copy`, `${buildCopyHeader('Customer Copy')}${content}`, printOpts)
-      await printReceiptHTML(`${title} - Shop Copy`, `${buildCopyHeader('Shop Copy')}${content}`, printOpts)
+      const numCopies = receiptSettings?.printCopies || 1
+      for (let i = 0; i < numCopies; i++) {
+        await printReceiptHTML(`${title} - Copy ${i + 1}`, `${buildCopyHeader(`Copy ${i + 1}`)}${content}`, printOpts)
+      }
       return
     }
 
@@ -547,7 +631,7 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
             </div>
             <div>
               <h2 className="font-bold text-gray-900" style={{ fontSize: 15 }}>{typeLabel}</h2>
-              <p className="text-xs text-gray-500">{sale.receiptNo}</p>
+              <p className="text-xs text-gray-500">{displayReceiptNo}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -614,7 +698,7 @@ export default function ReceiptModal({ sale, businessInfo, onClose, title = 'Rec
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-white transition-all hover:opacity-90"
             style={{ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)` }}
           >
-            {isElectronics ? <FileText size={16} /> : <Printer size={16} />} {isElectronics ? 'Print A4 Invoice' : String(sale?.paymentMethod || '').toLowerCase() === 'card' ? 'Print 2 Copies' : tr('rect_print')}
+            {isElectronics ? <FileText size={16} /> : <Printer size={16} />} {isElectronics ? 'Print A4 Invoice' : String(sale?.paymentMethod || '').toLowerCase() === 'card' ? `Print ${receiptSettings?.printCopies || 1} Copy${receiptSettings?.printCopies === 1 ? '' : 'ies'}` : tr('rect_print')}
           </button>
           <button
             onClick={onClose}

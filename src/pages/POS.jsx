@@ -1136,9 +1136,12 @@ export default function POS() {
 
         if (method === 'card') {
           try {
-            await printReceiptHTML('Receipt - Customer Copy', `${copyHeader('Customer Copy')}${content}`, printOpts)
-            await sleep(250)
-            await printReceiptHTML('Receipt - Shop Copy', `${copyHeader('Shop Copy')}${content}`, printOpts)
+            const { receiptSettings } = useAppStore.getState()
+            const numCopies = receiptSettings?.printCopies || 1
+            for (let i = 0; i < numCopies; i++) {
+              if (i > 0) await sleep(250)
+              await printReceiptHTML(`Receipt - Copy ${i + 1}`, `${copyHeader(`Copy ${i + 1}`)}${content}`, printOpts)
+            }
           } catch (e) {
             console.error('[POS] Failed to print copies for card payment', e)
           }

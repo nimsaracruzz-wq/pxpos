@@ -124,6 +124,220 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS sales (
+    id TEXT PRIMARY KEY,
+    receipt_no TEXT,
+    date TEXT,
+    subtotal REAL DEFAULT 0,
+    discount REAL DEFAULT 0,
+    tax REAL DEFAULT 0,
+    service_charge REAL DEFAULT 0,
+    total REAL DEFAULT 0,
+    payment_method TEXT,
+    payment_ref TEXT,
+    change_amount REAL DEFAULT 0,
+    status TEXT DEFAULT 'completed',
+    source TEXT DEFAULT 'grocery',
+    cashier TEXT,
+    customer_id TEXT,
+    note TEXT,
+    is_refunded INTEGER DEFAULT 0,
+    refund_of TEXT,
+    refund_reason TEXT,
+    original_receipt_no TEXT,
+    items_json TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS customers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone TEXT,
+    email TEXT,
+    total_purchases REAL DEFAULT 0,
+    credit REAL DEFAULT 0,
+    type TEXT DEFAULT 'retail',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS restaurant_tables (
+    id TEXT PRIMARY KEY,
+    number INTEGER,
+    seats INTEGER DEFAULT 4,
+    status TEXT DEFAULT 'available',
+    order_json TEXT,
+    waiter TEXT,
+    qr_token TEXT,
+    session_id TEXT,
+    guests INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS kots (
+    id TEXT PRIMARY KEY,
+    table_id TEXT,
+    table_number INTEGER,
+    items_json TEXT,
+    status TEXT DEFAULT 'pending',
+    time TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS recipes (
+    dish_id TEXT PRIMARY KEY,
+    ingredients_json TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS el_products (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    brand TEXT,
+    category TEXT,
+    barcode TEXT,
+    cost REAL DEFAULT 0,
+    price REAL DEFAULT 0,
+    warranty_months INTEGER DEFAULT 0,
+    unit TEXT DEFAULT 'pcs',
+    active INTEGER DEFAULT 1,
+    created_at TEXT,
+    updated_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS el_serials (
+    id TEXT PRIMARY KEY,
+    product_id TEXT,
+    serial TEXT,
+    imei TEXT,
+    status TEXT DEFAULT 'in_stock',
+    supplier_id TEXT,
+    grn_id TEXT,
+    sold_at TEXT,
+    sale_id TEXT,
+    customer_id TEXT,
+    created_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS el_suppliers (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    contact TEXT,
+    email TEXT,
+    address TEXT,
+    created_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS el_grns (
+    id TEXT PRIMARY KEY,
+    supplier_id TEXT,
+    date TEXT,
+    invoice_no TEXT,
+    items_json TEXT,
+    status TEXT DEFAULT 'received',
+    notes TEXT,
+    created_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS el_sales (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT,
+    date TEXT,
+    items_json TEXT,
+    total REAL DEFAULT 0,
+    status TEXT DEFAULT 'completed',
+    receipt_no TEXT,
+    created_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS repair_jobs (
+    id TEXT PRIMARY KEY,
+    job_no TEXT,
+    customer_id TEXT,
+    device_info TEXT,
+    problem TEXT,
+    status TEXT DEFAULT 'received',
+    estimated_cost REAL DEFAULT 0,
+    final_cost REAL DEFAULT 0,
+    received_date TEXT,
+    completed_date TEXT,
+    notified INTEGER DEFAULT 0,
+    job_type TEXT DEFAULT 'custom',
+    notes TEXT,
+    created_at TEXT,
+    updated_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS el_customers (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    phone TEXT,
+    email TEXT,
+    address TEXT,
+    created_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS warranties (
+    id TEXT PRIMARY KEY,
+    sale_id TEXT,
+    serial_id TEXT,
+    product_id TEXT,
+    product_name TEXT,
+    serial TEXT,
+    imei TEXT,
+    customer_id TEXT,
+    warranty_months INTEGER DEFAULT 0,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS warranty_claims (
+    id TEXT PRIMARY KEY,
+    warranty_id TEXT,
+    sale_id TEXT,
+    customer_id TEXT,
+    description TEXT,
+    status TEXT DEFAULT 'open',
+    claimed_at TEXT,
+    resolved_at TEXT,
+    created_at TEXT,
+    updated_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS grns (
+    id TEXT PRIMARY KEY,
+    data_json TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS ledger_entries (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT,
+    type TEXT,
+    amount REAL DEFAULT 0,
+    balance REAL DEFAULT 0,
+    description TEXT,
+    ref TEXT,
+    date TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS activity_logs (
+    id TEXT PRIMARY KEY,
+    action TEXT,
+    details TEXT,
+    user_name TEXT,
+    date TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // ─── Seed default users if table is empty ───────────────────────────────────
@@ -182,13 +396,24 @@ ipcMain.handle('users-get-all', () => {
   `).all().map(u => ({ ...u, active: u.active === 1 }));
 });
 
+function generateSecureBarcode(id, role) {
+  // Extract first 2-3 characters from UUID (after removing dashes) and convert to lowercase
+  // Format: USER-{role}-{shortId}
+  // Examples: USER-manager-u3, USER-staff-a7, USER-admin-b2
+  const shortId = String(id).replace(/-/g, '').substring(0, 2).toLowerCase();
+  const roleStr = String(role || 'staff').toLowerCase();
+  return `USER-${roleStr}-${shortId}`;
+}
+
 // Add user
 ipcMain.handle('users-add', (event, { id, username, password, barcode, role, name }) => {
   try {
+    // Auto-generate simple barcode if not provided
+    const generatedBarcode = barcode || generateSecureBarcode(id, role)
     db.prepare(`
       INSERT INTO system_users (id, username, password_hash, barcode, role, name)
       VALUES (@id, @username, @password_hash, @barcode, @role, @name)
-    `).run({ id, username, password_hash: hashPassword(password), barcode: normalizeBarcodeValue(barcode) || null, role, name });
+    `).run({ id, username, password_hash: hashPassword(password), barcode: normalizeBarcodeValue(generatedBarcode) || null, role, name });
     return { success: true };
   } catch (e) {
     if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') return { success: false, error: 'Username or barcode already exists' };
@@ -338,19 +563,524 @@ ipcMain.handle('delete-product', (event, id) => {
   stmt.run({ id });
 });
 
-// Clear business transactional product data when switching to a different license key.
+// ─── Sales IPC Handlers ─────────────────────────────────────────────────────
+ipcMain.handle('get-sales', () => {
+  return db.prepare('SELECT * FROM sales ORDER BY created_at DESC').all().map(s => ({
+    ...s,
+    is_refunded: s.is_refunded === 1,
+    cartItems: (() => { try { return JSON.parse(s.items_json || '[]') } catch(_) { return [] } })(),
+    items_detail: (() => { try { return JSON.parse(s.items_json || '[]') } catch(_) { return [] } })(),
+  }));
+});
+
+ipcMain.handle('add-sale', (event, sale) => {
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO sales (
+        id, receipt_no, date, subtotal, discount, tax, service_charge, total,
+        payment_method, payment_ref, change_amount, status, source, cashier,
+        customer_id, note, is_refunded, refund_of, refund_reason, original_receipt_no,
+        items_json, created_at
+      ) VALUES (
+        @id, @receipt_no, @date, @subtotal, @discount, @tax, @service_charge, @total,
+        @payment_method, @payment_ref, @change_amount, @status, @source, @cashier,
+        @customer_id, @note, @is_refunded, @refund_of, @refund_reason, @original_receipt_no,
+        @items_json, @created_at
+      ) ON CONFLICT(id) DO UPDATE SET
+        status         = excluded.status,
+        is_refunded    = excluded.is_refunded,
+        refund_of      = excluded.refund_of,
+        refund_reason  = excluded.refund_reason,
+        payment_ref    = excluded.payment_ref
+    `);
+    const cartItems = Array.isArray(sale.cartItems) ? sale.cartItems
+      : Array.isArray(sale.items_detail) ? sale.items_detail : [];
+    stmt.run({
+      id:                  String(sale.id || ''),
+      receipt_no:          String(sale.receiptNo || ''),
+      date:                sale.date ? new Date(sale.date).toISOString() : new Date().toISOString(),
+      subtotal:            Number(sale.subtotal || 0),
+      discount:            Number(sale.discount || 0),
+      tax:                 Number(sale.tax || 0),
+      service_charge:      Number(sale.serviceCharge || 0),
+      total:               Number(sale.total || 0),
+      payment_method:      String(sale.paymentMethod || 'cash'),
+      payment_ref:         sale.paymentRef || null,
+      change_amount:       Number(sale.change || 0),
+      status:              String(sale.status || 'completed'),
+      source:              String(sale.source || 'grocery'),
+      cashier:             sale.cashier || null,
+      customer_id:         sale.customerId || null,
+      note:                sale.note || null,
+      is_refunded:         sale.isRefunded ? 1 : 0,
+      refund_of:           sale.refundOf || null,
+      refund_reason:       sale.refundReason || null,
+      original_receipt_no: sale.originalReceiptNo || null,
+      items_json:          JSON.stringify(cartItems),
+      created_at:          sale.date ? new Date(sale.date).toISOString() : new Date().toISOString(),
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('update-sale', (event, id, updates) => {
+  try {
+    const allowed = ['status', 'is_refunded', 'refund_of', 'refund_reason', 'payment_ref'];
+    const fields = [];
+    const params = { id };
+    allowed.forEach(k => {
+      if (updates[k] !== undefined) {
+        fields.push(`${k} = @${k}`);
+        params[k] = k === 'is_refunded' ? (updates[k] ? 1 : 0) : updates[k];
+      }
+    });
+    // Also allow camelCase keys from the store
+    if (updates.isRefunded !== undefined)   { fields.push('is_refunded = @is_refunded');   params.is_refunded   = updates.isRefunded ? 1 : 0; }
+    if (updates.refundOf !== undefined)     { fields.push('refund_of = @refund_of');       params.refund_of     = updates.refundOf || null; }
+    if (updates.refundReason !== undefined) { fields.push('refund_reason = @refund_reason'); params.refund_reason = updates.refundReason || null; }
+    if (updates.paymentRef !== undefined)   { fields.push('payment_ref = @payment_ref');   params.payment_ref   = updates.paymentRef || null; }
+    if (updates.paymentStatus !== undefined){ fields.push('status = @status');             params.status        = updates.paymentStatus || updates.status || 'completed'; }
+    if (!fields.length) return { success: true };
+    db.prepare(`UPDATE sales SET ${fields.join(', ')} WHERE id = @id`).run(params);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ─── Customer IPC Handlers ───────────────────────────────────────────────────
+ipcMain.handle('get-customers', () => {
+  return db.prepare('SELECT * FROM customers ORDER BY name ASC').all().map(c => ({
+    id:             c.id,
+    name:           c.name,
+    phone:          c.phone || '',
+    email:          c.email || '',
+    totalPurchases: c.total_purchases || 0,
+    credit:         c.credit || 0,
+    type:           c.type || 'retail',
+  }));
+});
+
+ipcMain.handle('add-customer', (event, customer) => {
+  try {
+    db.prepare(`
+      INSERT INTO customers (id, name, phone, email, total_purchases, credit, type)
+      VALUES (@id, @name, @phone, @email, @total_purchases, @credit, @type)
+      ON CONFLICT(id) DO UPDATE SET
+        name            = excluded.name,
+        phone           = excluded.phone,
+        email           = excluded.email,
+        total_purchases = excluded.total_purchases,
+        credit          = excluded.credit,
+        type            = excluded.type
+    `).run({
+      id:             String(customer.id || ''),
+      name:           String(customer.name || ''),
+      phone:          customer.phone || null,
+      email:          customer.email || null,
+      total_purchases: Number(customer.totalPurchases || 0),
+      credit:         Number(customer.credit || 0),
+      type:           String(customer.type || 'retail'),
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('update-customer', (event, id, updates) => {
+  try {
+    const colMap = {
+      name: 'name', phone: 'phone', email: 'email',
+      totalPurchases: 'total_purchases', credit: 'credit', type: 'type',
+    };
+    const fields = [];
+    const params = { id };
+    Object.entries(updates).forEach(([k, v]) => {
+      const col = colMap[k]
+      if (col) { fields.push(`${col} = @${col}`); params[col] = v; }
+    });
+    if (!fields.length) return { success: true };
+    db.prepare(`UPDATE customers SET ${fields.join(', ')} WHERE id = @id`).run(params);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('delete-customer', (event, id) => {
+  try {
+    db.prepare('DELETE FROM customers WHERE id = @id').run({ id });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ─── Restaurant Tables & KOT IPC Handlers ─────────────────────────────────────────────────
+ipcMain.handle('get-tables', () => {
+  return db.prepare('SELECT * FROM restaurant_tables ORDER BY number ASC').all().map(t => ({
+    id: t.id, number: t.number, seats: t.seats, status: t.status,
+    order: t.order_json ? JSON.parse(t.order_json) : null,
+    waiter: t.waiter, qrToken: t.qr_token, sessionId: t.session_id, guests: t.guests || 0,
+  }))
+})
+
+ipcMain.handle('upsert-table', (event, table) => {
+  try {
+    db.prepare(`
+      INSERT INTO restaurant_tables (id, number, seats, status, order_json, waiter, qr_token, session_id, guests, updated_at)
+      VALUES (@id, @number, @seats, @status, @order_json, @waiter, @qr_token, @session_id, @guests, @updated_at)
+      ON CONFLICT(id) DO UPDATE SET
+        number = excluded.number, seats = excluded.seats, status = excluded.status,
+        order_json = excluded.order_json, waiter = excluded.waiter, qr_token = excluded.qr_token,
+        session_id = excluded.session_id, guests = excluded.guests, updated_at = excluded.updated_at
+    `).run({
+      id: String(table.id || ''), number: Number(table.number || 0), seats: Number(table.seats || 4),
+      status: String(table.status || 'available'),
+      order_json: table.order ? JSON.stringify(table.order) : null,
+      waiter: table.waiter || null, qr_token: table.qrToken || null,
+      session_id: table.sessionId || null, guests: Number(table.guests || 0),
+      updated_at: new Date().toISOString(),
+    })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('delete-table', (event, id) => {
+  try {
+    db.prepare('DELETE FROM restaurant_tables WHERE id = @id').run({ id })
+    db.prepare('DELETE FROM kots WHERE table_id = @id').run({ id })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('get-kots', () => {
+  return db.prepare('SELECT * FROM kots ORDER BY created_at DESC').all().map(k => ({
+    id: k.id, tableId: k.table_id, tableNumber: k.table_number, status: k.status, time: k.time,
+    items: k.items_json ? JSON.parse(k.items_json) : [],
+  }))
+})
+
+ipcMain.handle('add-kot', (event, kot) => {
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO kots (id, table_id, table_number, items_json, status, time, created_at)
+      VALUES (@id, @table_id, @table_number, @items_json, @status, @time, @created_at)
+    `).run({
+      id: String(kot.id || ''), table_id: kot.tableId || null, table_number: Number(kot.tableNumber || 0),
+      items_json: JSON.stringify(kot.items || []), status: String(kot.status || 'pending'),
+      time: kot.time ? new Date(kot.time).toISOString() : new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('update-kot-status', (event, id, status) => {
+  try {
+    db.prepare('UPDATE kots SET status = ? WHERE id = ?').run(status, id)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('clear-kots-for-table', (event, tableId) => {
+  try {
+    db.prepare('DELETE FROM kots WHERE table_id = ?').run(tableId)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ─── Recipes IPC Handlers ──────────────────────────────────────────────────────────────
+ipcMain.handle('get-recipes', () => {
+  const rows = db.prepare('SELECT * FROM recipes').all()
+  const map = {}
+  rows.forEach(r => { map[r.dish_id] = r.ingredients_json ? JSON.parse(r.ingredients_json) : [] })
+  return map
+})
+
+ipcMain.handle('set-recipe', (event, dishId, ingredients) => {
+  try {
+    db.prepare(`
+      INSERT INTO recipes (dish_id, ingredients_json, updated_at)
+      VALUES (@dish_id, @ingredients_json, @updated_at)
+      ON CONFLICT(dish_id) DO UPDATE SET ingredients_json = excluded.ingredients_json, updated_at = excluded.updated_at
+    `).run({ dish_id: String(dishId), ingredients_json: JSON.stringify(ingredients || []), updated_at: new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('delete-recipe', (event, dishId) => {
+  try {
+    db.prepare('DELETE FROM recipes WHERE dish_id = ?').run(dishId)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ─── Electronics IPC Handlers ──────────────────────────────────────────────────────
+ipcMain.handle('el-get-products', () => db.prepare('SELECT * FROM el_products ORDER BY name ASC').all().map(p => ({ ...p, active: p.active === 1 })))
+
+ipcMain.handle('el-upsert-product', (event, p) => {
+  try {
+    db.prepare(`
+      INSERT INTO el_products (id, name, brand, category, barcode, cost, price, warranty_months, unit, active, created_at, updated_at)
+      VALUES (@id,@name,@brand,@category,@barcode,@cost,@price,@warranty_months,@unit,@active,@created_at,@updated_at)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, brand=excluded.brand, category=excluded.category,
+        barcode=excluded.barcode, cost=excluded.cost, price=excluded.price, warranty_months=excluded.warranty_months,
+        unit=excluded.unit, active=excluded.active, updated_at=excluded.updated_at
+    `).run({ id:String(p.id||''), name:String(p.name||''), brand:p.brand||null, category:p.category||null,
+      barcode:p.barcode||null, cost:Number(p.cost||0), price:Number(p.price||0),
+      warranty_months:Number(p.warrantyMonths||0), unit:p.unit||'pcs', active:p.active!==false?1:0,
+      created_at:p.createdAt||new Date().toISOString(), updated_at:new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-delete-product', (event, id) => {
+  try { db.prepare('DELETE FROM el_products WHERE id=?').run(id); return { success: true } }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-serials', () => db.prepare('SELECT * FROM el_serials ORDER BY created_at DESC').all())
+
+ipcMain.handle('el-add-serial', (event, s) => {
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO el_serials (id, product_id, serial, imei, status, supplier_id, grn_id, sold_at, sale_id, customer_id, created_at)
+      VALUES (@id,@product_id,@serial,@imei,@status,@supplier_id,@grn_id,@sold_at,@sale_id,@customer_id,@created_at)
+    `).run({ id:String(s.id||''), product_id:s.productId||null, serial:s.serial||null, imei:s.imei||null,
+      status:s.status||'in_stock', supplier_id:s.supplierId||null, grn_id:s.grnId||null,
+      sold_at:s.soldAt||null, sale_id:s.saleId||null, customer_id:s.customerId||null,
+      created_at:s.createdAt||new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-update-serial', (event, id, updates) => {
+  try {
+    const colMap = { status:'status', soldAt:'sold_at', saleId:'sale_id', customerId:'customer_id', grnId:'grn_id' }
+    const fields = []; const params = { id }
+    Object.entries(updates).forEach(([k,v]) => { const col=colMap[k]; if(col){ fields.push(`${col}=@${col}`); params[col]=v } })
+    if (!fields.length) return { success: true }
+    db.prepare(`UPDATE el_serials SET ${fields.join(',')} WHERE id=@id`).run(params)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-suppliers', () => db.prepare('SELECT * FROM el_suppliers ORDER BY name ASC').all())
+
+ipcMain.handle('el-upsert-supplier', (event, s) => {
+  try {
+    db.prepare(`INSERT INTO el_suppliers (id,name,contact,email,address,created_at) VALUES (@id,@name,@contact,@email,@address,@created_at)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name,contact=excluded.contact,email=excluded.email,address=excluded.address
+    `).run({ id:String(s.id||''), name:s.name||'', contact:s.contact||null, email:s.email||null, address:s.address||null, created_at:s.createdAt||new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-delete-supplier', (event, id) => {
+  try { db.prepare('DELETE FROM el_suppliers WHERE id=?').run(id); return { success: true } }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-grns', () => db.prepare('SELECT * FROM el_grns ORDER BY created_at DESC').all().map(g => ({ ...g, items: g.items_json ? JSON.parse(g.items_json) : [] })))
+
+ipcMain.handle('el-add-grn', (event, g) => {
+  try {
+    db.prepare(`INSERT OR IGNORE INTO el_grns (id,supplier_id,date,invoice_no,items_json,status,notes,created_at)
+      VALUES (@id,@supplier_id,@date,@invoice_no,@items_json,@status,@notes,@created_at)
+    `).run({ id:String(g.id||''), supplier_id:g.supplierId||null, date:g.date||new Date().toISOString(),
+      invoice_no:g.invoiceNo||null, items_json:JSON.stringify(g.items||[]), status:g.status||'received',
+      notes:g.notes||null, created_at:g.createdAt||new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-sales', () => db.prepare('SELECT * FROM el_sales ORDER BY created_at DESC').all().map(s => ({ ...s, items: s.items_json ? JSON.parse(s.items_json) : [] })))
+
+ipcMain.handle('el-add-sale', (event, s) => {
+  try {
+    db.prepare(`INSERT OR IGNORE INTO el_sales (id,customer_id,date,items_json,total,status,receipt_no,created_at)
+      VALUES (@id,@customer_id,@date,@items_json,@total,@status,@receipt_no,@created_at)
+    `).run({ id:String(s.id||''), customer_id:s.customerId||null, date:s.date||new Date().toISOString(),
+      items_json:JSON.stringify(s.items||[]), total:Number(s.total||0), status:s.status||'completed',
+      receipt_no:s.receiptNo||null, created_at:s.createdAt||new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-repair-jobs', () => db.prepare('SELECT * FROM repair_jobs ORDER BY created_at DESC').all().map(j => ({ ...j, notified: j.notified===1 })))
+
+ipcMain.handle('el-add-repair-job', (event, j) => {
+  try {
+    db.prepare(`INSERT OR IGNORE INTO repair_jobs (id,job_no,customer_id,device_info,problem,status,estimated_cost,final_cost,received_date,completed_date,notified,job_type,notes,created_at,updated_at)
+      VALUES (@id,@job_no,@customer_id,@device_info,@problem,@status,@estimated_cost,@final_cost,@received_date,@completed_date,@notified,@job_type,@notes,@created_at,@updated_at)
+    `).run({ id:String(j.id||''), job_no:j.jobNo||null, customer_id:j.customerId||null,
+      device_info:j.deviceInfo||null, problem:j.problem||null, status:j.status||'received',
+      estimated_cost:Number(j.estimatedCost||0), final_cost:Number(j.finalCost||0),
+      received_date:j.receivedDate||new Date().toISOString(), completed_date:j.completedDate||null,
+      notified:j.notified?1:0, job_type:j.jobType||'custom', notes:j.notes||null,
+      created_at:j.createdAt||new Date().toISOString(), updated_at:j.updatedAt||null })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-update-repair-job', (event, id, updates) => {
+  try {
+    const colMap = { status:'status', estimatedCost:'estimated_cost', finalCost:'final_cost',
+      completedDate:'completed_date', notified:'notified', notes:'notes', updatedAt:'updated_at' }
+    const fields = []; const params = { id }
+    Object.entries(updates).forEach(([k,v]) => { const col=colMap[k]; if(col){ fields.push(`${col}=@${col}`); params[col]=col==='notified'?(v?1:0):v } })
+    if (!fields.length) return { success: true }
+    db.prepare(`UPDATE repair_jobs SET ${fields.join(',')} WHERE id=@id`).run(params)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-delete-repair-job', (event, id) => {
+  try { db.prepare('DELETE FROM repair_jobs WHERE id=?').run(id); return { success: true } }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-customers', () => db.prepare('SELECT * FROM el_customers ORDER BY name ASC').all())
+
+ipcMain.handle('el-upsert-customer', (event, c) => {
+  try {
+    db.prepare(`INSERT INTO el_customers (id,name,phone,email,address,created_at) VALUES (@id,@name,@phone,@email,@address,@created_at)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=excluded.phone,email=excluded.email,address=excluded.address
+    `).run({ id:String(c.id||''), name:c.name||'', phone:c.phone||null, email:c.email||null, address:c.address||null, created_at:c.createdAt||new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-delete-customer', (event, id) => {
+  try { db.prepare('DELETE FROM el_customers WHERE id=?').run(id); return { success: true } }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-warranties', () => db.prepare('SELECT * FROM warranties ORDER BY created_at DESC').all())
+
+ipcMain.handle('el-add-warranty', (event, w) => {
+  try {
+    db.prepare(`INSERT OR IGNORE INTO warranties (id,sale_id,serial_id,product_id,product_name,serial,imei,customer_id,warranty_months,start_date,end_date,status,created_at)
+      VALUES (@id,@sale_id,@serial_id,@product_id,@product_name,@serial,@imei,@customer_id,@warranty_months,@start_date,@end_date,@status,@created_at)
+    `).run({ id:String(w.id||''), sale_id:w.saleId||null, serial_id:w.serialId||null, product_id:w.productId||null,
+      product_name:w.productName||null, serial:w.serial||null, imei:w.imei||null, customer_id:w.customerId||null,
+      warranty_months:Number(w.warrantyMonths||0), start_date:w.startDate||null, end_date:w.endDate||null,
+      status:w.status||'active', created_at:w.createdAt||new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-get-warranty-claims', () => db.prepare('SELECT * FROM warranty_claims ORDER BY created_at DESC').all())
+
+ipcMain.handle('el-add-warranty-claim', (event, c) => {
+  try {
+    db.prepare(`INSERT OR IGNORE INTO warranty_claims (id,warranty_id,sale_id,customer_id,description,status,claimed_at,resolved_at,created_at,updated_at)
+      VALUES (@id,@warranty_id,@sale_id,@customer_id,@description,@status,@claimed_at,@resolved_at,@created_at,@updated_at)
+    `).run({ id:String(c.id||''), warranty_id:c.warrantyId||null, sale_id:c.saleId||null, customer_id:c.customerId||null,
+      description:c.description||null, status:c.status||'open', claimed_at:c.claimedAt||new Date().toISOString(),
+      resolved_at:c.resolvedAt||null, created_at:c.createdAt||new Date().toISOString(), updated_at:c.updatedAt||null })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-update-warranty-claim', (event, id, updates) => {
+  try {
+    const colMap = { status:'status', resolvedAt:'resolved_at', updatedAt:'updated_at' }
+    const fields = []; const params = { id }
+    Object.entries(updates).forEach(([k,v]) => { const col=colMap[k]; if(col){ fields.push(`${col}=@${col}`); params[col]=v } })
+    if (!fields.length) return { success: true }
+    db.prepare(`UPDATE warranty_claims SET ${fields.join(',')} WHERE id=@id`).run(params)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('el-delete-warranty-claim', (event, id) => {
+  try { db.prepare('DELETE FROM warranty_claims WHERE id=?').run(id); return { success: true } }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+// ─── GRN IPC Handlers ────────────────────────────────────────────────────────────
+ipcMain.handle('grn-get-all', () => db.prepare('SELECT * FROM grns ORDER BY created_at DESC').all().map(g => g.data_json ? JSON.parse(g.data_json) : {}))
+
+ipcMain.handle('grn-add', (event, grn) => {
+  try {
+    db.prepare('INSERT OR IGNORE INTO grns (id, data_json, created_at) VALUES (@id, @data_json, @created_at)')
+      .run({ id: String(grn.id||''), data_json: JSON.stringify(grn), created_at: grn.date||new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ─── Ledger IPC Handlers ──────────────────────────────────────────────────────────
+ipcMain.handle('ledger-get-all', () => db.prepare('SELECT * FROM ledger_entries ORDER BY date DESC').all().map(e => ({
+  id:e.id, customerId:e.customer_id, type:e.type, amount:e.amount, balance:e.balance,
+  description:e.description, ref:e.ref, date:e.date,
+})))
+
+ipcMain.handle('ledger-add-entry', (event, entry) => {
+  try {
+    db.prepare(`INSERT OR IGNORE INTO ledger_entries (id,customer_id,type,amount,balance,description,ref,date,created_at)
+      VALUES (@id,@customer_id,@type,@amount,@balance,@description,@ref,@date,@created_at)
+    `).run({ id:String(entry.id||''), customer_id:entry.customerId||null, type:entry.type||'purchase',
+      amount:Number(entry.amount||0), balance:Number(entry.balance||0), description:entry.description||null,
+      ref:entry.ref||null, date:entry.date?new Date(entry.date).toISOString():new Date().toISOString(),
+      created_at:new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ─── Activity Logs IPC Handlers ───────────────────────────────────────────────────
+ipcMain.handle('logs-get-all', () => db.prepare('SELECT * FROM activity_logs ORDER BY date DESC LIMIT 500').all().map(l => ({
+  id:l.id, action:l.action, details:l.details, user:l.user_name, date:l.date,
+})))
+
+ipcMain.handle('logs-add', (event, log) => {
+  try {
+    db.prepare(`INSERT OR IGNORE INTO activity_logs (id,action,details,user_name,date,created_at)
+      VALUES (@id,@action,@details,@user_name,@date,@created_at)
+    `).run({ id:String(log.id||''), action:log.action||'', details:log.details||'',
+      user_name:log.user||'System', date:log.date?new Date(log.date).toISOString():new Date().toISOString(),
+      created_at:new Date().toISOString() })
+    // Keep table trimmed to 500 most recent logs
+    db.prepare('DELETE FROM activity_logs WHERE id NOT IN (SELECT id FROM activity_logs ORDER BY date DESC LIMIT 500)').run()
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ─── App Settings IPC Handlers ──────────────────────────────────────────────────
+ipcMain.handle('settings-save', (event, key, value) => {
+  try {
+    db.prepare(`INSERT INTO app_settings (key, value_json, updated_at) VALUES (@key, @value_json, @updated_at)
+      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+    `).run({ key: String(key), value_json: JSON.stringify(value), updated_at: new Date().toISOString() })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('settings-get', (event, key) => {
+  try {
+    const row = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get(key)
+    return row ? JSON.parse(row.value_json) : null
+  } catch (e) { return null }
+})
+
+// ─── Reset all business data (license switch) ───────────────────────────────────────
 ipcMain.handle('reset-business-data', () => {
   const transaction = db.transaction(() => {
-    db.prepare('DELETE FROM product_batches').run();
-    db.prepare('DELETE FROM products').run();
-  });
-
-  try {
-    transaction();
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error?.message || 'Failed to reset local business data' };
-  }
+    const tables = [
+      'product_batches','products','sales','customers',
+      'restaurant_tables','kots','recipes',
+      'el_products','el_serials','el_suppliers','el_grns','el_sales',
+      'repair_jobs','el_customers','warranties','warranty_claims',
+      'grns','ledger_entries','activity_logs',
+    ]
+    tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run())
+  })
+  try { transaction(); return { success: true } }
+  catch (error) { return { success: false, error: error?.message || 'Failed to reset local business data' } }
 });
 
 // ─── Local App Snapshot Backup (Electron userData) ──────────────────────────
@@ -788,20 +1518,26 @@ function attachWindowDiagnostics(win, label) {
 }
 
 function createWindow() {
+  const iconPath = path.join(__dirname, '../dist/icon.png');
+  const iconExists = fs.existsSync(iconPath);
+
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     title: 'CeyPos POS',
-    icon: path.join(__dirname, '../dist/icon.png'),
+    ...(iconExists ? { icon: iconPath } : {}),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
   });
 
+  mainWindow.show();
+  mainWindow.focus();
+
   attachWindowDiagnostics(mainWindow, 'main');
 
-  const loadRenderer = async (retries = 30) => {
+  const loadRenderer = async (retries = 40) => {
     if (!app.isPackaged) {
       for (let i = 0; i < retries; i++) {
         try {
@@ -811,13 +1547,17 @@ function createWindow() {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
+      // Fallback: try one more time and surface error
+      await mainWindow.loadURL(DEV_SERVER_URL);
+      return;
     }
 
     await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   };
 
   loadRenderer().catch((err) => {
-    dialog.showErrorBox('Startup Error', `Unable to load app window. ${err.message}`);
+    console.error('[createWindow] loadRenderer failed:', err.message);
+    dialog.showErrorBox('Startup Error', `Unable to load app window.\n\n${err.message}`);
   });
 
   if (!app.isPackaged) {

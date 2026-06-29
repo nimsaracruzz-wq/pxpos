@@ -19,9 +19,9 @@ import { useEffect, useRef } from 'react'
  * 3. Dispatch the barcode event.
  */
 
-const MAX_KEY_GAP_MS = 75   // maximum gap between characters for scanner speed
+const MAX_KEY_GAP_MS = 100  // maximum gap between characters for scanner speed (increased for slower scanners)
 const MIN_LENGTH     = 3    // minimum barcode length
-const COOLDOWN_MS    = 1500 // ignore same barcode re-fire within this period
+const COOLDOWN_MS    = 800  // ignore same barcode re-fire within this period (reduced for faster re-scan)
 
 // ─── Module-level singleton ──────────────────────────────────────────────────
 let _globalInitialised = false

@@ -851,7 +851,7 @@ function TableManagerModal({ tables, onAdd, onEdit, onDelete, onClose }) {
 }
 
 // ─── Order Modal ───────────────────────────────────────────────────────────────
-function OrderModal({ table, onClose, onSettle, onCheckout }) {
+function OrderModal({ table, onClose, onSettle, onCheckout, onCancelCheckout }) {
   const { tables, updateTable, addKOT, transferTable, clearTable } = useTableStore()
   const { taxSettings, serviceChargeSettings, businessInfo, licenseKey } = useAppStore()
   const { products } = useProductStore()
@@ -1297,7 +1297,10 @@ function OrderModal({ table, onClose, onSettle, onCheckout }) {
         <SettleModal
           table={table}
           order={currentOrder.items.length ? currentOrder : (table.order || { items: [], waiter: '' })}
-          onClose={() => setShowSettle(false)}
+          onClose={() => {
+            setShowSettle(false)
+            if (typeof onCancelCheckout === 'function') onCancelCheckout()
+          }}
           onCheckout={onCheckout}
           onPaid={(paymentInfo) => {
             setShowSettle(false)
@@ -1637,7 +1640,14 @@ export default function Tables() {
   }, [])
 
   const openCustomerScreen = useCallback((payload) => {
-    setCustomerDisplay(payload)
+    const displaySettings = useAppStore.getState().customerDisplaySettings || {}
+    if (displaySettings.enabled === false) {
+      setCustomerDisplay(null)
+      return
+    }
+
+    const showOnPOS = displaySettings.showOnPOS !== false
+    if (showOnPOS) setCustomerDisplay(payload)
     publishCustomerDisplay(payload)
   }, [])
 
@@ -1971,7 +1981,10 @@ export default function Tables() {
       {selectedTable && (
         <OrderModal
           table={selectedTable}
-          onClose={() => setSelectedTable(null)}
+          onClose={() => {
+            setSelectedTable(null)
+            closeCustomerScreen()
+          }}
           onCheckout={(preview) => {
             openCustomerScreen({
               status: 'checkout',
@@ -1983,6 +1996,7 @@ export default function Tables() {
             })
           }}
           onSettle={handleSettle}
+          onCancelCheckout={closeCustomerScreen}
         />
       )}
 

@@ -177,7 +177,14 @@ export default function TakeOut() {
   }, [])
 
   const openCustomerScreen = useCallback((payload) => {
-    setCustomerDisplay(payload)
+    const displaySettings = useAppStore.getState().customerDisplaySettings || {}
+    if (displaySettings.enabled === false) {
+      setCustomerDisplay(null)
+      return
+    }
+
+    const showOnPOS = displaySettings.showOnPOS !== false
+    if (showOnPOS) setCustomerDisplay(payload)
     publishCustomerDisplay(payload)
   }, [])
 
@@ -421,7 +428,10 @@ export default function TakeOut() {
       {showPay && (
         <PayModal items={items} notes={notes} customerName={customerName} customerPhone={customerPhone}
           taxSettings={taxSettings}
-          onClose={() => setShowPay(false)}
+          onClose={() => {
+            setShowPay(false)
+            closeCustomerScreen()
+          }}
           onCheckout={(preview) => {
             openCustomerScreen({
               status: 'checkout',

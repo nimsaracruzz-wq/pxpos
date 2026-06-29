@@ -4,6 +4,7 @@ import { useSalesStore, useAuthStore, useActivityStore } from '@/store'
 import { formatCurrency } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { SearchInput } from '@/components/ui'
+import { useBarcodeScanner } from '@/lib/useBarcodeScanner'
 
 export default function Refunds() {
   const [receiptNo, setReceiptNo] = useState('')
@@ -15,6 +16,20 @@ export default function Refunds() {
   const refundSaleByReceiptNo = useSalesStore((state) => state.refundSaleByReceiptNo)
   const { currentUser } = useAuthStore()
   const toast = useToast()
+
+  // ── Barcode scanner: auto-fill receipt number when receipt barcode is scanned ──
+  // Accept receipt barcodes: starts with INV- or contains dashes with 8+ total chars
+  useBarcodeScanner((code) => {
+    const upper = String(code || '').toUpperCase().trim()
+    // Check if it looks like a receipt: INV-... format or long enough with dashes (not a short product barcode)
+    const startsWithINV = upper.startsWith('INV-')
+    const hasPattern = upper.includes('-') && upper.length >= 8
+    const isLongBarcode = upper.length >= 10 // Receipt numbers are typically long enough
+    
+    if (startsWithINV || hasPattern || isLongBarcode) {
+      setReceiptNo(upper)
+    }
+  })
 
   const sale = useMemo(() => findSaleByReceiptNo(receiptNo), [receiptNo, findSaleByReceiptNo])
   const cartItems = useMemo(() => (Array.isArray(sale?.cartItems) ? sale.cartItems : []), [sale])
@@ -196,7 +211,7 @@ export default function Refunds() {
               <SearchInput
                 value={receiptNo}
                 onChange={(e) => setReceiptNo(e.target.value.toUpperCase())}
-                placeholder="e.g. RCPT-20260414-0001"
+                placeholder="e.g. INV-260629-0001234"
                 icon={<ScanLine size={15} />}
                 inputProps={{ autoFocus: true }}
               />

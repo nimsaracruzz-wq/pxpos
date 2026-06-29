@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Printer, Search, Barcode, Check } from 'lucide-react'
+import BarcodeLib from 'react-barcode'
 import { SectionHeader, SearchInput } from '@/components/ui'
 
 export default function BarcodeLabels() {
@@ -67,18 +68,26 @@ export default function BarcodeLabels() {
           </div>
 
           <div className="bg-white m-auto p-8 rounded shadow-sm border border-gray-200 w-full max-w-2xl min-h-[500px]">
-            {/* Mock sticker sheet preview */}
+            {/* Real barcode label sticker preview */}
             <div className="grid grid-cols-3 gap-4">
               {selectedItems.slice(0, 1).map(item => (
                 Array.from({length: 6}).map((_, i) => (
-                  <div key={i} className="border border-dashed border-gray-300 p-3 flex flex-col items-center text-center">
+                  <div key={i} className="border border-dashed border-gray-300 p-2 flex flex-col items-center text-center">
                     <p className="text-[10px] font-bold text-gray-800 max-w-full truncate">{item.name}</p>
                     <p className="text-[9px] text-gray-500">{item.color} - Size: {item.size}</p>
-                    {/* Visual Barcode Bars */}
-                    <div className="flex justify-center h-8 my-1.5 opacity-80" style={{ width: '100%' }}>
-                      {Array.from({length: 24}).map((_, bi) => (
-                        <div key={bi} style={{ width: Math.random() > 0.5 ? 2 : 1, height: '100%', background: '#000', marginRight: 1 }} />
-                      ))}
+                    {/* Real scannable barcode via react-barcode */}
+                    <div className="my-1" style={{ transform: 'scale(0.65)', transformOrigin: 'center top' }}>
+                      <BarcodeLib
+                        value={item.barcode}
+                        format="CODE128"
+                        width={1.4}
+                        height={40}
+                        margin={4}
+                        fontSize={8}
+                        displayValue={false}
+                        background="#fff"
+                        lineColor="#000"
+                      />
                     </div>
                     <p className="font-mono text-[8px] tracking-widest">{item.barcode}</p>
                     <p className="text-xs font-black mt-1">Rs. {item.price.toLocaleString()}</p>
@@ -95,4 +104,3 @@ export default function BarcodeLabels() {
     </div>
   )
 }
-

@@ -264,18 +264,19 @@ export async function pullFromCloud() {
       useAuthStore.setState({ users: collections.users })
     }
 
-    // Populate Electronics Store
-    useElectronicsStore.setState({
-      elProducts: collections.electronics_products || [],
-      serials: collections.electronics_serials || [],
-      elSuppliers: collections.electronics_suppliers || [],
-      elGRNs: collections.electronics_grns || [],
-      elSales: collections.electronics_sales || [],
-      repairJobs: collections.electronics_repair_jobs || [],
-      elCustomers: collections.electronics_customers || [],
-      warranties: collections.electronics_warranties || [],
-      warrantyClaims: collections.electronics_warranty_claims || [],
-    })
+    // Populate Electronics Store — only update fields that the cloud actually returned.
+    // Never overwrite local data with empty arrays just because the cloud has no record yet.
+    const elUpdate = {}
+    if (collections.electronics_products)       elUpdate.elProducts      = collections.electronics_products
+    if (collections.electronics_serials)        elUpdate.serials         = collections.electronics_serials
+    if (collections.electronics_suppliers)      elUpdate.elSuppliers     = collections.electronics_suppliers
+    if (collections.electronics_grns)           elUpdate.elGRNs          = collections.electronics_grns
+    if (collections.electronics_sales)          elUpdate.elSales         = collections.electronics_sales
+    if (collections.electronics_repair_jobs)    elUpdate.repairJobs      = collections.electronics_repair_jobs
+    if (collections.electronics_customers)      elUpdate.elCustomers     = collections.electronics_customers
+    if (collections.electronics_warranties)     elUpdate.warranties      = collections.electronics_warranties
+    if (collections.electronics_warranty_claims) elUpdate.warrantyClaims = collections.electronics_warranty_claims
+    if (Object.keys(elUpdate).length > 0) useElectronicsStore.setState(elUpdate)
 
     // Populate GRNs and Ledger
     if (collections.grns) {

@@ -41,7 +41,7 @@ export default function App() {
   const { licenseActive, licenseKey, theme, customerDisplaySettings } = useAppStore()
   const [checking, setChecking]              = useState(() => IS_DEMO ? false : !useAppStore.getState()?.licenseActive)
   const [initialCloudHydration, setInitialCloudHydration] = useState(false)
-  const [storeHydrated, setStoreHydrated] = useState(() => IS_DEMO ? true : (useAppStore.persist?.hasHydrated?.() ?? true))
+  const [storeHydrated, setStoreHydrated] = useState(() => IS_DEMO ? true : ((useAppStore.persist?.hasHydrated?.() ?? true) && (useAuthStore.persist?.hasHydrated?.() ?? true)))
   const hydratedLicenseRef = useRef('')
 
   const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
@@ -126,15 +126,32 @@ export default function App() {
   }, [customerDisplaySettings?.enabled, isCustomerDisplayRoute, isPublicMenuRoute, isAdminPortalRoute])
 
   useEffect(() => {
-    if (!useAppStore.persist) return () => {}
-    const maybeUnsub = useAppStore.persist.onFinishHydration(() => {
-      setStoreHydrated(true)
+    if (!useAppStore.persist || !useAuthStore.persist) return () => {}
+    
+    let appReady = useAppStore.persist.hasHydrated()
+    let authReady = useAuthStore.persist.hasHydrated()
+
+    const checkHydration = () => {
+      if (appReady && authReady) setStoreHydrated(true)
+    }
+
+    const unsubApp = useAppStore.persist.onFinishHydration(() => {
+      appReady = true
+      checkHydration()
     })
-    if (useAppStore.persist.hasHydrated()) {
+    
+    const unsubAuth = useAuthStore.persist.onFinishHydration(() => {
+      authReady = true
+      checkHydration()
+    })
+
+    if (appReady && authReady) {
       setStoreHydrated(true)
     }
+
     return () => {
-      if (typeof maybeUnsub === 'function') maybeUnsub()
+      if (typeof unsubApp === 'function') unsubApp()
+      if (typeof unsubAuth === 'function') unsubAuth()
     }
   }, [])
 

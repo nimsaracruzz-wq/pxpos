@@ -187,6 +187,9 @@ export const useAppStore = create(
         autoPrint: false,
         showCashier: true,
         logoUrl: null,
+        logoPrintUrl: null,
+        logoSize: 'medium',
+        printCopies: 1,
       },
       hardwareSettings: {
         barcodeScanner: true,
@@ -238,20 +241,43 @@ export const useAppStore = create(
       setActiveModule: (mod) => set({ activeModule: mod }),
       toggleModule: (mod) =>
         set((s) => ({ modules: { ...s.modules, [mod]: !s.modules[mod] } })),
-      updateBusinessInfo: (info) =>
-        set((s) => ({ businessInfo: ensureBusinessStoreId({ ...s.businessInfo, ...info, publicMenuBaseUrl: normalizePublicMenuBaseUrl(info?.publicMenuBaseUrl ?? s.businessInfo.publicMenuBaseUrl) }) })),
+      updateBusinessInfo: (info) => {
+        set((s) => ({ businessInfo: ensureBusinessStoreId({ ...s.businessInfo, ...info, publicMenuBaseUrl: normalizePublicMenuBaseUrl(info?.publicMenuBaseUrl ?? s.businessInfo.publicMenuBaseUrl) }) }))
+        if (typeof window !== 'undefined' && window.require) {
+          const next = useAppStore.getState().businessInfo
+          window.require('electron').ipcRenderer.invoke('settings-save', 'businessInfo', next).catch(() => {})
+        }
+      },
       updateTaxSettings: (t) => {
         set((s) => ({ taxSettings: { ...s.taxSettings, ...t } }))
+        if (typeof window !== 'undefined' && window.require) {
+          const next = useAppStore.getState().taxSettings
+          window.require('electron').ipcRenderer.invoke('settings-save', 'taxSettings', next).catch(() => {})
+        }
         import('@/lib/firebase').then(m => m.syncToCloud?.())
       },
       updateServiceChargeSettings: (sc) => {
         set((s) => ({ serviceChargeSettings: { ...s.serviceChargeSettings, ...sc } }))
+        if (typeof window !== 'undefined' && window.require) {
+          const next = useAppStore.getState().serviceChargeSettings
+          window.require('electron').ipcRenderer.invoke('settings-save', 'serviceChargeSettings', next).catch(() => {})
+        }
         import('@/lib/firebase').then(m => m.syncToCloud?.())
       },
-      updateReceiptSettings: (r) =>
-        set((s) => ({ receiptSettings: { ...s.receiptSettings, ...r } })),
-      updateHardwareSettings: (h) =>
-        set((s) => ({ hardwareSettings: { ...s.hardwareSettings, ...h } })),
+      updateReceiptSettings: (r) => {
+        set((s) => ({ receiptSettings: { ...s.receiptSettings, ...r } }))
+        if (typeof window !== 'undefined' && window.require) {
+          const next = useAppStore.getState().receiptSettings
+          window.require('electron').ipcRenderer.invoke('settings-save', 'receiptSettings', next).catch(() => {})
+        }
+      },
+      updateHardwareSettings: (h) => {
+        set((s) => ({ hardwareSettings: { ...s.hardwareSettings, ...h } }))
+        if (typeof window !== 'undefined' && window.require) {
+          const next = useAppStore.getState().hardwareSettings
+          window.require('electron').ipcRenderer.invoke('settings-save', 'hardwareSettings', next).catch(() => {})
+        }
+      },
       updateQrSettings: (q) =>
         set((s) => ({ qrSettings: { ...s.qrSettings, ...q } })),
       activateLicense: async (key, profile = {}) => {
@@ -446,6 +472,9 @@ export const useAppStore = create(
           autoPrint: persistedState?.receiptSettings?.autoPrint ?? false,
           showCashier: persistedState?.receiptSettings?.showCashier ?? true,
           logoUrl: persistedState?.receiptSettings?.logoUrl ?? null,
+          logoPrintUrl: persistedState?.receiptSettings?.logoPrintUrl ?? null,
+          logoSize: persistedState?.receiptSettings?.logoSize ?? 'medium',
+          printCopies: persistedState?.receiptSettings?.printCopies ?? 1,
         },
         hardwareSettings: {
           barcodeScanner: persistedState?.hardwareSettings?.barcodeScanner ?? true,
@@ -520,89 +549,100 @@ export const useTableStore = create(
       tables: SAMPLE_TABLES,
       kots: [],
       pendingQrOrders: [],
-      addPendingQrOrder: (order) => set((s) => ({ 
-        pendingQrOrders: [...s.pendingQrOrders.filter((o) => o.id !== order.id), order] 
-      })),
-      removePendingQrOrder: (id) => set((s) => ({ 
-        pendingQrOrders: s.pendingQrOrders.filter((o) => o.id !== id) 
-      })),
-      addTable: ({ number, seats = 4, status = 'available' }) =>
-        set((s) => ({
-          tables: [
-            ...s.tables,
-            {
-              id: uuidv4(),
-              number: Number(number || 0),
-              seats: Number(seats || 4),
-              status: String(status || 'available'),
-              order: null,
-              waiter: null,
-              qrToken: null,
-              sessionId: null,
-              guests: 0,
-            },
-          ],
-        })),
-      editTable: (id, updates) =>
-        set((s) => {
-          const current = s.tables.find((t) => t.id === id)
-          if (!current) return s
 
-          const nextNumber = updates?.number !== undefined ? Number(updates.number) : current.number
-          return {
-            tables: s.tables.map((t) =>
-              t.id === id
-                ? {
-                    ...t,
-                    ...updates,
-                    number: nextNumber,
-                    seats: updates?.seats !== undefined ? Number(updates.seats) : t.seats,
-                  }
-                : t
-            ),
-            kots: s.kots.map((k) =>
-              k.tableId === id
-                ? { ...k, tableNumber: nextNumber }
-                : k
-            ),
-          }
-        }),
-      deleteTable: (id) =>
+      loadTables: async () => {
+        if (typeof window !== 'undefined' && window.require) {
+          try {
+            const ipc = window.require('electron').ipcRenderer
+            const [dbTables, dbKots] = await Promise.all([
+              ipc.invoke('get-tables'),
+              ipc.invoke('get-kots'),
+            ])
+            if (dbTables && dbTables.length > 0) set({ tables: dbTables })
+            if (dbKots && dbKots.length > 0) set({ kots: dbKots })
+          } catch (e) { console.warn('[TableStore] SQLite load failed:', e) }
+        }
+      },
+
+      addPendingQrOrder: (order) => set((s) => ({ pendingQrOrders: [...s.pendingQrOrders.filter((o) => o.id !== order.id), order] })),
+      removePendingQrOrder: (id) => set((s) => ({ pendingQrOrders: s.pendingQrOrders.filter((o) => o.id !== id) })),
+
+      addTable: ({ number, seats = 4, status = 'available' }) => {
+        const newTable = { id: uuidv4(), number: Number(number || 0), seats: Number(seats || 4), status: String(status || 'available'), order: null, waiter: null, qrToken: null, sessionId: null, guests: 0 }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('upsert-table', newTable).catch(() => {})
+        set((s) => ({ tables: [...s.tables, newTable] }))
+      },
+
+      editTable: (id, updates) => {
+        const current = get().tables.find((t) => t.id === id)
+        if (!current) return
+        const nextNumber = updates?.number !== undefined ? Number(updates.number) : current.number
+        const updatedTable = { ...current, ...updates, number: nextNumber, seats: updates?.seats !== undefined ? Number(updates.seats) : current.seats }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('upsert-table', updatedTable).catch(() => {})
         set((s) => ({
-          tables: s.tables.filter((t) => t.id !== id),
-          kots: s.kots.filter((k) => k.tableId !== id),
-        })),
-      updateTable: (id, updates) =>
-        set((s) => ({ tables: s.tables.map((t) => (t.id === id ? { ...t, ...updates } : t)) })),
-      addKOT: (kot) =>
-        set((s) => ({ kots: [{ ...kot, id: uuidv4(), time: new Date(), status: 'pending' }, ...s.kots] })),
-      updateKOTStatus: (id, status) =>
-        set((s) => ({ kots: s.kots.map((k) => (k.id === id ? { ...k, status } : k)) })),
-      clearTable: (id) =>
+          tables: s.tables.map((t) => t.id === id ? updatedTable : t),
+          kots: s.kots.map((k) => k.tableId === id ? { ...k, tableNumber: nextNumber } : k),
+        }))
+      },
+
+      deleteTable: (id) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('delete-table', id).catch(() => {})
+        set((s) => ({ tables: s.tables.filter((t) => t.id !== id), kots: s.kots.filter((k) => k.tableId !== id) }))
+      },
+
+      updateTable: (id, updates) => {
+        set((s) => ({ tables: s.tables.map((t) => (t.id === id ? { ...t, ...updates } : t)) }))
+        if (typeof window !== 'undefined' && window.require) {
+          const updated = get().tables.find((t) => t.id === id)
+          if (updated) window.require('electron').ipcRenderer.invoke('upsert-table', updated).catch(() => {})
+        }
+      },
+
+      addKOT: (kot) => {
+        const newKot = { ...kot, id: uuidv4(), time: new Date(), status: 'pending' }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('add-kot', newKot).catch(() => {})
+        set((s) => ({ kots: [newKot, ...s.kots] }))
+      },
+
+      updateKOTStatus: (id, status) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('update-kot-status', id, status).catch(() => {})
+        set((s) => ({ kots: s.kots.map((k) => (k.id === id ? { ...k, status } : k)) }))
+      },
+
+      clearTable: (id) => {
+        if (typeof window !== 'undefined' && window.require) {
+          const ipc = window.require('electron').ipcRenderer
+          ipc.invoke('clear-kots-for-table', id).catch(() => {})
+          const clearedTable = { ...(get().tables.find((t) => t.id === id) || {}), status: 'available', order: null, waiter: null, sessionId: null, guests: 0, qrToken: null }
+          ipc.invoke('upsert-table', clearedTable).catch(() => {})
+        }
         set((s) => ({
-          tables: s.tables.map((t) =>
-            t.id === id ? { ...t, status: 'available', order: null, waiter: null, sessionId: null, guests: 0, qrToken: null } : t
-          ),
+          tables: s.tables.map((t) => t.id === id ? { ...t, status: 'available', order: null, waiter: null, sessionId: null, guests: 0, qrToken: null } : t),
           kots: s.kots.filter((k) => k.tableId !== id),
-        })),
-      transferTable: (oldId, newId) => set((s) => {
+        }))
+      },
+
+      transferTable: (oldId, newId) => {
+        const s = get()
         const oldTable = s.tables.find((t) => t.id === oldId)
         const newTable = s.tables.find((t) => t.id === newId)
-        if (!oldTable || !newTable) return s
-
-        return {
-          tables: s.tables.map((t) => {
-            if (t.id === newId) {
-              return { ...t, status: 'occupied', order: oldTable.order, waiter: oldTable.waiter, guests: oldTable.guests, sessionId: oldTable.sessionId, qrToken: oldTable.qrToken }
-            }
-            if (t.id === oldId) {
-              return { ...t, status: 'available', order: null, waiter: null, guests: 0, sessionId: null, qrToken: null }
-            }
+        if (!oldTable || !newTable) return
+        const transferredNew = { ...newTable, status: 'occupied', order: oldTable.order, waiter: oldTable.waiter, guests: oldTable.guests, sessionId: oldTable.sessionId, qrToken: oldTable.qrToken }
+        const clearedOld = { ...oldTable, status: 'available', order: null, waiter: null, guests: 0, sessionId: null, qrToken: null }
+        if (typeof window !== 'undefined' && window.require) {
+          const ipc = window.require('electron').ipcRenderer
+          ipc.invoke('upsert-table', transferredNew).catch(() => {})
+          ipc.invoke('upsert-table', clearedOld).catch(() => {})
+        }
+        set((st) => ({
+          tables: st.tables.map((t) => {
+            if (t.id === newId) return transferredNew
+            if (t.id === oldId) return clearedOld
             return t
           }),
-          kots: s.kots.map((k) => k.tableId === oldId ? { ...k, tableId: newId, tableNumber: newTable.number } : k),
-        }
-      }),
+          kots: st.kots.map((k) => k.tableId === oldId ? { ...k, tableId: newId, tableNumber: newTable.number } : k),
+        }))
+      },
     }),
     {
       name: 'paxxmo-tables',
@@ -784,14 +824,12 @@ export const useRecipeStore = create(
   persist(
     (set, get) => ({
       recipes: {
-        // Chicken Fried Rice: 300g rice + 100g chicken + 2 eggs (simulated as milk) + 30ml oil
         'REST-001': [
           { ingredientId: '1', name: 'Basmati Rice', qty: 300, unit: 'g' },
           { ingredientId: '4', name: 'Eggs (Milk)', qty: 2, unit: 'count' },
           { ingredientId: '6', name: 'Oil', qty: 30, unit: 'ml' },
           { ingredientId: '7', name: 'Salt', qty: 1, unit: 'pinch' },
         ],
-        // Spicy Cheese Pizza: 200g flour + 100ml oil + 100g cheese (milk) + salt
         'REST-002': [
           { ingredientId: '5', name: 'Wheat Flour', qty: 200, unit: 'g' },
           { ingredientId: '6', name: 'Oil', qty: 100, unit: 'ml' },
@@ -800,12 +838,19 @@ export const useRecipeStore = create(
         ],
       },
 
-      setRecipe: (dishId, ingredients) => {
-        set((s) => ({
-          recipes: { ...s.recipes, [dishId]: ingredients || [] },
-        }))
+      loadRecipes: async () => {
         if (typeof window !== 'undefined' && window.require) {
-          window.require('electron').ipcRenderer.invoke('set-recipe', dishId, ingredients || [])
+          try {
+            const dbRecipes = await window.require('electron').ipcRenderer.invoke('get-recipes')
+            if (dbRecipes && Object.keys(dbRecipes).length > 0) set({ recipes: dbRecipes })
+          } catch (e) { console.warn('[RecipeStore] SQLite load failed:', e) }
+        }
+      },
+
+      setRecipe: (dishId, ingredients) => {
+        set((s) => ({ recipes: { ...s.recipes, [dishId]: ingredients || [] } }))
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('set-recipe', dishId, ingredients || []).catch(() => {})
         }
       },
 
@@ -991,6 +1036,11 @@ export const useSalesStore = create(
           source: sale.source || 'grocery',
           items_detail: sale.items_detail || sale.cartItems || [],
         }
+
+        // ── Persist to SQLite ──────────────────────────────────────────────
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('add-sale', newSale).catch(() => {})
+        }
         
         // Register warranty for items with serials or warranty periods
         if (sale.activeModule === 'electronics' || sale.source === 'electronics') {
@@ -1084,6 +1134,14 @@ export const useSalesStore = create(
               : sale
           )),
         }))
+
+        // ── Persist status update to SQLite ────────────────────────────────
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('update-sale', targetSale.id, {
+            status: 'completed',
+            paymentStatus: 'paid',
+          }).catch(() => {})
+        }
 
         return { success: true, sale: targetSale }
       },
@@ -1212,6 +1270,16 @@ export const useSalesStore = create(
           ],
         }))
 
+        // ── Persist refund + original update to SQLite ─────────────────────
+        if (typeof window !== 'undefined' && window.require) {
+          const ipcRenderer = window.require('electron').ipcRenderer
+          ipcRenderer.invoke('add-sale', { ...refundSale, id: uuidv4() }).catch(() => {})
+          ipcRenderer.invoke('update-sale', originalSale.id, {
+            status: isFullRefund ? 'refunded' : 'partially refunded',
+            isRefunded: isFullRefund,
+          }).catch(() => {})
+        }
+
         return { success: true, refundSale, originalSale }
       },
       getTodaySales: () => {
@@ -1239,6 +1307,44 @@ export const useSalesStore = create(
         get()
           .getMonthlySales()
           .reduce((sum, s) => sum + s.total, 0),
+      loadSales: async () => {
+        if (typeof window !== 'undefined' && window.require) {
+          try {
+            const ipcRenderer = window.require('electron').ipcRenderer
+            const dbSales = await ipcRenderer.invoke('get-sales')
+            if (dbSales && dbSales.length > 0) {
+              // Map snake_case DB columns back to camelCase store shape
+              const normalized = dbSales.map(s => ({
+                id:               s.id,
+                receiptNo:        s.receipt_no || s.receiptNo,
+                date:             s.date,
+                subtotal:         s.subtotal || 0,
+                discount:         s.discount || 0,
+                tax:              s.tax || 0,
+                serviceCharge:    s.service_charge || 0,
+                total:            s.total || 0,
+                paymentMethod:    s.payment_method || s.paymentMethod || 'cash',
+                paymentRef:       s.payment_ref || null,
+                change:           s.change_amount || 0,
+                status:           s.status || 'completed',
+                source:           s.source || 'grocery',
+                cashier:          s.cashier || '',
+                customerId:       s.customer_id || null,
+                note:             s.note || '',
+                isRefunded:       s.is_refunded === true || s.is_refunded === 1,
+                refundOf:         s.refund_of || null,
+                refundReason:     s.refund_reason || null,
+                originalReceiptNo: s.original_receipt_no || null,
+                cartItems:        Array.isArray(s.cartItems) ? s.cartItems : [],
+                items_detail:     Array.isArray(s.items_detail) ? s.items_detail : [],
+              }))
+              set({ sales: normalized })
+            }
+          } catch (err) {
+            console.warn('[SalesStore] Failed to load from SQLite:', err)
+          }
+        }
+      },
     }),
     { 
       name: 'paxxmo-sales',
@@ -1264,12 +1370,38 @@ export const useCustomerStore = create(
   persist(
     (set, get) => ({
       customers: [],
-      addCustomer: (c) =>
-        set((s) => ({ customers: [...s.customers, { ...c, id: uuidv4(), totalPurchases: 0, credit: 0 }] })),
-      updateCustomer: (id, updates) =>
-        set((s) => ({ customers: s.customers.map((c) => (c.id === id ? { ...c, ...updates } : c)) })),
-      deleteCustomer: (id) =>
-        set((s) => ({ customers: s.customers.filter((c) => c.id !== id) })),
+      loadCustomers: async () => {
+        if (typeof window !== 'undefined' && window.require) {
+          try {
+            const ipcRenderer = window.require('electron').ipcRenderer
+            const dbCustomers = await ipcRenderer.invoke('get-customers')
+            if (dbCustomers && dbCustomers.length > 0) {
+              set({ customers: dbCustomers })
+            }
+          } catch (err) {
+            console.warn('[CustomerStore] Failed to load from SQLite:', err)
+          }
+        }
+      },
+      addCustomer: (c) => {
+        const newCustomer = { ...c, id: uuidv4(), totalPurchases: 0, credit: 0 }
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('add-customer', newCustomer).catch(() => {})
+        }
+        set((s) => ({ customers: [...s.customers, newCustomer] }))
+      },
+      updateCustomer: (id, updates) => {
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('update-customer', id, updates).catch(() => {})
+        }
+        set((s) => ({ customers: s.customers.map((c) => (c.id === id ? { ...c, ...updates } : c)) }))
+      },
+      deleteCustomer: (id) => {
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('delete-customer', id).catch(() => {})
+        }
+        set((s) => ({ customers: s.customers.filter((c) => c.id !== id) }))
+      },
       searchCustomers: (q) => {
         const lower = q.toLowerCase()
         return get().customers.filter(
@@ -1448,9 +1580,21 @@ export const useActivityStore = create(
   persist(
     (set, get) => ({
       logs: [],
-      addLog: (action, details, user) => set(s => ({
-        logs: [{ id: uuidv4(), date: new Date(), action, details, user: user || 'System' }, ...s.logs].slice(0, 500)
-      })),
+      loadLogs: async () => {
+        if (typeof window !== 'undefined' && window.require) {
+          try {
+            const dbLogs = await window.require('electron').ipcRenderer.invoke('logs-get-all')
+            if (dbLogs && dbLogs.length > 0) set({ logs: dbLogs })
+          } catch (e) { console.warn('[ActivityStore] SQLite load failed:', e) }
+        }
+      },
+      addLog: (action, details, user) => {
+        const newLog = { id: uuidv4(), date: new Date(), action, details, user: user || 'System' }
+        if (typeof window !== 'undefined' && window.require) {
+          window.require('electron').ipcRenderer.invoke('logs-add', newLog).catch(() => {})
+        }
+        set(s => ({ logs: [newLog, ...s.logs].slice(0, 500) }))
+      },
       clearLogs: () => set({ logs: [] })
     }),
     { name: 'paxxmo-activities', storage: createJSONStorage(() => idbStorage) }
@@ -1729,19 +1873,30 @@ export const useElectronicsStore = create(
       warranties: [],
 
       // ── Actions: Products ─────────────────────────────────────────────────
-      addElProduct: (product) => set((s) => ({
-        elProducts: [...s.elProducts, { ...product, id: uuidv4(), createdAt: new Date().toISOString(), active: true }]
-      })),
-      updateElProduct: (id, updates) => set((s) => ({
-        elProducts: s.elProducts.map((p) => p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p)
-      })),
-      deleteElProduct: (id) => set((s) => ({ elProducts: s.elProducts.filter((p) => p.id !== id) })),
+      addElProduct: (product) => {
+        const newP = { ...product, id: uuidv4(), createdAt: new Date().toISOString(), active: true }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-upsert-product', newP).catch(() => {})
+        set((s) => ({ elProducts: [...s.elProducts, newP] }))
+      },
+      updateElProduct: (id, updates) => {
+        set((s) => ({ elProducts: s.elProducts.map((p) => p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p) }))
+        if (typeof window !== 'undefined' && window.require) {
+          const updated = get().elProducts.find(p => p.id === id)
+          if (updated) window.require('electron').ipcRenderer.invoke('el-upsert-product', updated).catch(() => {})
+        }
+      },
+      deleteElProduct: (id) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-delete-product', id).catch(() => {})
+        set((s) => ({ elProducts: s.elProducts.filter((p) => p.id !== id) }))
+      },
 
       // ── Actions: Serials ──────────────────────────────────────────────────
       addSerial: (serial) => {
         const existing = get().serials.find((s) => s.serial === serial.serial || (serial.imei && s.imei === serial.imei))
         if (existing) return { success: false, error: 'Serial/IMEI already exists in inventory' }
-        set((s) => ({ serials: [...s.serials, { ...serial, id: uuidv4(), status: 'in_stock', createdAt: new Date().toISOString() }] }))
+        const newS = { ...serial, id: uuidv4(), status: 'in_stock', createdAt: new Date().toISOString() }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-add-serial', newS).catch(() => {})
+        set((s) => ({ serials: [...s.serials, newS] }))
         return { success: true }
       },
       addSerialsBatch: (serialsArr) => {
@@ -1755,12 +1910,19 @@ export const useElectronicsStore = create(
           newSerials.push(newS)
           results.push({ serial: s.serial, success: true })
         })
-        if (newSerials.length > 0) set((s) => ({ serials: [...s.serials, ...newSerials] }))
+        if (newSerials.length > 0) {
+          if (typeof window !== 'undefined' && window.require) {
+            const ipc = window.require('electron').ipcRenderer
+            newSerials.forEach(s => ipc.invoke('el-add-serial', s).catch(() => {}))
+          }
+          set((s) => ({ serials: [...s.serials, ...newSerials] }))
+        }
         return results
       },
-      updateSerial: (id, updates) => set((s) => ({
-        serials: s.serials.map((sr) => sr.id === id ? { ...sr, ...updates } : sr)
-      })),
+      updateSerial: (id, updates) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-update-serial', id, updates).catch(() => {})
+        set((s) => ({ serials: s.serials.map((sr) => sr.id === id ? { ...sr, ...updates } : sr) }))
+      },
       getSerialsByProduct: (productId) => get().serials.filter((s) => s.productId === productId),
       getAvailableSerials: (productId) => get().serials.filter((s) => s.productId === productId && s.status === 'in_stock'),
       findBySerial: (query) => {
@@ -1769,14 +1931,28 @@ export const useElectronicsStore = create(
       },
 
       // ── Actions: Suppliers ────────────────────────────────────────────────
-      addElSupplier: (sup) => set((s) => ({ elSuppliers: [...s.elSuppliers, { ...sup, id: uuidv4(), createdAt: new Date().toISOString() }] })),
-      updateElSupplier: (id, updates) => set((s) => ({ elSuppliers: s.elSuppliers.map((x) => x.id === id ? { ...x, ...updates } : x) })),
-      deleteElSupplier: (id) => set((s) => ({ elSuppliers: s.elSuppliers.filter((x) => x.id !== id) })),
+      addElSupplier: (sup) => {
+        const newSup = { ...sup, id: uuidv4(), createdAt: new Date().toISOString() }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-upsert-supplier', newSup).catch(() => {})
+        set((s) => ({ elSuppliers: [...s.elSuppliers, newSup] }))
+      },
+      updateElSupplier: (id, updates) => {
+        set((s) => ({ elSuppliers: s.elSuppliers.map((x) => x.id === id ? { ...x, ...updates } : x) }))
+        if (typeof window !== 'undefined' && window.require) {
+          const updated = get().elSuppliers.find(x => x.id === id)
+          if (updated) window.require('electron').ipcRenderer.invoke('el-upsert-supplier', updated).catch(() => {})
+        }
+      },
+      deleteElSupplier: (id) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-delete-supplier', id).catch(() => {})
+        set((s) => ({ elSuppliers: s.elSuppliers.filter((x) => x.id !== id) }))
+      },
 
       // ── Actions: GRN ─────────────────────────────────────────────────────
       addElGRN: (grn, serialsToAdd = []) => {
         const grnId = uuidv4()
         const newGRN = { ...grn, id: grnId, createdAt: new Date().toISOString(), status: 'received' }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-add-grn', newGRN).catch(() => {})
         const results = get().addSerialsBatch(serialsToAdd.map((s) => ({ ...s, grnId })))
         set((st) => ({ elGRNs: [...st.elGRNs, newGRN] }))
         return { grnId, serialResults: results }
@@ -1793,53 +1969,63 @@ export const useElectronicsStore = create(
               const startDate = new Date()
               const endDate = new Date(startDate)
               endDate.setMonth(endDate.getMonth() + item.warrantyMonths)
-              warrantyRecords.push({
-                id: uuidv4(), saleId, serialId: item.serialId, productId: item.productId,
+              const w = { id: uuidv4(), saleId, serialId: item.serialId, productId: item.productId,
                 productName: item.productName, serial: item.serial, imei: item.imei,
                 customerId: sale.customerId, warrantyMonths: item.warrantyMonths,
                 startDate: startDate.toISOString(), endDate: endDate.toISOString(),
-                status: 'active', createdAt: new Date().toISOString()
-              })
+                status: 'active', createdAt: new Date().toISOString() }
+              warrantyRecords.push(w)
+              if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-add-warranty', w).catch(() => {})
             }
           }
         })
-        set((s) => ({
-          elSales: [{ ...sale, id: saleId, date: new Date().toISOString(), status: 'completed' }, ...s.elSales],
-          warranties: [...s.warranties, ...warrantyRecords]
-        }))
+        const newSale = { ...sale, id: saleId, date: new Date().toISOString(), status: 'completed' }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-add-sale', newSale).catch(() => {})
+        set((s) => ({ elSales: [newSale, ...s.elSales], warranties: [...s.warranties, ...warrantyRecords] }))
         return saleId
       },
 
       // ── Actions: Repair Jobs ──────────────────────────────────────────────
-      addRepairJob: (job) => set((s) => ({
-        repairJobs: [{
-          ...job, id: uuidv4(),
-          jobNo: `JOB-${String(s.repairJobs.length + 1).padStart(3, '0')}`,
-          status: 'received', notified: false,
-          receivedDate: job.receivedDate || new Date().toISOString(),
-          jobType: job.jobType || 'custom',
-          createdAt: new Date().toISOString()
-        }, ...s.repairJobs]
-      })),
-      updateRepairJob: (id, updates) => set((s) => ({
-        repairJobs: s.repairJobs.map((j) => j.id === id ? { ...j, ...updates, updatedAt: new Date().toISOString() } : j)
-      })),
-      deleteRepairJob: (id) => set((s) => ({ repairJobs: s.repairJobs.filter((j) => j.id !== id) })),
+      addRepairJob: (job) => {
+        const newJob = { ...job, id: uuidv4(), jobNo: `JOB-${String(get().repairJobs.length + 1).padStart(3, '0')}`, status: 'received', notified: false, receivedDate: job.receivedDate || new Date().toISOString(), jobType: job.jobType || 'custom', createdAt: new Date().toISOString() }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-add-repair-job', newJob).catch(() => {})
+        set((s) => ({ repairJobs: [newJob, ...s.repairJobs] }))
+      },
+      updateRepairJob: (id, updates) => {
+        const finalUpdates = { ...updates, updatedAt: new Date().toISOString() }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-update-repair-job', id, finalUpdates).catch(() => {})
+        set((s) => ({ repairJobs: s.repairJobs.map((j) => j.id === id ? { ...j, ...finalUpdates } : j) }))
+      },
+      deleteRepairJob: (id) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-delete-repair-job', id).catch(() => {})
+        set((s) => ({ repairJobs: s.repairJobs.filter((j) => j.id !== id) }))
+      },
 
       // ── Actions: Customers ────────────────────────────────────────────────
       addElCustomer: (cust) => {
         const id = uuidv4()
-        set((s) => ({ elCustomers: [...s.elCustomers, { ...cust, id, createdAt: new Date().toISOString() }] }))
+        const newCust = { ...cust, id, createdAt: new Date().toISOString() }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-upsert-customer', newCust).catch(() => {})
+        set((s) => ({ elCustomers: [...s.elCustomers, newCust] }))
         return id
       },
-      updateElCustomer: (id, updates) => set((s) => ({ elCustomers: s.elCustomers.map((c) => c.id === id ? { ...c, ...updates } : c) })),
-      deleteElCustomer: (id) => set((s) => ({ elCustomers: s.elCustomers.filter((c) => c.id !== id) })),
+      updateElCustomer: (id, updates) => {
+        set((s) => ({ elCustomers: s.elCustomers.map((c) => c.id === id ? { ...c, ...updates } : c) }))
+        if (typeof window !== 'undefined' && window.require) {
+          const updated = get().elCustomers.find(c => c.id === id)
+          if (updated) window.require('electron').ipcRenderer.invoke('el-upsert-customer', updated).catch(() => {})
+        }
+      },
+      deleteElCustomer: (id) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-delete-customer', id).catch(() => {})
+        set((s) => ({ elCustomers: s.elCustomers.filter((c) => c.id !== id) }))
+      },
 
       // ── Actions: Warranty lookup ──────────────────────────────────────────
       addWarrantyRecord: (warranty) => {
-        set((s) => ({
-          warranties: [...s.warranties, { ...warranty, id: uuidv4(), createdAt: new Date().toISOString() }]
-        }))
+        const newW = { ...warranty, id: uuidv4(), createdAt: new Date().toISOString() }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-add-warranty', newW).catch(() => {})
+        set((s) => ({ warranties: [...s.warranties, newW] }))
       },
       getWarrantyStatus: (serialOrIMEI) => {
         const q = String(serialOrIMEI || '').trim().toLowerCase()
@@ -2011,37 +2197,24 @@ export const useElectronicsStore = create(
 
       addWarrantyClaim: (claim) => {
         const now = new Date().toISOString()
-        const newClaim = {
-          ...claim,
-          id: uuidv4(),
-          status: claim.status || 'open',
-          claimedAt: now,
-          resolvedAt: null,
-          createdAt: now,
-        }
-        set((s) => ({
-          warrantyClaims: [newClaim, ...s.warrantyClaims],
-        }))
+        const newClaim = { ...claim, id: uuidv4(), status: claim.status || 'open', claimedAt: now, resolvedAt: null, createdAt: now }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-add-warranty-claim', newClaim).catch(() => {})
+        set((s) => ({ warrantyClaims: [newClaim, ...s.warrantyClaims] }))
         return newClaim
       },
 
       updateWarrantyClaim: (id, updates) => {
         const now = new Date().toISOString()
         const finalUpdates = { ...updates, updatedAt: now }
-        // If resolving or rejecting, stamp resolvedAt
-        if (updates.status === 'resolved' || updates.status === 'rejected') {
-          finalUpdates.resolvedAt = now
-        }
-        set((s) => ({
-          warrantyClaims: s.warrantyClaims.map((c) =>
-            c.id === id ? { ...c, ...finalUpdates } : c
-          ),
-        }))
+        if (updates.status === 'resolved' || updates.status === 'rejected') finalUpdates.resolvedAt = now
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-update-warranty-claim', id, finalUpdates).catch(() => {})
+        set((s) => ({ warrantyClaims: s.warrantyClaims.map((c) => c.id === id ? { ...c, ...finalUpdates } : c) }))
       },
 
-      deleteWarrantyClaim: (id) => set((s) => ({
-        warrantyClaims: s.warrantyClaims.filter((c) => c.id !== id),
-      })),
+      deleteWarrantyClaim: (id) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('el-delete-warranty-claim', id).catch(() => {})
+        set((s) => ({ warrantyClaims: s.warrantyClaims.filter((c) => c.id !== id) }))
+      },
 
       getClaimsForWarranty: (warrantyId) => {
         return get().warrantyClaims.filter((c) => c.warrantyId === warrantyId)
@@ -2060,17 +2233,55 @@ export const useElectronicsStore = create(
   )
 )
 
+// loadElectronics — called at boot to hydrate all 9 sub-stores from SQLite
+useElectronicsStore.loadElectronics = async function () {
+  if (typeof window === 'undefined' || !window.require) return
+  try {
+    const ipc = window.require('electron').ipcRenderer
+    const [elProducts, serials, elSuppliers, elGRNs, elSales, repairJobs, elCustomers, warranties, warrantyClaims] = await Promise.all([
+      ipc.invoke('el-get-products'),
+      ipc.invoke('el-get-serials'),
+      ipc.invoke('el-get-suppliers'),
+      ipc.invoke('el-get-grns'),
+      ipc.invoke('el-get-sales'),
+      ipc.invoke('el-get-repair-jobs'),
+      ipc.invoke('el-get-customers'),
+      ipc.invoke('el-get-warranties'),
+      ipc.invoke('el-get-warranty-claims'),
+    ])
+    const update = {}
+    if (elProducts?.length)       update.elProducts      = elProducts
+    if (serials?.length)          update.serials          = serials
+    if (elSuppliers?.length)      update.elSuppliers      = elSuppliers
+    if (elGRNs?.length)           update.elGRNs           = elGRNs
+    if (elSales?.length)          update.elSales          = elSales
+    if (repairJobs?.length)       update.repairJobs       = repairJobs
+    if (elCustomers?.length)      update.elCustomers      = elCustomers
+    if (warranties?.length)       update.warranties       = warranties
+    if (warrantyClaims?.length)   update.warrantyClaims   = warrantyClaims
+    if (Object.keys(update).length > 0) useElectronicsStore.setState(update)
+  } catch (e) { console.warn('[ElectronicsStore] SQLite load failed:', e) }
+}
+
 // ─── GRN Store (Grocery & Restaurant) ──────────────────────────────────────
 export const useGRNStore = create(
   persist(
     (set) => ({
       grns: [],
-      addGRN: (grn) => set((s) => ({ grns: [grn, ...s.grns] })),
+      loadGRNs: async () => {
+        if (typeof window !== 'undefined' && window.require) {
+          try {
+            const dbGRNs = await window.require('electron').ipcRenderer.invoke('grn-get-all')
+            if (dbGRNs && dbGRNs.length > 0) set({ grns: dbGRNs })
+          } catch (e) { console.warn('[GRNStore] SQLite load failed:', e) }
+        }
+      },
+      addGRN: (grn) => {
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('grn-add', grn).catch(() => {})
+        set((s) => ({ grns: [grn, ...s.grns] }))
+      },
     }),
-    {
-      name: 'paxxmo-grns',
-      storage: createJSONStorage(() => idbStorage),
-    }
+    { name: 'paxxmo-grns', storage: createJSONStorage(() => idbStorage) }
   )
 )
 
@@ -2082,8 +2293,19 @@ export const useLedgerStore = create(
         { id: '1', customerId: '2', type: 'purchase', amount: 25000, balance: 25000, description: 'Invoice INV-2026-001', date: new Date(Date.now() - 86400000 * 5), ref: 'INV-001' },
         { id: '2', customerId: '2', type: 'payment', amount: 20000, balance: 5000, description: 'Cash payment received', date: new Date(Date.now() - 86400000 * 2), ref: 'PMT-001' },
       ],
-      addEntry: (entry) =>
-        set((s) => ({ entries: [{ ...entry, id: uuidv4(), date: new Date() }, ...s.entries] })),
+      loadLedger: async () => {
+        if (typeof window !== 'undefined' && window.require) {
+          try {
+            const dbEntries = await window.require('electron').ipcRenderer.invoke('ledger-get-all')
+            if (dbEntries && dbEntries.length > 0) set({ entries: dbEntries })
+          } catch (e) { console.warn('[LedgerStore] SQLite load failed:', e) }
+        }
+      },
+      addEntry: (entry) => {
+        const newEntry = { ...entry, id: uuidv4(), date: new Date() }
+        if (typeof window !== 'undefined' && window.require) window.require('electron').ipcRenderer.invoke('ledger-add-entry', newEntry).catch(() => {})
+        set((s) => ({ entries: [newEntry, ...s.entries] }))
+      },
       getBalance: (customerId) => {
         const entries = get().entries.filter((e) => e.customerId === customerId)
         if (!entries.length) return 0
@@ -2092,14 +2314,20 @@ export const useLedgerStore = create(
       getHistory: (customerId) =>
         get().entries.filter((e) => e.customerId === customerId).sort((a, b) => new Date(b.date) - new Date(a.date)),
     }),
-    {
-      name: 'paxxmo-ledger',
-      storage: createJSONStorage(() => idbStorage),
-    }
+    { name: 'paxxmo-ledger', storage: createJSONStorage(() => idbStorage) }
   )
 )
 
-// Boot: load users from DB into store on startup
+// Boot: load ALL stores from SQLite on startup (local-first)
 if (typeof window !== 'undefined' && window.require) {
-  setTimeout(() => useAuthStore.getState().loadUsers(), 200)
+  setTimeout(() => useAuthStore.getState().loadUsers(),         200)
+  setTimeout(() => useProductStore.getState().loadProducts(),   250)
+  setTimeout(() => useSalesStore.getState().loadSales(),        300)
+  setTimeout(() => useCustomerStore.getState().loadCustomers(), 300)
+  setTimeout(() => useTableStore.getState().loadTables(),       350)
+  setTimeout(() => useRecipeStore.getState().loadRecipes(),     350)
+  setTimeout(() => useGRNStore.getState().loadGRNs(),           400)
+  setTimeout(() => useLedgerStore.getState().loadLedger(),      400)
+  setTimeout(() => useActivityStore.getState().loadLogs(),      450)
+  setTimeout(() => useElectronicsStore.loadElectronics(),       450)
 }

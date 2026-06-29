@@ -4,7 +4,7 @@ import {
   Printer, Barcode, Save, CheckCircle, ChevronRight,
   ShoppingBag, Utensils, Shirt, Pill, Truck, Cloud, Database, Users, Upload, Sun, Moon,
   Banknote, History, CalendarDays, BadgeDollarSign, CircleDollarSign,
-  Monitor, Type, Image, Video, Plus, Trash2, RefreshCw, Copy, Download, AlertTriangle
+  Monitor, Type, Image as ImageIcon, Video, Plus, Trash2, RefreshCw, Copy, Download, AlertTriangle
 } from 'lucide-react'
 import { useAppStore, useAuthStore } from '@/store'
 import { Toggle, Input, Select, SectionHeader, StatCard } from '@/components/ui'
@@ -17,9 +17,8 @@ import { SYSTEM_PUBLIC_MENU_URL } from '@/lib/systemUrls'
 import { cn } from '@/lib/utils'
 import { printReceiptHTML } from '@/lib/printReceipt'
 import { buildThermalProfile, receiptProfileOptions } from '@/lib/thermalPrinter'
-import UserBarcodeGenerator, { generateUserBarcode } from '@/components/UserBarcodeGenerator'
+import UserBarcodeGenerator from '@/components/UserBarcodeGenerator'
 import MediaCarousel from '@/components/display/MediaCarousel'
-import { v4 as uuidv4 } from 'uuid'
 
 const TABS = [
   { id: 'business', label: 'Business Info', icon: Store },
@@ -97,6 +96,222 @@ function SettingsSection({ title, children }) {
   )
 }
 
+// ─── Thermal Logo Processor ────────────────────────────────────────────────────
+// Converts an uploaded image to a thermal-print-friendly B&W PNG.
+// Returns a base64 data URL of the processed image.
+function processLogoForThermal(dataUrl, { threshold = 128, contrast = 1.0, maxW = 240, maxH = 120 } = {}) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      try {
+        // Scale down to fit thermal width, keep aspect ratio
+        const scale = Math.min(maxW / img.width, maxH / img.height, 1)
+        const w = Math.round(img.width * scale)
+        const h = Math.round(img.height * scale)
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        // White background
+        ctx.fillStyle = '#fff'
+        ctx.fillRect(0, 0, w, h)
+        ctx.drawImage(img, 0, 0, w, h)
+        // Apply contrast then threshold to pure B&W
+        const imageData = ctx.getImageData(0, 0, w, h)
+        const d = imageData.data
+        for (let i = 0; i < d.length; i += 4) {
+          // Grayscale luminance
+          let gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+          // Apply contrast (pivot at 128)
+          gray = Math.min(255, Math.max(0, (gray - 128) * contrast + 128))
+          // Alpha blend against white
+          const alpha = d[i + 3] / 255
+          gray = gray * alpha + 255 * (1 - alpha)
+          // Hard threshold → pure black or white
+          const bw = gray < threshold ? 0 : 255
+          d[i] = bw; d[i + 1] = bw; d[i + 2] = bw; d[i + 3] = 255
+        }
+        ctx.putImageData(imageData, 0, 0)
+        resolve(canvas.toDataURL('image/png'))
+      } catch (err) {
+        reject(err)
+      }
+    }
+    img.onerror = reject
+    img.src = dataUrl
+  })
+}
+
+const LOGO_SIZES = [
+  { value: 'small',  label: 'Small',  desc: '~20mm',  maxW: 160, maxH: 80  },
+  { value: 'medium', label: 'Medium', desc: '~30mm',  maxW: 240, maxH: 120 },
+  { value: 'large',  label: 'Large',  desc: '~40mm',  maxW: 320, maxH: 160 },
+]
+
+function LogoUploadPanel({ receiptSettings, updateReceiptSettings }) {
+  const [processing, setProcessing] = React.useState(false)
+  const [threshold, setThreshold] = React.useState(128)
+  const [contrast, setContrast] = React.useState(1.4)
+  const logoUrl = receiptSettings.logoUrl
+  const logoPrintUrl = receiptSettings.logoPrintUrl
+  const logoSize = receiptSettings.logoSize || 'medium'
+
+  // Re-process whenever sliders or size change
+  const reprocess = React.useCallback(async (url, thr, ctr, sz) => {
+    if (!url) return
+    setProcessing(true)
+    try {
+      const size = LOGO_SIZES.find(s => s.value === sz) || LOGO_SIZES[1]
+      const processed = await processLogoForThermal(url, { threshold: thr, contrast: ctr, maxW: size.maxW, maxH: size.maxH })
+      updateReceiptSettings({ logoPrintUrl: processed })
+    } catch (e) {
+      console.warn('[Logo] Process failed:', e)
+    }
+    setProcessing(false)
+  }, [updateReceiptSettings])
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      const dataUrl = ev.target.result
+      updateReceiptSettings({ logoUrl: dataUrl })
+      await reprocess(dataUrl, threshold, contrast, logoSize)
+    }
+    reader.readAsDataURL(file)
+    // Reset input so same file can be re-uploaded
+    e.target.value = ''
+  }
+
+  const handleSliderChange = async (newThreshold, newContrast) => {
+    if (!logoUrl) return
+    await reprocess(logoUrl, newThreshold, newContrast, logoSize)
+  }
+
+  const handleSizeChange = async (newSize) => {
+    updateReceiptSettings({ logoSize: newSize })
+    if (logoUrl) await reprocess(logoUrl, threshold, contrast, newSize)
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Receipt Logo</label>
+
+      {/* Upload + Remove row */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="btn-secondary cursor-pointer">
+          <Upload size={14} /> {logoUrl ? 'Replace Logo' : 'Upload Logo'}
+          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={handleFileChange} />
+        </label>
+        {logoUrl && (
+          <button
+            className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+            onClick={() => updateReceiptSettings({ logoUrl: null, logoPrintUrl: null })}
+          >
+            Remove
+          </button>
+        )}
+        <p className="text-xs text-gray-400">PNG / JPEG / WebP — max 5MB. Will be converted to B&amp;W for thermal printing.</p>
+      </div>
+
+      {/* Dual preview */}
+      {logoUrl && (
+        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 flex flex-col gap-4">
+
+          {/* Preview pair */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Screen/color version */}
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Screen (Color)</span>
+              <div className="bg-white rounded-xl border border-gray-200 p-3 w-full flex items-center justify-center min-h-[80px]">
+                <img src={logoUrl} alt="Logo color preview" style={{ maxHeight: 72, maxWidth: '100%', objectFit: 'contain' }} />
+              </div>
+            </div>
+            {/* Thermal B&W version */}
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+                <Printer size={11} /> Thermal Print (B&amp;W)
+              </span>
+              <div className="bg-white rounded-xl border border-gray-200 p-3 w-full flex items-center justify-center min-h-[80px]" style={{ background: '#fff' }}>
+                {processing ? (
+                  <span className="text-xs text-gray-400 animate-pulse">Processing…</span>
+                ) : logoPrintUrl ? (
+                  <img src={logoPrintUrl} alt="Logo print preview" style={{ maxHeight: 72, maxWidth: '100%', objectFit: 'contain', imageRendering: 'pixelated' }} />
+                ) : (
+                  <span className="text-xs text-gray-300">—</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Logo size */}
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Logo Size on Receipt</label>
+            <div className="flex gap-2">
+              {LOGO_SIZES.map(s => (
+                <button
+                  key={s.value}
+                  onClick={() => handleSizeChange(s.value)}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${logoSize === s.value ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`}
+                >
+                  {s.label}
+                  <div className={`text-[10px] font-normal mt-0.5 ${logoSize === s.value ? 'text-blue-100' : 'text-gray-400'}`}>{s.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Contrast / Threshold sliders */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 block">
+                Brightness Threshold <span className="font-normal normal-case text-gray-400">({threshold})</span>
+              </label>
+              <input
+                type="range" min={60} max={200} step={4}
+                value={threshold}
+                className="w-full accent-blue-600"
+                onChange={e => {
+                  const v = Number(e.target.value)
+                  setThreshold(v)
+                  handleSliderChange(v, contrast)
+                }}
+              />
+              <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                <span>Darker</span><span>Lighter</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 block">
+                Contrast <span className="font-normal normal-case text-gray-400">({contrast.toFixed(1)}x)</span>
+              </label>
+              <input
+                type="range" min={0.5} max={3.0} step={0.1}
+                value={contrast}
+                className="w-full accent-blue-600"
+                onChange={e => {
+                  const v = parseFloat(e.target.value)
+                  setContrast(v)
+                  handleSliderChange(threshold, v)
+                }}
+              />
+              <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                <span>Soft</span><span>Bold</span>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-blue-600 bg-blue-50 rounded-lg px-3 py-2 font-semibold">
+            💡 Tip: Adjust contrast and threshold until the thermal preview shows a clean, crisp black image with no grey areas — that's what your printer will output.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 const ROLE_OPTIONS = [
   { value: 'super_admin', label: 'Super Admin' },
   { value: 'owner',       label: 'Owner' },
@@ -108,16 +323,9 @@ function UserForm({ initial, onSave, onCancel, saving, currentUser }) {
   const [form, setForm] = useState(initial || { name:'', username:'', password:'', barcode:'', role:'staff' })
   const isEdit = !!initial?.id
   
-  // Auto-generate barcode for new users when role changes
+  // For editing existing users, allow manual barcode changes
   const handleRoleChange = (newRole) => {
-    setForm(f => {
-      const updated = { ...f, role: newRole }
-      if (!isEdit && !initial?.id) {
-        // For new users, auto-generate barcode
-        updated.barcode = generateUserBarcode(uuidv4(), newRole)
-      }
-      return updated
-    })
+    setForm(f => ({ ...f, role: newRole }))
   }
 
   return (
@@ -182,15 +390,10 @@ function StaffTab() {
     if (!form.name || !form.username || !form.password) { toast.error('Name, username and password are required'); return }
     setSaving(true)
     
-    // Auto-generate barcode if not already set (ensure every new user has a barcode)
-    const userForm = { ...form }
-    if (!userForm.barcode) {
-      userForm.barcode = generateUserBarcode(uuidv4(), form.role)
-    }
-    
-    const res = await addUser(userForm)
+    // Backend will auto-generate the correct barcode based on user ID
+    const res = await addUser(form)
     setSaving(false)
-    if (res?.success) { setShowAdd(false); toast.success('User created with auto-generated badge!') }
+    if (res?.success) { setShowAdd(false); toast.success('User created! Badge barcode auto-generated.') }
     else toast.error(res?.error || 'Failed to create user')
   }
 
@@ -431,7 +634,7 @@ function CustomerDisplayTab() {
               <Plus size={14} /> Add Text Offer
             </button>
             <button className="btn-secondary text-sm" onClick={() => addSlide('image')}>
-              <Image size={14} /> Add Image
+              <ImageIcon size={14} /> Add Image
             </button>
             <button className="btn-secondary text-sm" onClick={() => addSlide('video')}>
               <Video size={14} /> Add Video
@@ -940,41 +1143,39 @@ export default function Settings() {
         return (
           <SettingsSection title="Receipt Customization">
             <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Receipt Logo</label>
-                <div className="flex items-center gap-4">
-                  {receiptSettings.logoUrl ? (
-                    <img src={receiptSettings.logoUrl} alt="Logo" className="h-16 max-w-[120px] object-contain bg-white rounded-lg p-1 border shadow-sm" />
-                  ) : (
-                    <div className="h-16 w-24 bg-gray-50 rounded-lg flex items-center justify-center text-xs text-gray-400 border border-dashed border-gray-200">No Logo</div>
-                  )}
-                  <label className="btn-secondary cursor-pointer">
-                    <Upload size={14} /> Upload Logo
-                    <input 
-                      type="file" 
-                      accept="image/png, image/jpeg, image/gif" 
-                      className="hidden" 
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (ev) => updateReceiptSettings({ logoUrl: ev.target.result });
-                          reader.readAsDataURL(file);
-                        }
-                      }} 
-                    />
-                  </label>
-                  {receiptSettings.logoUrl && (
-                    <button className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors" onClick={() => updateReceiptSettings({ logoUrl: null })}>Remove</button>
-                  )}
-                </div>
-              </div>
+
+              {/* ── Logo Upload ─────────────────────────────────────────── */}
+              <LogoUploadPanel
+                receiptSettings={receiptSettings}
+                updateReceiptSettings={updateReceiptSettings}
+              />
+
               <Input label="Receipt Header Text" value={receiptSettings.header} onChange={(e) => updateReceiptSettings({ header: e.target.value })} placeholder="Custom header" />
               <Input label="Receipt Footer Text" value={receiptSettings.footer} onChange={(e) => updateReceiptSettings({ footer: e.target.value })} placeholder="Custom footer" />
               <Toggle checked={receiptSettings.showBarcode} onChange={(v) => updateReceiptSettings({ showBarcode: v })} label="Show barcode on receipt" />
               <Toggle checked={receiptSettings.showTax} onChange={(v) => updateReceiptSettings({ showTax: v })} label="Show tax breakdown" />
               <Toggle checked={receiptSettings.autoPrint} onChange={(v) => updateReceiptSettings({ autoPrint: v })} label="Auto-print on sale complete" />
               <Toggle checked={receiptSettings.showCashier} onChange={(v) => updateReceiptSettings({ showCashier: v })} label="Show cashier name" />
+              
+              <div className="border-t pt-4 mt-2">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Number of Print Copies</label>
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="5" 
+                    value={receiptSettings.printCopies || 1} 
+                    onChange={(e) => updateReceiptSettings({ printCopies: Math.max(1, Math.min(5, parseInt(e.target.value, 10) || 1)) })}
+                    className="input-base w-20 px-3 py-2 text-center"
+                  />
+                  <span className="text-sm text-gray-600">
+                    {receiptSettings.printCopies === 1 ? '(1 copy)' : `(${receiptSettings.printCopies} copies)`}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-2 bg-blue-50 p-2 rounded">
+                  📋 Card payments will print this many copies. Other payment methods will print 1 copy.
+                </p>
+              </div>
             </div>
           </SettingsSection>
         )

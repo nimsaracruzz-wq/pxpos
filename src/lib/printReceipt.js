@@ -48,9 +48,9 @@ function buildPrintStyles(paperWidth = '80mm') {
     background: #fff;
     color: #000;
     font-family: 'Courier New', Courier, monospace;
-    font-size: ${fs(13)};
-    font-weight: 700;
-    line-height: 1.45;
+    font-size: ${fs(14)};
+    font-weight: 800;
+    line-height: 1.5;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
@@ -70,14 +70,14 @@ function buildPrintStyles(paperWidth = '80mm') {
 
   /* ── Dividers ── */
   .sep       { border: none; border-top: 1px dashed #000; margin: 6px 0; }
-  .sep-solid { border: none; border-top: 2px solid #000;  margin: 6px 0; }
-  hr         { border: none; border-top: 1px dashed #aaa; margin: 8px 0; }
+  .sep-solid { border: none; border-top: 3px double #000;  margin: 8px 0; }
+  hr         { border: none; border-top: 1px dashed #000; margin: 8px 0; }
 
   /* ── Header ── */
-  .receipt-top { border-bottom: 1px dashed #000; margin-bottom: 8px; padding-bottom: 8px; }
-  .store   { font-size: ${fs(16)}; font-weight: 900; letter-spacing: 0.04em; margin-bottom: 2px; text-transform: uppercase; }
-  .addr    { font-size: ${fs(11)}; font-weight: 700; line-height: 1.5; }
-  .taxid   { font-size: ${fs(10)}; font-weight: 700; margin-top: 2px; }
+  .receipt-top { border-bottom: 3px double #000; margin-bottom: 8px; padding-bottom: 8px; }
+  .store   { font-size: ${fs(18)}; font-weight: 900; letter-spacing: 0.06em; margin-bottom: 2px; text-transform: uppercase; }
+  .addr    { font-size: ${fs(11)}; font-weight: 800; line-height: 1.5; }
+  .taxid   { font-size: ${fs(10)}; font-weight: 800; margin-top: 2px; }
 
   .table-badge {
     border: 2px solid #000; border-radius: 2px;
@@ -116,17 +116,25 @@ function buildPrintStyles(paperWidth = '80mm') {
 
   /* ── Items table ── */
   .items { width: 100%; border-collapse: collapse; margin: 4px 0; text-align: left; table-layout: fixed; }
-  .item-name { font-size: ${fs(13)}; font-weight: 900; line-height: 1.3; }
-  .item-sub  { font-size: ${fs(11)}; font-weight: 700; }
+  .item-name { font-size: ${fs(14)}; font-weight: 900; line-height: 1.3; }
+  .item-sub  { font-size: ${fs(11)}; font-weight: 800; }
   .items td { vertical-align: top; }
   .items td:first-child { width: 72%; word-break: break-word; overflow-wrap: anywhere; }
   .items td:last-child { width: 28%; text-align: right; white-space: nowrap; vertical-align: top; padding-right: 1.1mm; }
 
   /* ── Totals table ── */
-  .totals { width: 100%; border-collapse: collapse; font-size: ${fs(12)}; font-weight: 700; text-align: left; table-layout: fixed; }
+  .totals { width: 100%; border-collapse: collapse; font-size: ${fs(12)}; font-weight: 800; text-align: left; table-layout: fixed; }
   .totals td { padding: 2px 0; }
   .totals td:last-child { text-align: right; padding-right: 1.1mm; }
-  .total-row td { font-size: ${fs(16)}; font-weight: 900; padding: 5px 0 3px; }
+  .total-row td { font-size: ${fs(17)}; font-weight: 900; padding: 5px 0 3px; }
+
+  /* ── TOTAL double-border box ── */
+  .total-box {
+    border: 3px double #000; border-radius: 3px;
+    padding: 6px 10px; margin: 8px 0 6px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-weight: 900; font-size: ${fs(17)};
+  }
 
   /* ── Change box ── */
   .change-box {
@@ -141,17 +149,27 @@ function buildPrintStyles(paperWidth = '80mm') {
   .footer .thank { font-size: ${fs(13)}; font-weight: 900; margin-bottom: 2px; }
   .powered { font-size: ${fs(9)}; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin-top: 6px; }
 
-  .receipt-logo {
+  /* Base logo style — B&W processed PNG, centred, hard pixel edges */
+  .receipt-logo,
+  .receipt-logo-small,
+  .receipt-logo-medium,
+  .receipt-logo-large {
     display: block;
     margin: 0 auto 2mm;
-    max-width: ${paperMm === 58 ? '26mm' : '31mm'};
-    max-height: ${paperMm === 58 ? '12mm' : '14mm'};
     width: auto;
     height: auto;
     object-fit: contain;
-    image-rendering: auto;
-    -webkit-image-rendering: -webkit-optimize-contrast;
+    image-rendering: pixelated;          /* crisp on thermal raster drivers */
+    -webkit-image-rendering: pixelated;
   }
+  /* Small  ≈ 20mm on 80mm paper */
+  .receipt-logo-small  { max-width: ${paperMm === 58 ? '18mm' : '20mm'}; max-height: ${paperMm === 58 ? '9mm'  : '10mm'}; }
+  /* Medium ≈ 30mm on 80mm paper */
+  .receipt-logo-medium { max-width: ${paperMm === 58 ? '26mm' : '30mm'}; max-height: ${paperMm === 58 ? '13mm' : '15mm'}; }
+  /* Large  ≈ 40mm on 80mm paper */
+  .receipt-logo-large  { max-width: ${paperMm === 58 ? '32mm' : '40mm'}; max-height: ${paperMm === 58 ? '16mm' : '20mm'}; }
+  /* Fallback for legacy .receipt-logo without size modifier */
+  .receipt-logo { max-width: ${paperMm === 58 ? '26mm' : '31mm'}; max-height: ${paperMm === 58 ? '12mm' : '14mm'}; }
 
   /* ── Inline-style overrides for Receipt.jsx content ──
      Receipt.jsx renders via innerHTML, so table/font styles may be inline.
@@ -649,8 +667,9 @@ export function buildA4InvoiceBody(sale, businessInfo, receiptSettings) {
   // ── Header
   html += `<div class="inv-header">`
   html += `<div class="inv-brand">`
-  if (receiptSettings?.logoUrl) {
-    html += `<img src="${receiptSettings.logoUrl}" alt="Logo" class="inv-logo">`
+  if (receiptSettings?.logoPrintUrl || receiptSettings?.logoUrl) {
+    html += `<img src="${receiptSettings.logoPrintUrl || receiptSettings.logoUrl}" alt="Logo" class="inv-logo">`
+
   }
   html += `<div class="store-name">${businessInfo.name || ''}</div>`
   if (businessInfo.address) html += `<div class="store-addr">${businessInfo.address}</div>`
