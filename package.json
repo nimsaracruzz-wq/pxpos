@@ -1,6 +1,6 @@
 {
   "name": "ceypos-pos",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "description": "CeyPos - Modern Desktop Point of Sale System",
   "private": true,
   "main": "electron/main.js",
@@ -20,7 +20,7 @@
   "build": {
     "appId": "com.paxxmo.pos",
     "productName": "CeyPos POS",
-    "icon": "dist/icon.png",
+    "icon": "public/ceypos_logo_png_white.png",
     "directories": {
       "output": "dist-electron"
     },
@@ -31,13 +31,19 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "dist/icon.png"
+      "icon": "public/ceypos_logo_png_white.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerHeader": "public/ceypos_logo_png_white.png",
+      "installerSidebar": "public/ceypos_logo_png_white.png"
     },
     "mac": {
-      "icon": "dist/icon.png"
+      "icon": "public/ceypos_logo_png_white.png"
     },
     "linux": {
-      "icon": "dist/icon.png"
+      "icon": "public/ceypos_logo_png_white.png"
     },
     "publish": {
       "provider": "github",
