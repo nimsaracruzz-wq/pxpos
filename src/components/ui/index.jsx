@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
@@ -34,7 +34,7 @@ export function Button({ children, variant = 'primary', size = 'md', className, 
 }
 
 // ─── Input ────────────────────────────────────────────────────────────────────
-export function Input({ className, label, error, hint, ...props }) {
+export const Input = forwardRef(function Input({ className, label, error, hint, ...props }, ref) {
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
@@ -43,6 +43,7 @@ export function Input({ className, label, error, hint, ...props }) {
         </label>
       )}
       <input
+        ref={ref}
         className={cn(
           'input-base',
           error && 'border-red-400 focus:border-red-400 focus:shadow-none',
@@ -54,7 +55,7 @@ export function Input({ className, label, error, hint, ...props }) {
       {error && <span className="text-xs text-red-500 font-medium">{error}</span>}
     </div>
   )
-}
+})
 
 // ─── Select ───────────────────────────────────────────────────────────────────
 export function Select({ className, label, error, children, ...props }) {

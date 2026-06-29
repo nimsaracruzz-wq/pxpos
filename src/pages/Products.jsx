@@ -98,7 +98,9 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
   const [otherUnitOpen, setOtherUnitOpen] = useState(isCustomUnit)
   const [otherUnitVal, setOtherUnitVal] = useState(isCustomUnit ? initialUnit : '')
 
+  const barcodeInputRef = useRef(null)
   const nameInputRef = useRef(null)
+  const priceInputRef = useRef(null)
   const { addCategory } = useProductStore()
   const toast = useToast()
 
@@ -128,22 +130,49 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
         const { ipcRenderer } = window.require('electron')
         result = await ipcRenderer.invoke('barcode-lookup', { barcode: code })
       } else {
-        // ── Browser fallback: Open Food Facts only (has CORS headers) ─────
-        const offRes = await fetch(
-          `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}?fields=product_name,brands,categories_tags,quantity`,
-          { headers: { 'User-Agent': 'PaxxmoPOS/1.0 - pos@paxxmo.app' } }
-        )
-        if (offRes.ok) {
-          const offData = await offRes.json()
-          if (offData.status === 1 && offData.product?.product_name) {
-            const p = offData.product
-            const name = [p.brands, p.product_name, p.quantity].filter(Boolean).join(' ').trim()
-            const rawCat = (p.categories_tags || []).find(c => !c.includes(':')) ||
-              (p.categories_tags || [])[0]?.replace(/^[a-z]{2}:/, '') || ''
-            const cat = rawCat.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
-            result = { found: true, name, category: cat, source: 'Open Food Facts' }
+        // ── Browser fallback: Open Food Facts + UPCitemdb ─────────────────
+        const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+
+        // Source 1: Open Food Facts (food/grocery)
+        try {
+          const offRes = await Promise.race([
+            fetch(
+              `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}?fields=product_name,brands,categories_tags,quantity`,
+              { headers: { 'User-Agent': 'PaxxmoPOS/1.0 - pos@paxxmo.app' } }
+            ),
+            timeout(5000),
+          ])
+          if (offRes.ok) {
+            const offData = await offRes.json()
+            if (offData.status === 1 && offData.product?.product_name) {
+              const p = offData.product
+              const name = [p.brands, p.product_name, p.quantity].filter(Boolean).join(' ').trim()
+              const rawCat = (p.categories_tags || []).find(c => !c.includes(':')) ||
+                (p.categories_tags || [])[0]?.replace(/^[a-z]{2}:/, '') || ''
+              const cat = rawCat.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+              result = { found: true, name, category: cat, source: 'Open Food Facts' }
+            }
           }
+        } catch (_) {}
+
+        // Source 2: UPC Item DB (retail, non-food products)
+        if (!result) {
+          try {
+            const upcRes = await Promise.race([
+              fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(code)}`),
+              timeout(4000),
+            ])
+            if (upcRes.ok) {
+              const upcData = await upcRes.json()
+              const item = (upcData.items || [])[0]
+              if (item && item.title) {
+                const name = [item.brand, item.title].filter(Boolean).join(' ').trim()
+                result = { found: true, name, category: item.category || '', source: 'UPC Item DB' }
+              }
+            }
+          } catch (_) {}
         }
+
         if (!result) result = { found: false }
       }
 
@@ -179,8 +208,9 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
   }, [form.barcode])
 
   useEffect(() => {
+    // Auto-focus barcode field first for fast scan-to-add workflow
     setTimeout(() => {
-      nameInputRef.current?.focus()
+      barcodeInputRef.current?.focus()
     }, 100)
   }, [])
 
@@ -210,6 +240,8 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
 
     if (keepOpen) {
       playTone('success')
+      setLookupState('idle')
+      setLookupSource('')
       setForm((f) => ({
         ...PRODUCT_FORM_DEFAULT,
         category: f.category,
@@ -221,8 +253,9 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
       setOtherUnitVal('')
       setOtherUnitOpen(false)
 
+      // Return focus to barcode field for ultra-fast scan-and-add workflow
       setTimeout(() => {
-        nameInputRef.current?.focus()
+        barcodeInputRef.current?.focus()
       }, 50)
     }
   }
@@ -238,116 +271,143 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
           <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-4">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
               <Package size={14} className="text-green-500" /> Basic Details
+              <span className="ml-auto text-[10px] font-normal text-gray-300 normal-case tracking-normal">Scan barcode first → name auto-fills</span>
             </h3>
-            
+
+            {/* ── BARCODE FIRST — primary entry point for fast scan workflow ─── */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Barcode size={12} className="text-blue-500" /> Barcode
+                  <span className="text-[9px] font-semibold text-blue-400 bg-blue-50 px-1.5 py-0.5 rounded-full border border-blue-100">SCAN FIRST</span>
+                </label>
+                {lookupState === 'found' && (
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
+                    <CheckCircle2 size={10} /> {lookupSource}
+                  </span>
+                )}
+                {lookupState === 'loading' && (
+                  <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-500">
+                    <Loader2 size={10} className="animate-spin" /> Searching global DB...
+                  </span>
+                )}
+                {lookupState === 'not_found' && (
+                  <span className="text-[10px] font-bold text-amber-500">Not in global DB — enter manually</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <div className="relative flex-1 min-w-0">
+                  <input
+                    ref={barcodeInputRef}
+                    type="text"
+                    value={form.barcode}
+                    onChange={(e) => { set('barcode', e.target.value); setLookupState('idle') }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        // After scanning barcode, move to name field
+                        nameInputRef.current?.focus()
+                      }
+                    }}
+                    placeholder="Scan barcode or type — name auto-fills!"
+                    className={`input-base w-full text-sm font-mono font-semibold pr-8 transition-all ${
+                      lookupState === 'found' ? 'border-green-400 bg-green-50' :
+                      lookupState === 'loading' ? 'border-blue-300 bg-blue-50' : ''
+                    }`}
+                    autoComplete="off"
+                  />
+                  {lookupState === 'loading' && (
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                      <Loader2 size={14} className="text-blue-500 animate-spin" />
+                    </div>
+                  )}
+                  {lookupState === 'found' && (
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                      <CheckCircle2 size={14} className="text-green-500" />
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => lookupBarcode(form.barcode)}
+                  disabled={!form.barcode || lookupState === 'loading'}
+                  title="Look up product name from global barcode database"
+                  className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center transition-all hover:bg-blue-100 hover:border-blue-300 active:scale-95 shrink-0 disabled:opacity-40"
+                >
+                  {lookupState === 'loading' ? <Loader2 size={16} className="animate-spin" /> : <Globe size={18} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={generateRandomBarcode}
+                  title="Auto-generate Random Barcode"
+                  className="w-11 h-11 rounded-xl bg-green-50 text-green-600 border border-green-200 flex items-center justify-center transition-all hover:bg-green-100 hover:border-green-300 active:scale-95 shrink-0"
+                >
+                  <Barcode size={18} />
+                </button>
+              </div>
+              {lookupState === 'found' && (
+                <p className="text-[10px] text-green-600 font-semibold mt-1 flex items-center gap-1">
+                  <Globe size={9} /> Auto-filled from {lookupSource} — verify price &amp; stock below
+                </p>
+              )}
+            </div>
+
+            {/* ── PRODUCT NAME — second field, auto-filled by barcode lookup ─── */}
             <Input
               ref={nameInputRef}
               label="Product Name *"
               value={form.name}
               onChange={(e) => set('name', e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  priceInputRef.current?.focus()
+                }
+              }}
               required
               placeholder="e.g. Basmati Rice 5kg"
             />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Barcode</label>
-                  {lookupState === 'found' && (
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
-                      <CheckCircle2 size={10} /> {lookupSource}
-                    </span>
-                  )}
-                  {lookupState === 'not_found' && (
-                    <span className="text-[10px] font-bold text-gray-400">Not in global DB</span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <div className="relative flex-1 min-w-0">
-                    <input
-                      type="text"
-                      value={form.barcode}
-                      onChange={(e) => { set('barcode', e.target.value); setLookupState('idle') }}
-                      placeholder="Scan or type barcode — auto-fills name!"
-                      className="input-base w-full text-sm font-semibold pr-8"
-                    />
-                    {lookupState === 'loading' && (
-                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
-                        <Loader2 size={14} className="text-blue-500 animate-spin" />
-                      </div>
-                    )}
-                    {lookupState === 'found' && (
-                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
-                        <CheckCircle2 size={14} className="text-green-500" />
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => lookupBarcode(form.barcode)}
-                    disabled={!form.barcode || lookupState === 'loading'}
-                    title="Look up product name from global barcode database"
-                    className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center transition-all hover:bg-blue-100 hover:border-blue-300 active:scale-95 shrink-0 disabled:opacity-40"
-                  >
-                    {lookupState === 'loading' ? <Loader2 size={16} className="animate-spin" /> : <Globe size={18} />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={generateRandomBarcode}
-                    title="Auto-generate Random Barcode"
-                    className="w-11 h-11 rounded-xl bg-green-50 text-green-600 border border-green-200 flex items-center justify-center transition-all hover:bg-green-100 hover:border-green-300 active:scale-95 shrink-0"
-                  >
-                    <Barcode size={18} />
-                  </button>
-                </div>
-                {lookupState === 'found' && (
-                  <p className="text-[10px] text-green-600 font-semibold mt-1 flex items-center gap-1">
-                    <Globe size={9} /> Product details auto-filled from {lookupSource} — verify price &amp; stock below
-                  </p>
-                )}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Category</label>
+                <button
+                  type="button"
+                  onClick={() => setNewCatOpen(!newCatOpen)}
+                  className="text-xs font-bold text-green-600 hover:underline hover:text-green-700 flex items-center gap-0.5"
+                >
+                  {newCatOpen ? 'Cancel' : '+ Create New'}
+                </button>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Category</label>
+              {newCatOpen ? (
+                <div className="flex gap-2 animate-slide-up">
+                  <input
+                    type="text"
+                    value={newCatName}
+                    onChange={(e) => setNewCatName(e.target.value)}
+                    placeholder="e.g. Grains"
+                    className="input-base flex-1 min-w-0 text-sm font-semibold"
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleInlineAddCategory())}
+                  />
                   <button
                     type="button"
-                    onClick={() => setNewCatOpen(!newCatOpen)}
-                    className="text-xs font-bold text-green-600 hover:underline hover:text-green-700 flex items-center gap-0.5"
+                    onClick={handleInlineAddCategory}
+                    className="btn-primary py-1 px-3 text-xs shrink-0"
+                    disabled={!newCatName.trim()}
                   >
-                    {newCatOpen ? 'Cancel' : '+ Create New'}
+                    Add
                   </button>
                 </div>
-
-                {newCatOpen ? (
-                  <div className="flex gap-2 animate-slide-up">
-                    <input
-                      type="text"
-                      value={newCatName}
-                      onChange={(e) => setNewCatName(e.target.value)}
-                      placeholder="e.g. Grains"
-                      className="input-base flex-1 min-w-0 text-sm font-semibold"
-                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleInlineAddCategory())}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleInlineAddCategory}
-                      className="btn-primary py-1 px-3 text-xs shrink-0"
-                      disabled={!newCatName.trim()}
-                    >
-                      Add
-                    </button>
-                  </div>
-                ) : (
-                  <Select
-                    value={form.category}
-                    onChange={(e) => set('category', e.target.value)}
-                  >
-                    <option value="">Select category</option>
-                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </Select>
-                )}
-              </div>
+              ) : (
+                <Select
+                  value={form.category}
+                  onChange={(e) => set('category', e.target.value)}
+                >
+                  <option value="">Select category</option>
+                  {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                </Select>
+              )}
             </div>
           </div>
 
@@ -359,6 +419,7 @@ function ProductForm({ initial = PRODUCT_FORM_DEFAULT, onSave, onCancel, categor
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input
+                ref={priceInputRef}
                 label="Selling Price (Rs.) *"
                 type="number"
                 step="0.01"

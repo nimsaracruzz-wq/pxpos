@@ -285,6 +285,18 @@ export const useAppStore = create(
         const previousKey = String(get().licenseKey || '').trim().toUpperCase()
         const licenseChanged = normalizedKey && normalizedKey !== previousKey
 
+        // ── Switch to this license's isolated database FIRST ──────────────────
+        // Each license key maps to its own paxxmo-{hash}.db file.
+        // This must happen before any data read/write so data never mixes.
+        if (typeof window !== 'undefined' && window.require) {
+          try {
+            await window.require('electron').ipcRenderer.invoke('switch-database', { licenseKey: normalizedKey })
+            console.log('[Store] Switched to DB for license:', normalizedKey)
+          } catch (e) {
+            console.warn('[Store] DB switch failed:', e)
+          }
+        }
+
         if (licenseChanged) {
           await resetBusinessDataForNewLicense()
         }
@@ -526,6 +538,18 @@ export const useAppStore = create(
         }
         if (state?.customerDisplaySettings) {
           state.customerDisplaySettings = normalizeCustomerDisplaySettings(state.customerDisplaySettings)
+        }
+        // ── On startup: route to the correct license-specific database ────────
+        // This ensures that after a reload/restart the main process DB file
+        // matches the license key stored in IndexedDB, preventing data mixing.
+        if (typeof window !== 'undefined' && window.require) {
+          const licenseKey = String(state?.licenseKey || '').trim().toUpperCase()
+          if (licenseKey) {
+            window.require('electron').ipcRenderer
+              .invoke('switch-database', { licenseKey })
+              .then(({ dbFile }) => console.log('[Store] Startup DB:', dbFile))
+              .catch((e) => console.warn('[Store] Startup DB switch failed:', e))
+          }
         }
       },
     }
