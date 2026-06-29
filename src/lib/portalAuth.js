@@ -109,7 +109,10 @@ export async function verifyPortalLogin({ username, password }) {
   }
 
   const db = getDB()
-  const snap = await getDocs(collection(db, 'portal_admins'))
+  const snap = await Promise.race([
+    getDocs(collection(db, 'portal_admins')),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Portal auth timeout')), 1500))
+  ])
   const admins = snap.docs.map((item) => ({ id: item.id, ...item.data() }))
   const user = admins.find((item) => normalizeUsername(item.username) === cleanUsername)
 
